@@ -1,0 +1,19 @@
+### Python ###
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+
+#Environments
+.env
+.venv
+env/
+
+#Session Cache
+.sessions_cache
+
+#testfile
+server.py
+setup.py
+auth0_server_python.egg-info
