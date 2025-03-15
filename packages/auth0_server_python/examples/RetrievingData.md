@@ -103,3 +103,4 @@ access_token_for_google = await server_client.get_access_token_for_connection(co
 ```
 
 Read more above in [Configuring the Store](#configuring-the-store)
+

@@ -3,7 +3,6 @@
 __pycache__/
 *.py[cod]
 *$py.class
-.DS_Store
 
 #Environments
 .env
@@ -12,8 +11,13 @@ env/
 
 #Session Cache
 .sessions_cache
+.DS_Store
 
 #testfile
 server.py
 setup.py
+test.py
 auth0_server_python.egg-info
+.coverage
+coverage.xml
+

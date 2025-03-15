@@ -15,9 +15,6 @@ from authlib.integrations.base_client.errors import OAuthError
 import httpx 
 
 from pydantic import BaseModel, ValidationError
-from starlette.requests import Request
-from starlette.responses import RedirectResponse
-from fastapi import Request, Response
 
 from error import (
     MissingTransactionError, 
@@ -43,7 +40,7 @@ from auth_types import (
     LogoutOptions
 )
 from utils import PKCE, State, URL
-from store.memory import MemoryStateStore, MemoryTransactionStore
+
 
 # Generic type for store options
 TStoreOptions = TypeVar('TStoreOptions')
@@ -95,8 +92,8 @@ class ServerClient(Generic[TStoreOptions]):
         self._default_authorization_params = authorization_params or {}
         
         # Initialize stores
-        self._transaction_store = transaction_store or MemoryTransactionStore(secret)
-        self._state_store = state_store or MemoryStateStore(secret, state_absolute_duration)
+        self._transaction_store = transaction_store
+        self._state_store = state_store
         self._transaction_identifier = transaction_identifier
         self._state_identifier = state_identifier
         
@@ -117,7 +114,6 @@ class ServerClient(Generic[TStoreOptions]):
     async def start_interactive_login(
         self,
         options: Optional[StartInteractiveLoginOptions] = None,
-        request: Request = None,
         store_options: dict = None
     ) -> str:
         """
@@ -190,7 +186,6 @@ class ServerClient(Generic[TStoreOptions]):
     async def complete_interactive_login(
         self, 
         url: str,
-        request: Request = None,  
         store_options: dict = None
     ) -> Dict[str, Any]:
         """
@@ -230,6 +225,9 @@ class ServerClient(Generic[TStoreOptions]):
         if not code:
             raise MissingRequiredArgumentError("code")
         
+        if not self._oauth.metadata or "token_endpoint" not in self._oauth.metadata:
+            self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+
         # Exchange the code for tokens
         try:
             token_endpoint = self._oauth.metadata["token_endpoint"]
@@ -294,7 +292,7 @@ class ServerClient(Generic[TStoreOptions]):
     
     async def login_backchannel(
         self,
-        options: LoginBackchannelOptions,
+        options: Dict[str, Any],
         store_options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
@@ -315,9 +313,9 @@ class ServerClient(Generic[TStoreOptions]):
             A dictionary containing the authorizationDetails (when RAR was used).
         """
         token_endpoint_response = await self.backchannel_authentication({
-            "binding_message": options.binding_message,
-            "login_hint": options.login_hint,
-            "authorization_params": options.authorization_params,
+            "binding_message": options.get("binding_message"),
+            "login_hint": options.get("login_hint"),
+            "authorization_params": options.get("authorization_params"),
         })
         
         existing_state_data = await self._state_store.get(self._state_identifier, store_options)
@@ -587,18 +585,18 @@ class ServerClient(Generic[TStoreOptions]):
         
         # Build the URL for user linking
         link_user_url = await self._build_link_user_url(
-            connection=options.connection,
-            connection_scope=options.connection_scope,
+            connection=options.get("connection"),
+            connection_scope=options.get("connectionScope"),
             id_token=state_data["id_token"],
             code_verifier=code_verifier,
             state=state,
-            authorization_params=options.authorization_params
+            authorization_params=options.get("authorization_params")
         )
         
         # Store transaction data
         transaction_data = TransactionData(
             code_verifier=code_verifier,
-            app_state=options.app_state
+            app_state=options.get("app_state")
         )
         
         await self._transaction_store.set(
@@ -624,6 +622,7 @@ class ServerClient(Generic[TStoreOptions]):
         Returns:
             Dictionary containing the original app state
         """
+
         # We can reuse the interactive login completion since the flow is similar
         result = await self.complete_interactive_login(url, store_options)
         
@@ -658,13 +657,16 @@ class ServerClient(Generic[TStoreOptions]):
         
         # Build params
         params = {
+            "client_id": self._client_id,
             "code_challenge": code_challenge,
-            "code_challenge_method": "SH256",
+            "code_challenge_method": "S256",
             "state": state,
             "requested_connection": connection,
             "requested_connection_scope": connection_scope,
+            "response_type": "code",
             "id_token_hint": id_token,
-            "scope": "openid link_account",
+            "scope": "openid link_account offline_access",
+            "access_type": "offline",
             "prompt": "login"
         }
         
@@ -829,11 +831,10 @@ class ServerClient(Generic[TStoreOptions]):
                 raise ApiError("timeout", "Backchannel authentication timed out")
                 
         except Exception as e:
-            if isinstance(e, ApiError):
-                raise
+            print("Caught exception:", type(e), e.args, repr(e))
             raise ApiError(
                 "backchannel_error",
-                f"Backchannel authentication failed: {str(e)}",
+                f"Backchannel authentication failed: {str(e) or 'Unknown error'}",
                 e
             )
 
