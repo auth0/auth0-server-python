@@ -21,7 +21,11 @@ The Auth0-Server-Python SDK is a library for implementing user authentication in
 pip install auth0-server-python
 ```
 
-This library requires Node.js 20 LTS and newer LTS versions.
+If you’re using Poetry:
+
+```shell
+poetry install auth0-server-python
+```
 
 ### 2. Create the Auth0 SDK client
 

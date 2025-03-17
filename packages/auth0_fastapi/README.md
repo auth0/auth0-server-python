@@ -36,8 +36,13 @@ The Auth0-FastAPI SDK is a library for implementing user authentication in FastA
 ```shell
 pip install auth0-fastapi
 ```
+> _Requirements: Python 3.9+ and FastAPI. A typical production environment also requires HTTPS so that secure cookies (secure=True) can be sent._
 
-> _Requirements: Python 3.8+ and FastAPI. A typical production environment also requires HTTPS so that secure cookies (secure=True) can be sent._
+If you’re using Poetry:
+
+```shell
+poetry install auth0-fastapi
+```
 
 ### 3. Setup
 #### Minimal

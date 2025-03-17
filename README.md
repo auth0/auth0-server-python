@@ -1,8 +1,5 @@
 Auth0-Auth-Python Mono Repo, containing SDKs for implementing user authentication in Python applications.
 
-![Release](https://img.shields.io/npm/v/@auth0/auth0-auth-js)
-![Downloads](https://img.shields.io/npm/dw/@auth0/auth0-auth-js)
-[![License](https://img.shields.io/:license-mit-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
 ![Release](https://img.shields.io/pypi/v/auth0-python)
 ![Downloads](https://img.shields.io/pypi/dw/auth0-python)
 [![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
@@ -11,10 +8,17 @@ Auth0-Auth-Python Mono Repo, containing SDKs for implementing user authenticatio
 
 
 ## Packages
-- [`auth0-server-python`](./packages/auth0_server_js/README.md) - Authentication SDK for Server-Side Applications on Python runtimes (built on Authlib).
-- [`auth0-fastapi`](./packages/auth0_fastapi/README.md) - Authentication SDK for FastAPI Applications.
-- [`auth0-api-python`](./packages/auth0_api_python/README.md) - Will be coming soon!
+- [auth0-api-python](./packages/auth0-api-python/README.md)  
+  **Authentication SDK for securing APIs on Python** (JWT verification, claims checks, etc.)
 
+- [auth0-server-python](./packages/auth0-server-python/README.md)  
+  **Authentication SDK for server-side Python apps**, built on Authlib. Handles OAuth flows, session logic.
+
+- [auth0-fastapi](./packages/auth0-fastapi/README.md)  
+  **Authentication SDK for FastAPI**. Provides routes, session/cookie handling, and user linking.
+
+- [auth0-fastapi-api](./packages/auth0-fastapi-api/README.md)  
+  **(Coming soon!)** Additional tooling for combining `auth0-fastapi` with custom API flows.
 
 ## Feedback
 

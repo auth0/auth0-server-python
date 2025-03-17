@@ -40,7 +40,6 @@ class AuthClient:
             secret=config.secret,
             transaction_store=transaction_store,
             state_store=state_store,
-            state_absolute_duration=config.session_expiration,
             authorization_params={
                 "audience": config.audience,
                 "redirect_uri": redirect_uri,

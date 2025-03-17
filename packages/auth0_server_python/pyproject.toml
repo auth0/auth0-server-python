@@ -6,7 +6,6 @@ readme = "README.md"
 authors = ["Snehil Kishore <snehil.kishore@okta.com>"]
 license = "MIT"
 
-# Tells Poetry to look for a package named `auth_server` under `src/`
 packages = [
   { include = "auth_server", from = "src" },
   { include = "auth_types", from = "src" },
