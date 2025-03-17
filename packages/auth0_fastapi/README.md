@@ -147,7 +147,7 @@ config = Auth0Config(
     client_id="YOUR_CLIENT_ID",
     client_secret="YOUR_CLIENT_SECRET",
     app_base_url="http://localhost:8000",  # or your production URL
-    secret=os.environ.get("SESSION_SECRET"),
+    secret="YOUR_SESSION_SECRET",
     mount_routes=True,  # mounts /auth/login, /auth/logout, /auth/callback, /auth/backchannel-logout
 )
 

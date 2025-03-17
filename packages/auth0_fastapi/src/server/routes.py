@@ -21,7 +21,6 @@ def register_auth_routes(router: APIRouter, config: Auth0Config):
     """
     Conditionally register auth routes based on config.mount_routes and config.mount_connect_routes.
     """
-    print(config)
     if config.mount_routes:
         @router.get("/auth/login")
         async def login(request: Request, response: Response, auth_client: AuthClient = Depends(get_auth_client)):
@@ -59,13 +58,11 @@ def register_auth_routes(router: APIRouter, config: Auth0Config):
             # Extract the returnTo URL from the appState if available.
             return_to = session_data.get("app_state", {}).get("returnTo")
             
-            default_redirect = request.app.state.config.app_base_url  # Assuming config is stored on app.state
+            default_redirect = auth_client.config.app_base_url  # Assuming config is stored on app.state
             
-            # Create a RedirectResponse and merge Set-Cookie headers from the original response
             redirect_response = RedirectResponse(url=return_to or default_redirect)
-            # Merge cookie headers (if any) from `response`
+
             if "set-cookie" in response.headers:
-                # If multiple Set-Cookie headers exist, they might be a list.
                 cookies = response.headers.getlist("set-cookie") if hasattr(response.headers, "getlist") else [response.headers["set-cookie"]]
                 for cookie in cookies:
                     redirect_response.headers.append("set-cookie", cookie)
@@ -80,16 +77,15 @@ def register_auth_routes(router: APIRouter, config: Auth0Config):
             """
             return_to: Optional[str] = request.query_params.get("returnTo")
             try:
-                logout_url = await auth_client.logout(return_to=str(request.app.state.config.app_base_url), store_options={"response": response})
+                default_redirect = str(auth_client.config.app_base_url)
+                logout_url = await auth_client.logout(return_to=return_to or default_redirect, store_options={"response": response})
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
             
             # Create a redirect response
             redirect_response = RedirectResponse(url=logout_url)
             
-            # Merge cookie deletion headers from temp_response into redirect_response
             if "set-cookie" in response.headers:
-                # In FastAPI, headers are a multi-dict so you can loop over them
                 for cookie in response.headers.getlist("set-cookie"):
                     redirect_response.headers.append("set-cookie", cookie)
                     
@@ -113,7 +109,7 @@ def register_auth_routes(router: APIRouter, config: Auth0Config):
                 raise HTTPException(status_code=400, detail=str(e))
             return Response(status_code=204)
         
-        #################### Testing Route ###################################
+        #################### Testing Route (Won't be there in the Fastify SDKs) ###################################
         @router.get("/auth/profile")
         async def profile(request: Request, response:Response, auth_client: AuthClient = Depends(get_auth_client)):
             # Prepare store_options with the Request object (used by the state store to read cookies)
@@ -139,15 +135,12 @@ def register_auth_routes(router: APIRouter, config: Auth0Config):
                 # Retrieve access token from the client
                 access_token = await auth_client.client.get_access_token(store_options=store_options)
                 
-                # You might want to include some basic information about the token
-                # without exposing the full token in the response
                 return {
                     "access_token_available": bool(access_token),
                     "access_token_preview": access_token[:10] + "..." if access_token else None,
                     "status": "success"
                 }
             except Exception as e:
-                # Handle all errors with a single exception handler
                 raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -159,7 +152,6 @@ def register_auth_routes(router: APIRouter, config: Auth0Config):
             auth_client: AuthClient = Depends(get_auth_client),
             login_hint: Optional[str] = None
         ):
-            # Prepare store_options with the Request and Response objects
             store_options = {"request": request, "response": response}
             
             try:
@@ -188,6 +180,7 @@ def register_auth_routes(router: APIRouter, config: Auth0Config):
             except Exception as e:
                 # Handle all errors with a single exception handler
                 raise HTTPException(status_code=400, detail=str(e))
+        #################### ********Testing Routes End ****** ###################################
         
     if config.mount_connect_routes:
 
@@ -210,11 +203,11 @@ def register_auth_routes(router: APIRouter, config: Auth0Config):
                     detail="connection is not set"
                 )
             
-            sanitized_return_to = to_safe_redirect(dangerous_return_to or "/", request.app.state.config.app_base_url)
+            sanitized_return_to = to_safe_redirect(dangerous_return_to or "/", auth_client.config.app_base_url)
             
             # Create the callback URL for linking
             callback_path = "/auth/connect/callback"
-            redirect_uri = create_route_url(callback_path, request.app.state.config.app_base_url)
+            redirect_uri = create_route_url(callback_path, auth_client.config.app_base_url)
             
             # Call the startLinkUser method on our AuthClient. This method should accept parameters similar to:
             # connection, connectionScope, authorizationParams (with redirect_uri), and appState.
@@ -247,13 +240,10 @@ def register_auth_routes(router: APIRouter, config: Auth0Config):
             
             # Retrieve the returnTo parameter from appState if available
             return_to = result.get("appState", {}).get("returnTo")
-            app_base_url = request.app.state.config.app_base_url
+            app_base_url = auth_client.config.app_base_url
 
-            # Create a RedirectResponse and merge Set-Cookie headers from the original response
             redirect_response = RedirectResponse(url=return_to or app_base_url)
-            # Merge cookie headers (if any) from `response`
             if "set-cookie" in response.headers:
-                # If multiple Set-Cookie headers exist, they might be a list.
                 cookies = response.headers.getlist("set-cookie") if hasattr(response.headers, "getlist") else [response.headers["set-cookie"]]
                 for cookie in cookies:
                     redirect_response.headers.append("set-cookie", cookie)

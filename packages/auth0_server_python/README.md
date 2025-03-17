@@ -42,6 +42,7 @@ auth0 = ServerClient(
     secret='<AUTH0_SECRET>',
     authorization_params= {
       redirect_uri: '<AUTH0_REDIRECT_URI>',
+    }
 )
 ```
 
