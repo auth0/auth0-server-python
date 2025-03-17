@@ -97,8 +97,6 @@ async def callback(request: Request):
     return RedirectResponse(url="/")
 ```
 
-### 4. Configuring the Store
-
 ## Feedback
 
 ### Contributing

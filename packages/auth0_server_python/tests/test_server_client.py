@@ -1,11 +1,13 @@
 import pytest
 import time
-import asyncio
-from unittest.mock import AsyncMock, patch
 
-# Adjust import to match your actual package structure
+from unittest.mock import AsyncMock, patch, MagicMock
+from urllib.parse import urlparse, parse_qs, urlencode
+
+
 from auth_server.server_client import ServerClient
-from error import MissingRequiredArgumentError, ApiError, MissingTransactionError, StartLinkUserError, AccessTokenForConnectionError,BackchannelLogoutError
+from error import MissingRequiredArgumentError, ApiError, MissingTransactionError, StartLinkUserError, AccessTokenError, AccessTokenForConnectionError,BackchannelLogoutError
+from auth_types import LogoutOptions, TransactionData
 
 
 @pytest.mark.asyncio
@@ -94,37 +96,108 @@ async def test_complete_interactive_login_no_transaction():
 
     assert "transaction" in str(exc.value)
 
-# @pytest.mark.asyncio
-# async def test_complete_interactive_login_returns_app_state(mocker):
-#     mock_tx_store = AsyncMock()
-#     # The stored transaction includes an appState
-#     mock_tx_store.get.return_value = {"appState": {"foo": "bar"}, "code_verifier": "123"}
+@pytest.mark.asyncio
+async def test_complete_interactive_login_returns_app_state(mocker):
+    mock_tx_store = AsyncMock()
+    # The stored transaction includes an appState
+    mock_tx_store.get.return_value = TransactionData(code_verifier="123", app_state={"foo": "bar"})
 
-#     mock_state_store = AsyncMock()
+    mock_state_store = AsyncMock()
 
-#     client = ServerClient(
-#         domain="auth0.local",
-#         client_id="client_id",
-#         client_secret="client_secret",
-#         transaction_store=mock_tx_store,
-#         state_store=mock_state_store,
-#         secret="some-secret",
-#     )
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="some-secret",
+    )
 
-#     # Patch token exchange
-#     mocker.patch.object(client._oauth, "metadata", {"token_endpoint": "https://auth0.local/token"})
-#     mock_fetch_token = mocker.patch.object(client._oauth, "fetch_token", return_value={
-#         "access_token": "token123",
-#         "expires_in": 3600,
-#         "userinfo": {"sub": "user123"},
-#     })
+    # Patch token exchange
+    mocker.patch.object(client._oauth, "metadata", {"token_endpoint": "https://auth0.local/token"})
 
-#     result = await client.complete_interactive_login("https://myapp.com/callback?code=abc")
-#     assert result["app_state"] == {"foo": "bar"}
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+        "expires_in": 3600,
+        "userinfo": {"sub": "user123"},
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
 
-#     # Check the store was updated
-#     mock_state_store.set.assert_awaited_once()
-#     mock_tx_store.delete.assert_awaited_once()
+
+    result = await client.complete_interactive_login("https://myapp.com/callback?code=abc&state=xyz")
+
+    assert result["app_state"] == {"foo": "bar"}
+    mock_state_store.set.assert_awaited_once()
+    mock_tx_store.delete.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_start_link_user_no_id_token():
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    
+    server_client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        transaction_store=mock_transaction_store,
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+    
+    # No 'idToken' in the store
+    mock_state_store.get.return_value = None
+    
+    with pytest.raises(StartLinkUserError) as exc:
+        await server_client.start_link_user({
+            "connection": "<connection>"
+        })
+    assert "Unable to start the user linking process without a logged in user" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_start_link_user_no_id_token():
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = None  # No session => no idToken
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret",
+    )
+
+    with pytest.raises(StartLinkUserError) as exc:
+        await client.start_link_user({"connection": "some_connection"})
+    assert "Unable to start the user linking process without a logged in user" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_complete_link_user_returns_app_state(mocker):
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(code_verifier="abc", app_state={"foo": "bar"})
+
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="some-secret",
+    )
+
+    # Patch token exchange
+    mocker.patch.object(client, "_fetch_oidc_metadata", return_value={"token_endpoint": "https://auth0.local/token"})
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+
+    result = await client.complete_link_user("https://myapp.com/callback?code=123&state=xyz")
+    assert result["app_state"] == {"foo": "bar"}
+    mock_tx_store.delete.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -175,75 +248,6 @@ async def test_login_backchannel_stores_access_token(mocker):
     # The structure might vary, but typically you have a list/dict representing the new token
     assert "token_sets" in stored_value
     assert stored_value["token_sets"][0]["access_token"] == "access_token_value"
-
-
-@pytest.mark.asyncio
-async def test_start_link_user_no_id_token():
-    mock_transaction_store = AsyncMock()
-    mock_state_store = AsyncMock()
-    # mock_state_store.get.return_value = {} or None => means no user, no idToken
-    
-    server_client = ServerClient(
-        domain="auth0.local",
-        client_id="<client_id>",
-        client_secret="<client_secret>",
-        transaction_store=mock_transaction_store,
-        state_store=mock_state_store,
-        secret="some-secret"
-    )
-    
-    # No 'idToken' in the store
-    mock_state_store.get.return_value = None
-    
-    with pytest.raises(StartLinkUserError) as exc:
-        await server_client.start_link_user({
-            "connection": "<connection>"
-        })
-    assert "Unable to start the user linking process without a logged in user" in str(exc.value)
-
-@pytest.mark.asyncio
-async def test_start_link_user_no_id_token():
-    mock_state_store = AsyncMock()
-    mock_state_store.get.return_value = None  # No session => no idToken
-
-    client = ServerClient(
-        domain="auth0.local",
-        client_id="client_id",
-        client_secret="client_secret",
-        transaction_store=AsyncMock(),
-        state_store=mock_state_store,
-        secret="some-secret",
-    )
-
-    with pytest.raises(StartLinkUserError) as exc:
-        await client.start_link_user({"connection": "some_connection"})
-    assert "Unable to start the user linking process without a logged in user" in str(exc.value)
-
-# @pytest.mark.asyncio
-# async def test_complete_link_user_returns_app_state(mocker):
-#     mock_tx_store = AsyncMock()
-#     mock_tx_store.get.return_value = {
-#         "app_state": {"foo": "bar"},
-#         "code_verifier": "abc"
-#     }
-
-#     mock_state_store = AsyncMock()
-#     client = ServerClient(
-#         domain="auth0.local",
-#         client_id="client_id",
-#         client_secret="client_secret",
-#         transaction_store=mock_tx_store,
-#         state_store=mock_state_store,
-#         secret="some-secret",
-#     )
-
-#     # Patch token exchange
-#     mocker.patch.object(client._oauth, "metadata", {"token_endpoint": "https://auth0.local/token"})
-#     mocker.patch.object(client._oauth, "fetch_token", return_value={"access_token": "token123"})
-
-#     result = await client.complete_link_user("https://myapp.com/callback?code=123")
-#     assert result["app_state"] == {"foo": "bar"}
-#     mock_tx_store.delete.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -435,7 +439,7 @@ async def test_logout():
         state_store=mock_state_store,
         secret="some-secret"
     )
-    url = await client.logout({"return_to": "/after_logout"})
+    url = await client.logout(LogoutOptions(return_to="/after_logout"))
 
     mock_state_store.delete.assert_awaited_once()
     # Check returned URL
@@ -456,7 +460,7 @@ async def test_logout_no_session():
     )
     mock_state_store.delete.side_effect = None  # Even if it's empty
 
-    url = await client.logout({"return_to": "/bye"})
+    url = await client.logout(LogoutOptions(return_to= "/bye"))
 
     mock_state_store.delete.assert_awaited_once()  # No error if already empty
     assert "logout" in url
@@ -496,4 +500,562 @@ async def test_handle_backchannel_logout_ok(mocker):
         {"sub": "user_sub", "sid": "session_id_123"}, 
         None
     )
+
+# Test For AuthLib Helpers
+
+@pytest.mark.asyncio
+async def test_build_link_user_url_success(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    
+    # Patch _fetch_oidc_metadata to return an authorization_endpoint
+    mock_fetch = mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"}
+    )
+    
+    # Example inputs
+    connection = "<connection>"
+    id_token = "<id_token>"
+    code_verifier = "my_code_verifier"
+    state = "xyz_state"
+    connection_scope = "<scope>"
+    authorization_params = {"redirect_uri": "/test_redirect_uri"}
+    
+    # Act: call the function
+    result_url = await client._build_link_user_url(
+        connection=connection,
+        id_token=id_token,
+        code_verifier=code_verifier,
+        state=state,
+        connection_scope=connection_scope,
+        authorization_params=authorization_params
+    )
+    
+    # Assert the URL is correct
+    parsed = urlparse(result_url)
+    queries = parse_qs(parsed.query)
+
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "auth0.local"
+    assert parsed.path == "/authorize"
+
+    # Check query parameters
+    assert queries["client_id"] == ["<client_id>"]
+    assert queries["redirect_uri"] == ["/test_redirect_uri"]  # from authorization_params
+    assert queries["response_type"] == ["code"]
+    assert "code_challenge" in queries
+    assert queries["code_challenge_method"] == ["S256"]
+    assert queries["id_token_hint"] == ["<id_token>"]
+    assert queries["requested_connection"] == ["<connection>"]
+    assert queries["requested_connection_scope"] == ["<scope>"]
+    assert queries["scope"] == ["openid link_account offline_access"]
+    assert queries["state"] == ["xyz_state"]
+    
+
+    # Confirm we fetched the metadata if not set
+    mock_fetch.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_build_link_user_url_fallback_authorize(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    
+    # Patch _fetch_oidc_metadata to NOT have an authorization_endpoint
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={}  # empty dict, triggers fallback
+    )
+    
+    result_url = await client._build_link_user_url(
+        connection="<connection>",
+        id_token="<id_token>",
+        code_verifier="my_code_verifier",
+        state="xyz_state",
+        connection_scope="<scope>",
+        authorization_params={"redirect_uri": "/test_redirect_uri"}
+    )
+    
+    parsed = urlparse(result_url)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "auth0.local"
+    assert parsed.path == "/authorize"
+    
+    queries = parse_qs(parsed.query)
+    # Confirm the same query param logic
+    # Just a quick check for e.g. "client_id" or "scope"
+    assert queries["client_id"] == ["<client_id>"]
+    assert queries["requested_connection_scope"] == ["<scope>"]
+    assert queries["scope"] == ["openid link_account offline_access"]
+
+@pytest.mark.asyncio
+async def test_build_unlink_user_url_success(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    # Patch out metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"}
+    )
+
+    result_url = await client._build_link_user_url(
+        connection="<connection>",
+        id_token="<id_token>",
+        code_verifier="some_verifier",
+        state="xyz_unlink",
+        authorization_params={"redirect_uri": "/test_redirect_uri"}
+    )
+
+    parsed = urlparse(result_url)
+    queries = parse_qs(parsed.query)
+
+    assert parsed.path == "/authorize"
+    assert queries["client_id"] == ["<client_id>"]
+    assert queries["redirect_uri"] == ["/test_redirect_uri"]
+    assert queries["scope"] == ["openid link_account offline_access"]
+    assert queries["code_challenge_method"] == ["S256"]
+    assert queries["id_token_hint"] == ["<id_token>"]
+    assert queries["requested_connection"] == ["<connection>"]
+
+@pytest.mark.asyncio
+async def test_build_unlink_user_url_fallback_authorize(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    # No 'authorization_endpoint'
+    mocker.patch.object(client, "_fetch_oidc_metadata", return_value={})
+
+    result_url = await client._build_unlink_user_url(
+        connection="<connection>",
+        id_token="<id_token>",
+        code_verifier="verifier123",
+        state="unlink_state",
+        authorization_params={"redirect_uri": "/test_redirect_uri"}
+    )
+
+    parsed = urlparse(result_url)
+    assert parsed.netloc == "auth0.local"
+    assert parsed.path == "/authorize"
+
+    queries = parse_qs(parsed.query)
+    assert queries["scope"] == ["openid unlink_account offline_access"]
+
+
+@pytest.mark.asyncio
+async def test_build_unlink_user_url_success(mocker):
+    # Create a client with the relevant fields
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    # Patch the metadata fetch to include a valid authorization endpoint
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"}
+    )
+
+    # Inputs to _build_unlink_user_url
+    connection = "<connection>"
+    id_token = "<id_token>"
+    code_verifier = "verifier_123"
+    state = "xyz_unlink"
+    authorization_params = {"redirect_uri": "/test_redirect_uri"}
+
+    # Call the method
+    result_url = await client._build_unlink_user_url(
+        connection=connection,
+        id_token=id_token,
+        code_verifier=code_verifier,
+        state=state,
+        authorization_params=authorization_params
+    )
+
+    # Parse and verify the URL
+    parsed = urlparse(result_url)
+    queries = parse_qs(parsed.query)
+
+    # Check domain & path
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "auth0.local"
+    assert parsed.path == "/authorize"
+
+    # Check the main query parameters
+    assert queries["client_id"] == ["<client_id>"]
+    assert queries["redirect_uri"] == ["/test_redirect_uri"]
+    assert queries["scope"] == ["openid unlink_account offline_access"]
+    assert queries["response_type"] == ["code"]
+    assert "code_challenge" in queries
+    assert queries["code_challenge_method"] == ["S256"]
+    assert queries["id_token_hint"] == ["<id_token>"]
+    assert queries["requested_connection"] == ["<connection>"]
+    assert queries["state"] == ["xyz_unlink"]
+
+@pytest.mark.asyncio
+async def test_build_unlink_user_url_no_authorization_endpoint(mocker):
+    # Same client setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    # Patch _fetch_oidc_metadata to return no authorization_endpoint
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={}
+    )
+    result_url = await client._build_unlink_user_url(
+        connection="<connection>",
+        id_token="<id_token>",
+        code_verifier="verifier123",
+        state="unlink_state",
+        authorization_params={"redirect_uri": "/test_redirect_uri"}
+    )
+
+    parsed = urlparse(result_url)
+    assert parsed.netloc == "auth0.local"
+    assert parsed.path == "/authorize"
+
+    queries = parse_qs(parsed.query)
+    assert queries["scope"] == ["openid unlink_account offline_access"]
+
+
+@pytest.mark.asyncio
+async def test_backchannel_auth_with_audience_and_binding_message(mocker):
+    client = ServerClient(
+            domain="auth0.local",
+            client_id="<client_id>",
+            client_secret="<client_secret>",
+            secret="some-secret",
+            authorization_params={"audience": "<audience>"}
+        )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "backchannel_authentication_endpoint": "https://auth0.local/custom-authorize",
+            "token_endpoint": "https://auth0.local/custom/token"
+        }
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+
+    first_response = AsyncMock()
+    first_response.status_code = 200
+
+    first_response.json = MagicMock(return_value={
+        "auth_req_id": "auth_req_789",
+        "interval": 0.5,
+        "expires_in": 60
+    })
+
+    second_response = AsyncMock()
+    second_response.status_code = 200
+    second_response.json = MagicMock(return_value={
+        "access_token": "accessTokenWithAudienceAndBindingMessage",
+        "expires_in": 60
+    })
+
+    mock_post.side_effect = [first_response, second_response]
+
+    options = {
+        "binding_message": "<binding_message>",
+        "login_hint": {"sub": "<sub>"}
+    }
+    result = await client.backchannel_authentication(options)
+
+    assert result["access_token"] == "accessTokenWithAudienceAndBindingMessage"
+    assert mock_post.await_count == 2
+
+@pytest.mark.asyncio
+async def test_backchannel_auth_rar(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret",
+        authorization_params={"audience": "<audience>"}
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "backchannel_authentication_endpoint": "https://auth0.local/custom-authorize",
+            "token_endpoint": "https://auth0.local/custom/token"
+        }
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+
+    first_response = AsyncMock()
+    first_response.status_code = 200
+    first_response.json = MagicMock(return_value={
+        "auth_req_id": "auth_req_with_authorization_details",
+        "interval": 0.5,
+        "expires_in": 60
+    })
+
+    second_response = AsyncMock()
+    second_response.status_code = 200
+    second_response.json = MagicMock(return_value={
+        "access_token": "token_with_rar",
+         "authorization_details": [{"type": "accepted"}]
+    })
+
+    mock_post.side_effect = [first_response, second_response]
+
+    options = {
+        "binding_message": "<binding_message>",
+        "login_hint": {"sub": "<sub>"},
+        "authorization_params": {
+            "authorization_details": '[{"type":"accepted"}]'
+        }
+    }
+    result = await client.backchannel_authentication(options)
+
+    assert result["authorization_details"][0]["type"] == "accepted"
+    assert mock_post.await_count == 2
+
+@pytest.mark.asyncio
+async def test_backchannel_auth_token_exchange_failed(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret",
+        authorization_params={"should_fail_token_exchange": True}
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "backchannel_authentication_endpoint": "https://auth0.local/custom-authorize",
+            "token_endpoint": "https://auth0.local/custom/token"
+        }
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+
+    first_response = AsyncMock()
+    first_response.status_code = 200
+    first_response.json = MagicMock(return_value={
+        "auth_req_id": "should_fail_token_exchange",
+        "interval": 0.5,
+        "expires_in": 60
+    })
+ 
+    second_response = AsyncMock()
+    second_response.status_code = 400
+    second_response.json = MagicMock(return_value={
+        "error": "<error_code>",
+        "error_description": "<error_description>"
+    })
+
+    mock_post.side_effect = [first_response, second_response]
+
+    with pytest.raises(ApiError) as exc:
+        await client.backchannel_authentication({
+            "login_hint": {"sub": "<sub>"},
+            "binding_message": "<binding_message>"
+        })
+
+    assert "Backchannel authentication failed: <error_description>" in str(exc.value)
+
+    assert mock_post.await_count == 2
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_success(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    
+    mocker.patch.object(
+        client._oauth, 
+        "metadata", 
+        {"token_endpoint": "https://auth0.local/token"}
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+
+    success_response = AsyncMock()
+    success_response.status_code = 200
+    success_response.json = MagicMock(return_value={
+        "access_token": "federated_access_token_value",
+        "expires_in": 3600,
+        "scope": "openid profile"
+    })
+    mock_post.return_value = success_response
+
+
+    result = await client.get_token_for_connection({
+        "connection": "<connection>",
+        "refresh_token": "<refresh_token>",
+        "login_hint": "<sub>"
+    })
+
+
+    assert result is not None
+    assert result["access_token"] == "federated_access_token_value"
+    assert "expires_at" in result
+    assert result["scope"] == "openid profile"
+
+    mock_post.assert_awaited_once()
+    args, kwargs = mock_post.call_args
+    assert kwargs["data"]["connection"] == "<connection>"
+    assert kwargs["data"]["subject_token"] == "<refresh_token>"
+    assert kwargs["data"]["login_hint"] == "<sub>"
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_exchange_failed(mocker):
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client._oauth,
+        "metadata",
+        {"token_endpoint": "https://auth0.local/token"}
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+
+
+    fail_response = AsyncMock()
+    fail_response.status_code = 400
+    fail_response.json = MagicMock(return_value={
+        "error": "token_for_connection_error",
+        "error_description": "<error_description>"
+    })
+    mock_post.return_value = fail_response
+
+
+    with pytest.raises(AccessTokenForConnectionError) as exc:
+        await client.get_token_for_connection({
+            "connection": "<connection>",
+            "refresh_token": "<refresh_token_should_fail>"
+        })
+
+
+    assert "Failed to get token for connection: 400" in str(exc.value)
+
+    mock_post.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_get_token_by_refresh_token_success(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client._oauth,
+        "metadata",
+        {"token_endpoint": "https://auth0.local/token"}
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+
+    success_response = AsyncMock()
+    success_response.status_code = 200
+    success_response.json = MagicMock(return_value={
+        "access_token": "my_new_access_token",
+        "expires_in": 3600
+    })
+    mock_post.return_value = success_response
+
+    token_data = await client.get_token_by_refresh_token({"refresh_token": "abc"})
+
+
+    assert token_data is not None
+    assert token_data["access_token"] == "my_new_access_token"
+
+    assert "expires_at" in token_data
+
+    now = int(time.time())
+    assert now <= token_data["expires_at"] <= now + 3700  
+
+
+    mock_post.assert_awaited_once()
+    args, kwargs = mock_post.call_args
+
+    assert kwargs["data"]["refresh_token"] == "abc"
+    assert kwargs["data"]["grant_type"] == "refresh_token"
+
+@pytest.mark.asyncio
+async def test_get_token_by_refresh_token_exchange_failed(mocker):
+    # Create the client
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client._oauth,
+        "metadata",
+        {"token_endpoint": "https://auth0.local/token"}
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+
+    fail_response = AsyncMock()
+    fail_response.status_code = 400
+    fail_response.json = MagicMock(return_value={
+        "error": "<error_code>",
+        "error_description": "<error_description>"
+    })
+    mock_post.return_value = fail_response
+
+    with pytest.raises(ApiError) as exc:
+        await client.get_token_by_refresh_token({"refresh_token": "<refresh_token_should_fail>"})
+
+
+    assert "<error_description>" in str(exc.value)
+
+    mock_post.assert_awaited_once()
+
+    args, kwargs = mock_post.call_args
+    assert kwargs["data"]["refresh_token"] == "<refresh_token_should_fail>"
 

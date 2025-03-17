@@ -60,7 +60,6 @@ class ServerClient(Generic[TStoreOptions]):
         secret: str = None,
         transaction_store = None,
         state_store = None,
-        state_absolute_duration: int = 259200,  # 3 days in seconds
         transaction_identifier: str = "_a0_tx",
         state_identifier: str = "_a0_session",
         authorization_params: Optional[Dict[str, Any]] = None
@@ -76,7 +75,6 @@ class ServerClient(Generic[TStoreOptions]):
             secret: Secret used for encryption
             transaction_store: Custom transaction store (defaults to MemoryTransactionStore)
             state_store: Custom state store (defaults to MemoryStateStore)
-            state_absolute_duration: Time in seconds before state expires (default: 3 days)
             transaction_identifier: Identifier for transaction data
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
@@ -247,10 +245,8 @@ class ServerClient(Generic[TStoreOptions]):
         if user_info:
             user_claims = UserClaims.parse_obj(user_info)
         else:
-            # Alternatively, decode id_token if needed (not recommended if userinfo is available)
             id_token = token_response.get("id_token")            
-            if id_token:
-                # Note: For production, properly verify the token                
+            if id_token:              
                 claims = jwt.decode(id_token, options={"verify_signature": False})
                 user_claims = UserClaims.parse_obj(claims)
         
@@ -287,7 +283,155 @@ class ServerClient(Generic[TStoreOptions]):
         if transaction_data.app_state:
             result["app_state"] = transaction_data.app_state
             
-        return result    
+        return result
+
+    async def start_link_user(
+        self,
+        options,
+        store_options: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Starts the user linking process, and returns a URL to redirect the user-agent to.
+        
+        Args:
+            options: Options used to configure the user linking process.
+            store_options: Optional options used to pass to the Transaction and State Store.
+            
+        Returns:
+            URL to redirect the user to for authentication.
+        """
+        state_data = await self._state_store.get(self._state_identifier, store_options)
+        
+        if not state_data or not state_data.get("id_token"):
+            raise StartLinkUserError(
+                "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
+            )
+        
+        # Generate PKCE and state for security
+        code_verifier = PKCE.generate_code_verifier()
+        state = PKCE.generate_random_string(32)
+        
+        # Build the URL for user linking
+        link_user_url = await self._build_link_user_url(
+            connection=options.get("connection"),
+            connection_scope=options.get("connectionScope"),
+            id_token=state_data["id_token"],
+            code_verifier=code_verifier,
+            state=state,
+            authorization_params=options.get("authorization_params")
+        )
+        
+        # Store transaction data
+        transaction_data = TransactionData(
+            code_verifier=code_verifier,
+            app_state=options.get("app_state")
+        )
+        
+        await self._transaction_store.set(
+            f"{self._transaction_identifier}:{state}", 
+            transaction_data,
+            options=store_options
+        )
+        
+        return link_user_url
+    
+    async def complete_link_user(
+        self,
+        url: str,
+        store_options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Completes the user linking process.
+        
+        Args:
+            url: The URL from which the query params should be extracted
+            store_options: Optional options for the stores
+            
+        Returns:
+            Dictionary containing the original app state
+        """
+
+        # We can reuse the interactive login completion since the flow is similar
+        result = await self.complete_interactive_login(url, store_options)
+        
+        # Return just the app state as specified
+        return {
+            "app_state": result.get("app_state")
+        }
+    
+    async def start_unlink_user(
+        self,
+        options,
+        store_options: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Starts the user unlinking process, and returns a URL to redirect the user-agent to.
+        
+        Args:
+            options: Options used to configure the user unlinking process.
+            store_options: Optional options used to pass to the Transaction and State Store.
+            
+        Returns:
+            URL to redirect the user to for authentication.
+        """
+        state_data = await self._state_store.get(self._state_identifier, store_options)
+        
+        if not state_data or not state_data.get("id_token"):
+            raise StartLinkUserError(
+                "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
+            )
+        
+        # Generate PKCE and state for security
+        code_verifier = PKCE.generate_code_verifier()
+        state = PKCE.generate_random_string(32)
+        
+        # Build the URL for user linking
+        link_user_url = await self._build_unlink_user_url(
+            connection=options.get("connection"),
+            id_token=state_data["id_token"],
+            code_verifier=code_verifier,
+            state=state,
+            authorization_params=options.get("authorization_params")
+        )
+        
+        # Store transaction data
+        transaction_data = TransactionData(
+            code_verifier=code_verifier,
+            app_state=options.get("app_state")
+        )
+        
+        await self._transaction_store.set(
+            f"{self._transaction_identifier}:{state}", 
+            transaction_data,
+            options=store_options
+        )
+        
+        return link_user_url
+    
+    async def complete_unlink_user(
+        self,
+        url: str,
+        store_options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Completes the user unlinking process.
+        
+        Args:
+            url: The URL from which the query params should be extracted
+            store_options: Optional options for the stores
+            
+        Returns:
+            Dictionary containing the original app state
+        """
+
+        # We can reuse the interactive login completion since the flow is similar
+        result = await self.complete_interactive_login(url, store_options)
+        
+        # Return just the app state as specified
+        return {
+            "app_state": result.get("app_state")
+        }
+        
 
     
     async def login_backchannel(
@@ -557,83 +701,9 @@ class ServerClient(Generic[TStoreOptions]):
             raise BackchannelLogoutError(f"Error processing logout token: {str(e)}")
     
 
-    async def start_link_user(
-        self,
-        options,
-        store_options: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Starts the user linking process, and returns a URL to redirect the user-agent to.
-        
-        Args:
-            options: Options used to configure the user linking process.
-            store_options: Optional options used to pass to the Transaction and State Store.
-            
-        Returns:
-            URL to redirect the user to for authentication.
-        """
-        state_data = await self._state_store.get(self._state_identifier, store_options)
-        
-        if not state_data or not state_data.get("id_token"):
-            raise StartLinkUserError(
-                "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
-            )
-        
-        # Generate PKCE and state for security
-        code_verifier = PKCE.generate_code_verifier()
-        state = PKCE.generate_random_string(32)
-        
-        # Build the URL for user linking
-        link_user_url = await self._build_link_user_url(
-            connection=options.get("connection"),
-            connection_scope=options.get("connectionScope"),
-            id_token=state_data["id_token"],
-            code_verifier=code_verifier,
-            state=state,
-            authorization_params=options.get("authorization_params")
-        )
-        
-        # Store transaction data
-        transaction_data = TransactionData(
-            code_verifier=code_verifier,
-            app_state=options.get("app_state")
-        )
-        
-        await self._transaction_store.set(
-            f"{self._transaction_identifier}:{state}", 
-            transaction_data,
-            options=store_options
-        )
-        
-        return link_user_url
-    
-    async def complete_link_user(
-        self,
-        url: str,
-        store_options: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Completes the user linking process.
-        
-        Args:
-            url: The URL from which the query params should be extracted
-            store_options: Optional options for the stores
-            
-        Returns:
-            Dictionary containing the original app state
-        """
-
-        # We can reuse the interactive login completion since the flow is similar
-        result = await self.complete_interactive_login(url, store_options)
-        
-        # Return just the app state as specified
-        return {
-            "app_state": result.get("app_state")
-        }
-    
 
     # Authlib Helpers
-
+    
     async def _build_link_user_url(
         self,
         connection: str,
@@ -674,6 +744,45 @@ class ServerClient(Generic[TStoreOptions]):
         if connection_scope:
             params["requested_connection_scope"] = connection_scope
         
+        # Add any additional parameters
+        if authorization_params:
+            params.update(authorization_params)
+        
+        return URL.build_url(auth_endpoint, params)
+    
+    async def _build_unlink_user_url(
+        self,
+        connection: str,
+        id_token: str,
+        code_verifier: str,
+        state: str,
+        authorization_params: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Build a URL for unlinking user accounts"""
+        # Generate code challenge from verifier
+        code_challenge = PKCE.generate_code_challenge(code_verifier)
+        
+        # Get metadata if not already fetched
+        if not hasattr(self, '_oauth_metadata'):
+            self._oauth_metadata = await self._fetch_oidc_metadata(self._domain)
+        
+        # Get authorization endpoint
+        auth_endpoint = self._oauth_metadata.get("authorization_endpoint", 
+                                                f"https://{self._domain}/authorize")
+        
+        # Build params
+        params = {
+            "client_id": self._client_id,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+            "requested_connection": connection,
+            "response_type": "code",
+            "id_token_hint": id_token,
+            "scope": "openid unlink_account offline_access",
+            "access_type": "offline",
+            "prompt": "login"
+        }
         # Add any additional parameters
         if authorization_params:
             params.update(authorization_params)

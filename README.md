@@ -3,17 +3,18 @@ Auth0-Auth-Python Mono Repo, containing SDKs for implementing user authenticatio
 ![Release](https://img.shields.io/npm/v/@auth0/auth0-auth-js)
 ![Downloads](https://img.shields.io/npm/dw/@auth0/auth0-auth-js)
 [![License](https://img.shields.io/:license-mit-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
+![Release](https://img.shields.io/pypi/v/auth0-python)
+![Downloads](https://img.shields.io/pypi/dw/auth0-python)
+[![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
 
 📚 [Packages](#packages) - 💬 [Feedback](#feedback)
 
 
 ## Packages
-- [`auth0-api-python`](./packages/auth0_api_python/README.md) - Will be coming soon
 - [`auth0-server-python`](./packages/auth0_server_js/README.md) - Authentication SDK for Server-Side Applications on Python runtimes (built on Authlib).
 - [`auth0-fastapi`](./packages/auth0_fastapi/README.md) - Authentication SDK for FastAPI Applications.
+- [`auth0-api-python`](./packages/auth0_api_python/README.md) - Will be coming soon!
 
-
-3. Follow example instructions
 
 ## Feedback
 
