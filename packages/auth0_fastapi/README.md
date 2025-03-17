@@ -62,16 +62,15 @@ from auth0_fastapi.errors import register_exception_handlers
 app = FastAPI(title="Auth0-FastAPI Example")
 
 # 1) Add Session Middleware, needed if you're storing data in (or rely on) session cookies
-app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET"))
+app.add_middleware(SessionMiddleware, secret_key="YOUR_SESSION_SECRET")
 
 # 2) Create an Auth0Config with your Auth0 credentials & app settings
 config = Auth0Config(
     domain="YOUR_AUTH0_DOMAIN",          # e.g., "dev-1234abcd.us.auth0.com"
-    clientId="YOUR_CLIENT_ID",
-    clientSecret="YOUR_CLIENT_SECRET",
-    appBaseUrl="http://localhost:3000",  # or your production URL
-    secret=os.environ.get("SESSION_SECRET"),
-    mount_routes=True,  # mounts /auth/login, /auth/logout, /auth/callback, /auth/backchannel-logout
+    client_id="YOUR_CLIENT_ID",
+    client_secret="YOUR_CLIENT_SECRET",
+    app_base_url="http://localhost:3000",  # or your production URL
+    secret="YOUR_SESSION_SECRET"
 )
 
 # 3) Instantiate the AuthClient
@@ -145,9 +144,9 @@ app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET"
 # 2) Create an Auth0Config with your Auth0 credentials & app settings
 config = Auth0Config(
     domain="YOUR_AUTH0_DOMAIN",          # e.g., "dev-1234abcd.us.auth0.com"
-    clientId="YOUR_CLIENT_ID",
-    clientSecret="YOUR_CLIENT_SECRET",
-    appBaseUrl="http://localhost:8000",  # or your production URL
+    client_id="YOUR_CLIENT_ID",
+    client_secret="YOUR_CLIENT_SECRET",
+    app_base_url="http://localhost:8000",  # or your production URL
     secret=os.environ.get("SESSION_SECRET"),
     mount_routes=True,  # mounts /auth/login, /auth/logout, /auth/callback, /auth/backchannel-logout
 )
@@ -180,10 +179,10 @@ To disable this behavior, you can set the `mountRoutes` option to `false` (it's 
 ```python
 config = Auth0Config(
     domain="YOUR_AUTH0_DOMAIN",    
-    clientId="YOUR_CLIENT_ID",
-    clientSecret="YOUR_CLIENT_SECRET",
-    appBaseUrl="http://localhost:3000",
-    secret=os.environ.get("SESSION_SECRET"),
+    client_id="YOUR_CLIENT_ID",
+    client_secret="YOUR_CLIENT_SECRET",
+    app_base_url="http://localhost:3000",
+    secret="YOUR_SESSION_SECRET",
     mount_routes=True,
 )
 ```
@@ -208,7 +207,7 @@ from fastapi import Depends, Request, Response, HTTPException, status
 def require_session(request: Request, response: Response):
     store_options = {"request": request, "response": response}
     # If the user is logged in, get_session() returns a session object
-    session = request.app.state.auth_client.client.get_session(store_options=store_options)
+    session = auth_client.get_session(store_options=store_options)
     if not session:
         # Not logged in, so redirect or raise an error
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Please log in")
@@ -217,7 +216,7 @@ def require_session(request: Request, response: Response):
 @app.get("/profile")
 async def profile(request: Request, response: Response, session=Depends(require_session)):
     store_options = {"request": request, "response": response}
-    user = await request.app.state.auth_client.client.get_user(store_options=store_options)
+    user = await auth_client.get_user(store_options=store_options)
     if not user:
         return {"error": "User not authenticated"}
     
@@ -236,14 +235,16 @@ async def profile(request: Request, response: Response, session=Depends(require_
 
 If you need to call an API on behalf of the user, you want to specify the `audience` parameter when registering the plugin. This will make the SDK request an access token for the specified audience when the user logs in.
 
-```ts
+```python
 config = Auth0Config(
     domain="YOUR_AUTH0_DOMAIN",    
-    clientId="YOUR_CLIENT_ID",
-    clientSecret="YOUR_CLIENT_SECRET",
-    audience='YOUR_AUDIENCE'
-    appBaseUrl="http://localhost:3000",
-    secret=os.environ.get("SESSION_SECRET")
+    client_id="YOUR_CLIENT_ID",
+    client_secret="YOUR_CLIENT_SECRET",
+    app_base_url="http://localhost:3000",
+    secret="YOUR_SESSION_SECRET"
+    auhorization_params= {
+      "audience": "YOUR_AUDIENCE"
+    }
 )
 ```
 The `AUTH0_AUDIENCE` is the identifier of the API you want to call. You can find this in the API section of the Auth0 dashboard.
