@@ -1,7 +1,6 @@
-The `auth0-api-python` library allows you to secure APIs running on Python, particularly for verifying Auth0-issued JWT access tokens.
+The `auth0-api-python` library allows you to secure APIs running on Python, particularly for verifying Auth0-issued access tokens.
 
 It’s intended as a foundation for building more framework-specific integrations (e.g., with FastAPI, Django, etc.), but you can also use it directly in any Python server-side environment.
-
 
 ![Release](https://img.shields.io/pypi/v/auth0-python) ![Downloads](https://img.shields.io/pypi/dw/auth0-python) [![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
 
@@ -9,17 +8,18 @@ It’s intended as a foundation for building more framework-specific integration
 
 ## Documentation
 
-- [Examples](https://github.com/auth0/auth0-server-python/blob/main/packages/auth0_api_python/EXAMPLES.md) - examples for your different use cases.
+- [Examples](https://github.com/auth0/auth0-server-python/blob/main/packages/auth0_server_python/EXAMPLES.md) - examples for your different use cases.
 - [Docs Site](https://auth0.com/docs) - explore our docs site and learn more about Auth0.
 
 ## Getting Started
 
 ### 1. Install the SDK
 
+_This library requires Python 3.9+._
+
 ```shell
 pip install auth0-api-python
 ```
-_This library requires Python 3.9+._
 
 If you’re using Poetry:
 
@@ -31,9 +31,9 @@ poetry install auth0-api-python
 
 Create an instance of the `ApiClient`. This instance will be imported and used anywhere we need access to the methods.
 
-
 ```python 
 from auth0_api_python import ApiClient, ApiClientOptions
+
 
 api_client = ApiClient(ApiClientOptions(
     domain="<AUTH0_DOMAIN>",
@@ -42,11 +42,11 @@ api_client = ApiClient(ApiClientOptions(
 ```
 
 - The `AUTH0_DOMAIN` can be obtained from the [Auth0 Dashboard](https://manage.auth0.com) once you've created an application.
-- The `AUTH0_AUDIENCE` is the identifier of the API. You can find this in the API section of the Auth0 dashboard.
+- The `AUTH0_AUDIENCE` is the identifier of the API. You can find this in the [APIs section of the Auth0 Dashboard](https://manage.auth0.com/#/apis/).
 
 ### 3. Verify the Access Token
 
-Use the `verify_access_token` method to validate JWT access tokens. The method automatically checks critical claims like `iss`, `aud`, `exp`, `nbf`.
+Use the `verify_access_token` method to validate access tokens. The method automatically checks critical claims like `iss`, `aud`, `exp`, `nbf`.
 
 ```python
 import asyncio
@@ -64,8 +64,8 @@ async def main():
     print(decoded_and_verified_token)
 
 asyncio.run(main())
-
 ```
+
 In this example, the returned dictionary contains the decoded claims (like `sub`, `scope`, etc.) from the verified token.
 
 #### Requiring Additional Claims
@@ -78,6 +78,7 @@ decoded_and_verified_token = await api_client.verify_access_token(
     required_claims=["my_custom_claim"]
 )
 ```
+
 If the token lacks `my_custom_claim` or fails any standard check (issuer mismatch, expired token, invalid signature), the method raises a `VerifyAccessTokenError`.
 
 ## Feedback
@@ -87,7 +88,7 @@ If the token lacks `my_custom_claim` or fails any standard check (issuer mismatc
 We appreciate feedback and contribution to this repo! Before you get started, please read the following:
 
 - [Auth0's general contribution guidelines](https://github.com/auth0/open-source-template/blob/master/GENERAL-CONTRIBUTING.md)
-- [Auth0's code of conduct guidelines](https://github.com/auth0/auth0-server-js/blob/main/CODE-OF-CONDUCT.md)
+- [Auth0's code of conduct guidelines](https://github.com/auth0/open-source-template/blob/master/CODE-OF-CONDUCT.md)
 - [This repo's contribution guide](./../../CONTRIBUTING.md)
 
 ### Raise an issue
@@ -111,5 +112,5 @@ Please do not report security vulnerabilities on the public GitHub issue tracker
   Auth0 is an easy to implement, adaptable authentication and authorization platform. To learn more checkout <a href="https://auth0.com/why-auth0">Why Auth0?</a>
 </p>
 <p align="center">
-  This project is licensed under the MIT license. See the <a href="https://github.com/auth0/auth0-server-js/blob/main/packages/auth0-auth-js/LICENSE"> LICENSE</a> file for more info.
+  This project is licensed under the MIT license. See the <a href="https://github.com/auth0/auth0-server-python/blob/main/packages/auth0-api-python/LICENSE"> LICENSE</a> file for more info.
 </p>
