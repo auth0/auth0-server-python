@@ -40,6 +40,7 @@ class AuthClient:
             secret=config.secret,
             transaction_store=transaction_store,
             state_store=state_store,
+            pushed_authorization_requests=config.pushed_authorization_requests,
             authorization_params={
                 "audience": config.audience,
                 "redirect_uri": redirect_uri,

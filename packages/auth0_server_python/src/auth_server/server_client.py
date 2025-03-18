@@ -35,8 +35,6 @@ from auth_types import (
     TokenSet,
     LogoutTokenClaims,
     StartInteractiveLoginOptions,
-    LoginBackchannelOptions,
-    AccessTokenForConnectionOptions,
     LogoutOptions
 )
 from utils import PKCE, State, URL
@@ -62,7 +60,8 @@ class ServerClient(Generic[TStoreOptions]):
         state_store = None,
         transaction_identifier: str = "_a0_tx",
         state_identifier: str = "_a0_session",
-        authorization_params: Optional[Dict[str, Any]] = None
+        authorization_params: Optional[Dict[str, Any]] = None,
+        pushed_authorization_requests: bool = False
     ):
         """
         Initialize the Auth0 server client.
@@ -88,6 +87,7 @@ class ServerClient(Generic[TStoreOptions]):
         self._client_secret = client_secret
         self._redirect_uri = redirect_uri
         self._default_authorization_params = authorization_params or {}
+        self._pushed_authorization_requests = pushed_authorization_requests  # store the flag
         
         # Initialize stores
         self._transaction_store = transaction_store
@@ -162,24 +162,50 @@ class ServerClient(Generic[TStoreOptions]):
             transaction_data,
             options=store_options
         )
-
-        # Generate the authorization URL
         try:
             self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
         except Exception as e:
-            raise ApiError("metadata_error", "Failed to fetch OIDC metadata", e)
+            raise ApiError("metadata_error", "Failed to fetch OIDC metadata", e)       
+        # If PAR is enabled, use the PAR endpoint
+        if self._pushed_authorization_requests:
+            par_endpoint = self._oauth.metadata.get("pushed_authorization_request_endpoint")
+            if not par_endpoint:
+                raise ApiError("configuration_error", "PAR is enabled but pushed_authorization_request_endpoint is missing in metadata")
+            
+            auth_params["client_id"] = self._client_id
+            # Post the auth_params to the PAR endpoint
+            async with httpx.AsyncClient() as client:
+                par_response = await client.post(
+                    par_endpoint,
+                    data=auth_params,
+                    auth=(self._client_id, self._client_secret)
+                )
+                if par_response.status_code not in (200, 201):
+                    error_data = par_response.json()
+                    raise ApiError(
+                        error_data.get("error", "par_error"),
+                        error_data.get("error_description", "Failed to obtain request_uri from PAR endpoint")
+                    )
+                par_data = par_response.json()
+                request_uri = par_data.get("request_uri")
+                if not request_uri:
+                    raise ApiError("par_error", "No request_uri returned from PAR endpoint")
+            
+            auth_endpoint = self._oauth.metadata.get("authorization_endpoint")
+            final_url = f"{auth_endpoint}?request_uri={request_uri}&response_type={auth_params['response_type']}&client_id={self._client_id}"
+            return final_url
+        else:
+            if "authorization_endpoint" not in self._oauth.metadata:
+                raise ApiError("configuration_error", "Authorization endpoint missing in OIDC metadata")
 
-        if "authorization_endpoint" not in self._oauth.metadata:
-            raise ApiError("configuration_error", "Authorization endpoint missing in OIDC metadata")
+            authorization_endpoint = self._oauth.metadata["authorization_endpoint"]
 
-        authorization_endpoint = self._oauth.metadata["authorization_endpoint"]
+            try:
+                auth_url, state = self._oauth.create_authorization_url(authorization_endpoint, **auth_params)
+            except Exception as e:
+                raise ApiError("authorization_url_error", "Failed to create authorization URL", e)
 
-        try:
-            auth_url, state = self._oauth.create_authorization_url(authorization_endpoint, **auth_params)
-        except Exception as e:
-            raise ApiError("authorization_url_error", "Failed to create authorization URL", e)
-
-        return auth_url
+            return auth_url
     
     async def complete_interactive_login(
         self, 
@@ -282,6 +308,11 @@ class ServerClient(Generic[TStoreOptions]):
         result = {"state_data": state_data.dict()}
         if transaction_data.app_state:
             result["app_state"] = transaction_data.app_state
+            
+        #For RAR
+        authorization_details = token_response.get("authorization_details")
+        if authorization_details:
+            result["authorization_details"] = authorization_details
             
         return result
 
