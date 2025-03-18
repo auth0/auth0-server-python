@@ -1,10 +1,6 @@
 The Auth0-Server-Python SDK is a library for implementing user authentication in Fast API Python applications.
 
-![Release](https://img.shields.io/pypi/v/auth0-python)
-[![Codecov](https://img.shields.io/codecov/c/github/auth0/auth0-python)](https://codecov.io/gh/auth0/auth0-python)
-![Downloads](https://img.shields.io/pypi/dw/auth0-python)
-[![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
-[![CircleCI](https://img.shields.io/circleci/build/github/auth0/auth0-python)](https://circleci.com/gh/auth0/auth0-python)
+![Release](https://img.shields.io/pypi/v/auth0-python)[![Codecov](https://img.shields.io/codecov/c/github/auth0/auth0-python)](https://codecov.io/gh/auth0/auth0-python)![Downloads](https://img.shields.io/pypi/dw/auth0-python)[![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)[![CircleCI](https://img.shields.io/circleci/build/github/auth0/auth0-python)](https://circleci.com/gh/auth0/auth0-python)
 
 📚 [Documentation](#documentation) - 🚀 [Getting Started](#getting-started) - 💻 [API Reference](https://auth0.github.io/auth0-server-js/) - 💬 [Feedback](#feedback)
 

@@ -91,7 +91,7 @@ class ApiClient:
         public_key = JsonWebKey.import_key(matching_key_dict)
 
         try:
-            claims = self._jwt.decode(access_token, public_key)
+            claims = self._jwt.decode(access_token[2:-1], public_key)
         except Exception as e:
             raise VerifyAccessTokenError(f"Signature verification failed: {str(e)}") from e
 

@@ -50,16 +50,39 @@ async def fetch_jwks(
         
 
 async def get_unverified_header(token: Union[str, bytes]) -> dict:
+    """
+    Parse the first segment (header) of a JWT without verifying signature.
+    Ensures correct Base64 padding before decode to avoid garbage bytes.
+    """
     if isinstance(token, bytes):
         token = token.decode("utf-8")
     try:
         header_b64, _, _ = token.split(".", 2)
     except ValueError:
         raise ValueError("Not enough segments in token")
+    
+    header_b64 = remove_bytes_prefix(header_b64)
 
-    padding_needed = 4 - len(header_b64) % 4
-    if padding_needed and padding_needed < 4:
-        header_b64 += "=" * padding_needed
+    header_b64 = fix_base64_padding(header_b64)
 
     header_data = base64.urlsafe_b64decode(header_b64)
     return json.loads(header_data)
+
+
+
+def fix_base64_padding(segment: str) -> str:
+    """
+    If `segment`'s length is not a multiple of 4, add '=' padding 
+    so that base64.urlsafe_b64decode won't produce nonsense bytes.
+    No extra '=' added if length is already a multiple of 4.
+    """
+    remainder = len(segment) % 4
+    if remainder == 0:
+        return segment  # No additional padding needed
+    return segment + ("=" * (4 - remainder))
+
+def remove_bytes_prefix(s: str) -> str:
+    """If the string looks like b'eyJh...', remove the leading b' and trailing '."""
+    if s.startswith("b'"):
+        return s[2:]  # cut off the leading b'
+    return s
