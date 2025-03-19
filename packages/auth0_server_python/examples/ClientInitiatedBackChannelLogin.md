@@ -19,10 +19,10 @@ from auth0_server_python import ServerClient
 
 # Initialize the Auth0 client
 auth0 = ServerClient(
-    domain="your-domain.auth0.com",
-    client_id="your-client-id",
-    client_secret="your-client-secret",
-    secret="your-encryption-secret"
+    domain="YOUR_AUTH0_DOMAIN",
+    client_id="YOUR_CLIENT_ID",
+    client_secret="YOUR_CLIENT_SECRET",
+    secret="YOUR_SECRET",
 )
 
 async def authenticate_via_backchannel():
@@ -48,12 +48,12 @@ async def authenticate_via_backchannel():
         return None
 ```
 
-- `bindingMessage`: An optional, human-readable message to be displayed at the consumption device and authentication device. This allows the user to ensure the transaction initiated by the consumption device is the same that triggers the action on the authentication device.
-- `loginHint.sub`: The `sub` claim of the user that is trying to login using Client-Initiated Backchannel Authentication, and to which a push notification to authorize the login will be sent.
+- `binding_message`: An optional, human-readable message to be displayed at the consumption device and authentication device. This allows the user to ensure the transaction initiated by the consumption device is the same that triggers the action on the authentication device.
+- `login_hint['sub']`: The `sub` claim of the user that is trying to login using Client-Initiated Backchannel Authentication, and to which a push notification to authorize the login will be sent.
 
 > [!IMPORTANT]
-> Using Client-Initiated Backchannel Authentication requires the feature to be enabled in the Auth0 dashboard.
-> Read [the Auth0 docs](https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow) to learn more about Client-Initiated Backchannel Authentication.
+> - Using Client-Initiated Backchannel Authentication requires the feature to be enabled in the Auth0 dashboard.
+> - Read [the Auth0 docs](https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow) to learn more about Client-Initiated Backchannel Authentication.
 
 ### Using Rich Authorization Requests
 When using Client-Initiated Backchannel Authentication, you can also use Rich Authorization Requests (RAR) by setting `authorizationParams.authorization_details`:
@@ -76,22 +76,22 @@ result = await auth0.login_backchannel({
 ```
 
 > [!IMPORTANT]
-> Audience must be explicitly specified when `authorization_details` parameter is passed
-> Using Client-Initiated Backchannel Authentication with Rich Authorization Requests (RAR) requires the feature to be enabled in the Auth0 dashboard.
-> Read [the Auth0 docs](https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow) to learn more about Client-Initiated Backchannel Authentication.
+> - Audience must be explicitly specified when `authorization_details` parameter is passed
+> - Using Client-Initiated Backchannel Authentication with Rich Authorization Requests (RAR) requires the feature to be enabled in the Auth0 dashboard.
+> - Read [the Auth0 docs](https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow) to learn more about Client-Initiated Backchannel Authentication.
 
-### Passing `StoreOptions`
+### Passing Store Options
 
-Just like most methods, `login_backchannel` accept a second argument that is used to pass to the configured Transaction and State Store:
+Just like most methods, `login_backchannel()` accept a second argument that is used to pass to the configured Transaction and State Store:
 
 ```python
 store_options = { /* ... */ }
 await auth0.login_backchannel({}, store_options)
 ```
 
-Read more above in [Configuring the Store](#configuring-the-store)
+Read more above in [Configuring the Store](./ConfigureStore.md).
 
-### Example with FastAPI
+### Example (FastAPI)
 
 ```python
 
@@ -103,10 +103,10 @@ app = FastAPI()
 
 # Initialize Auth0 client
 auth0 = ServerClient(
-    domain="your-domain.auth0.com",
-    client_id="your-client-id",
-    client_secret="your-client-secret",
-    secret="your-encryption-secret"
+    domain="YOUR_AUTH0_DOMAIN",
+    client_id="YOUR_CLIENT_ID",
+    client_secret="YOUR_CLIENT_SECRET",
+    secret="YOUR_SECRET",
 )
 
 @app.post("/api/auth/backchannel")
