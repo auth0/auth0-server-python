@@ -1,5 +1,5 @@
 
-from fastapi import Request, Response
+from fastapi import Request, Response, HTTPException, status
 
 from stores.cookie_transaction_store import CookieTransactionStore
 from stores.stateless_state_store import StatelessStateStore
@@ -91,10 +91,22 @@ class AuthClient:
         """
         return await self.client.start_link_user(options, store_options=store_options)
     
-    async def complete_link_user(self, request: Request, url: str, store_options: dict = None) -> dict:
+    async def complete_link_user(self, url: str, store_options: dict = None) -> dict:
         """
         Completes the user linking process.
         The provided URL should be the callback URL from Auth0.
         Returns a dictionary containing the original appState.
         """
-        return await self.client.complete_link_user(url, request, store_options=store_options)
+        return await self.client.complete_link_user(url, store_options=store_options)
+    
+    async def require_session(self, request: Request, response: Response) -> dict:
+        """
+        Dependency method to ensure a session exists.
+        Retrieves the session from the state store using the underlying client.
+        If no session is found, raises an HTTP 401 error.
+        """
+        store_options = {"request": request, "response": response}
+        session = await self.client.get_session(store_options=store_options)
+        if not session:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Please log in")
+        return session
