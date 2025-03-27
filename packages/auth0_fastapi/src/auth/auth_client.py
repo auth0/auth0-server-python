@@ -25,7 +25,7 @@ class AuthClient:
         # Build the redirect URI based on the provided app_base_url
         redirect_uri =  f"{str(config.app_base_url).rstrip('/')}/auth/callback"
         
-        # Use provided state_store or default to an in-memory implementation
+        # Use provided state_store or default to cookie implementation
         if state_store is None:
             state_store = StatelessStateStore(config.secret, cookie_name="_a0_session", expiration=config.session_expiration)
         # Use provided transaction_store or default to an cookie implementation
@@ -98,6 +98,25 @@ class AuthClient:
         Returns a dictionary containing the original appState.
         """
         return await self.client.complete_link_user(url, store_options=store_options)
+    
+    async def start_unlink_user(self, options: dict, store_options: dict = None) -> str:
+        """
+        Initiates the user unlinking process.
+        Options should include:
+          - connection: connection identifier (e.g. 'google-oauth2')
+          - authorizationParams: additional parameters for the /authorize call
+          - appState: any custom state to track (e.g., a returnTo URL)
+        Returns a URL to redirect the user to for unlinking.
+        """
+        return await self.client.start_unlink_user(options, store_options=store_options)
+    
+    async def complete_unlink_user(self, url: str, store_options: dict = None) -> dict:
+        """
+        Completes the user unlinking process.
+        The provided URL should be the callback URL from Auth0.
+        Returns a dictionary containing the original appState.
+        """
+        return await self.client.complete_unlink_user(url, store_options=store_options)
     
     async def require_session(self, request: Request, response: Response) -> dict:
         """

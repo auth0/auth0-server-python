@@ -766,9 +766,8 @@ class ServerClient(Generic[TStoreOptions]):
             "requested_connection_scope": connection_scope,
             "response_type": "code",
             "id_token_hint": id_token,
-            "scope": "openid link_account offline_access",
-            "access_type": "offline",
-            "prompt": "login"
+            "scope": "openid link_account",
+            "audience": "my-account"
         }
         
         # Add connection scope if provided
@@ -778,7 +777,6 @@ class ServerClient(Generic[TStoreOptions]):
         # Add any additional parameters
         if authorization_params:
             params.update(authorization_params)
-        
         return URL.build_url(auth_endpoint, params)
     
     async def _build_unlink_user_url(
@@ -810,9 +808,8 @@ class ServerClient(Generic[TStoreOptions]):
             "requested_connection": connection,
             "response_type": "code",
             "id_token_hint": id_token,
-            "scope": "openid unlink_account offline_access",
-            "access_type": "offline",
-            "prompt": "login"
+            "scope": "openid unlink_account",
+            "audience": "my-account"
         }
         # Add any additional parameters
         if authorization_params:
