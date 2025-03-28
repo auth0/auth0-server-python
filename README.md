@@ -1,7 +1,56 @@
-Welcome to your new repo,auth0-server-python!
+Auth0 Auth Python Mono Repo, containing SDKs for implementing user authentication in Python applications.
 
-This is a default readme file created to provide some helpful links and first steps.
-A lot of your questions might already exist in our [wiki page](http://bit.ly/EngFAQ), so please check there first.
+![Release](https://img.shields.io/pypi/v/auth0-server-python)![Downloads](https://img.shields.io/pypi/dw/auth0-server-python)[![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
 
-Please reach out to us over on [#eng-release](https://okta.slack.com/archives/C7L27G2Q5) or
-[#eng-productivity](https://okta.slack.com/archives/C7LQ4U8T0) for any additional assistance you might require.
+📚 [Packages](#packages) - 💬 [Feedback](#feedback)
+
+
+## Packages
+- [auth0-api-python](./packages/auth0-api-python/README.md)  
+  **Authentication SDK for securing APIs on Python** (JWT verification, claims checks, etc.)
+
+- [auth0-server-python](./packages/auth0-server-python/README.md)  
+  **Authentication SDK for server-side Python apps**, built on Authlib. Handles OAuth flows, session logic.
+
+- [auth0-fastapi](./packages/auth0-fastapi/README.md)  
+  **Authentication SDK for FastAPI**. Provides routes, session/cookie handling, and user linking.
+
+- [auth0-fastapi-api](./packages/auth0-fastapi-api/README.md)
+  **Additional tooling** for combining `auth0-fastapi` with custom API flows.
+
+>[!IMPORTANT]
+> You might see `auth0-server-python` in the above packages list but don't get confused. In future, this repository will point to one SDK i.e.`auth0-server-python` and rest all SDKS will have their own respective repositories.
+
+## Feedback
+
+### Contributing
+
+We appreciate feedback and contribution to this repo! Before you get started, please read the following:
+
+- [Auth0's general contribution guidelines](https://github.com/auth0/open-source-template/blob/master/GENERAL-CONTRIBUTING.md)
+- [Auth0's code of conduct guidelines](https://github.com/auth0/open-source-template/blob/master/CODE-OF-CONDUCT.md)
+- [This repo's contribution guide](./CONTRIBUTING.md)
+
+### Raise an issue
+
+To provide feedback or report a bug, please [raise an issue on our issue tracker](https://github.com/auth0/auth0-server-python/issues).
+
+## Vulnerability Reporting
+
+Please do not report security vulnerabilities on the public GitHub issue tracker. The [Responsible Disclosure Program](https://auth0.com/responsible-disclosure-policy) details the procedure for disclosing security issues.
+
+## What is Auth0?
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://cdn.auth0.com/website/sdks/logos/auth0_dark_mode.png" width="150">
+    <source media="(prefers-color-scheme: light)" srcset="https://cdn.auth0.com/website/sdks/logos/auth0_light_mode.png" width="150">
+    <img alt="Auth0 Logo" src="https://cdn.auth0.com/website/sdks/logos/auth0_light_mode.png" width="150">
+  </picture>
+</p>
+<p align="center">
+  Auth0 is an easy to implement, adaptable authentication and authorization platform. To learn more checkout <a href="https://auth0.com/why-auth0">Why Auth0?</a>
+</p>
+<p align="center">
+  This project is licensed under the MIT license. See the <a href="https://github.com/auth0/auth0-server-python/blob/main/packages/auth0-server-python/LICENSE"> LICENSE</a> file for more info.
+</p>

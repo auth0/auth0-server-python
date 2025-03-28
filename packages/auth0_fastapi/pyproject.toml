@@ -1,0 +1,39 @@
+[tool.poetry]
+name = "auth0-fastapi"
+version = "1.0.0.b1"
+description = "Auth0 FastAPI Python SDK"
+readme = "README.md"
+authors = ["Snehil Kishore <snehil.kishore@okta.com>"]
+license = "MIT"
+
+packages = [
+  { include = "auth", from = "src" },
+  { include = "errors", from = "src" },
+  { include = "server", from = "src" },
+  { include = "auth", from = "src" },
+  { include = "server", from = "src" },
+  { include = "stores", from = "src" },
+  { include = "util", from = "src" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.9"
+auth0-server-python = "1.0.0b1"  
+fastapi = "^0.115.11"
+itsdangerous = "^2.2.0"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.2"
+pytest-cov = "^4.0"
+pytest-asyncio = "^0.20.3"
+pytest-mock = "^3.14.0"
+uvicorn = "^0.34.0"
+twine = "^6.1.0"
+
+[tool.pytest.ini_options]
+addopts = "--cov=auth_server --cov-report=term-missing:skip-covered --cov-report=xml"
+
+[build-system]
+requires = ["poetry-core>=1.4.0"]
+build-backend = "poetry.core.masonry.api"
