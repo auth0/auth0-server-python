@@ -1,8 +1,8 @@
 The Auth0-Server-Python SDK is a library for implementing user authentication in Fast API Python applications.
 
-![Release](https://img.shields.io/pypi/v/auth0-python)[![Codecov](https://img.shields.io/codecov/c/github/auth0/auth0-python)](https://codecov.io/gh/auth0/auth0-python)![Downloads](https://img.shields.io/pypi/dw/auth0-python)[![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)[![CircleCI](https://img.shields.io/circleci/build/github/auth0/auth0-python)](https://circleci.com/gh/auth0/auth0-python)
+![PyPI](https://img.shields.io/pypi/v/auth0-server-python)![Downloads](https://img.shields.io/pypi/dw/auth0-server-python)[![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)[![Codecov](https://img.shields.io/codecov/c/github/auth0/auth0-server-python)](https://codecov.io/gh/auth0/auth0-server-python)[![CI](https://github.com/auth0/auth0-server-python/actions/workflows/ci.yml/badge.svg)](https://github.com/auth0/auth0-server-python/actions)
 
-📚 [Documentation](#documentation) - 🚀 [Getting Started](#getting-started) - 💻 [API Reference](https://auth0.github.io/auth0-server-js/) - 💬 [Feedback](#feedback)
+📚 [Documentation](#documentation) - 🚀 [Getting Started](#getting-started) - 💻 [API Reference](https://auth0.github.io/auth0-server-python/) - 💬 [Feedback](#feedback)
 
 ## Documentation
 
@@ -105,12 +105,12 @@ async def callback(request: Request):
 We appreciate feedback and contribution to this repo! Before you get started, please read the following:
 
 - [Auth0's general contribution guidelines](https://github.com/auth0/open-source-template/blob/master/GENERAL-CONTRIBUTING.md)
-- [Auth0's code of conduct guidelines](https://github.com/auth0/auth0-server-js/blob/main/CODE-OF-CONDUCT.md)
+- [Auth0's code of conduct guidelines](https://github.com/auth0/auth0-server-python/blob/main/CODE-OF-CONDUCT.md)
 - [This repo's contribution guide](./CONTRIBUTING.md)
 
 ### Raise an issue
 
-To provide feedback or report a bug, please [raise an issue on our issue tracker](https://github.com/auth0/auth0-server-js/issues).
+To provide feedback or report a bug, please [raise an issue on our issue tracker](https://github.com/auth0/auth0-server-python/issues).
 
 ## Vulnerability Reporting
 

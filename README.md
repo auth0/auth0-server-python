@@ -1,8 +1,6 @@
 Auth0-Auth-Python Mono Repo, containing SDKs for implementing user authentication in Python applications.
 
-![Release](https://img.shields.io/pypi/v/auth0-python)
-![Downloads](https://img.shields.io/pypi/dw/auth0-python)
-[![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
+![Release](https://img.shields.io/pypi/v/auth0-server-python)![Downloads](https://img.shields.io/pypi/dw/auth0-server-python)[![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
 
 📚 [Packages](#packages) - 💬 [Feedback](#feedback)
 
@@ -17,8 +15,11 @@ Auth0-Auth-Python Mono Repo, containing SDKs for implementing user authenticatio
 - [auth0-fastapi](./packages/auth0-fastapi/README.md)  
   **Authentication SDK for FastAPI**. Provides routes, session/cookie handling, and user linking.
 
-- [auth0-fastapi-api](./packages/auth0-fastapi-api/README.md)  
-  **(Coming soon!)** Additional tooling for combining `auth0-fastapi` with custom API flows.
+- [auth0-fastapi-api](./packages/auth0-fastapi-api/README.md)
+  **Additional tooling** for combining `auth0-fastapi` with custom API flows.
+
+>[!IMPORTANT]
+> You might see `auth0-server-python` in the above packages list but don't get confused. In future, this repository will point to one SDK i.e.`auth0-server-python` and rest all SDKS will have their own respective repositories.
 
 ## Feedback
 
@@ -27,12 +28,12 @@ Auth0-Auth-Python Mono Repo, containing SDKs for implementing user authenticatio
 We appreciate feedback and contribution to this repo! Before you get started, please read the following:
 
 - [Auth0's general contribution guidelines](https://github.com/auth0/open-source-template/blob/master/GENERAL-CONTRIBUTING.md)
-- [Auth0's code of conduct guidelines](https://github.com/auth0/auth0-server-js/blob/main/CODE-OF-CONDUCT.md)
+- [Auth0's code of conduct guidelines](https://github.com/auth0/auth0-server-python/blob/main/CODE-OF-CONDUCT.md)
 - [This repo's contribution guide](./CONTRIBUTING.md)
 
 ### Raise an issue
 
-To provide feedback or report a bug, please [raise an issue on our issue tracker](https://github.com/auth0/auth0-server-js/issues).
+To provide feedback or report a bug, please [raise an issue on our issue tracker](https://github.com/auth0/auth0-server-python/issues).
 
 ## Vulnerability Reporting
 

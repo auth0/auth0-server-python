@@ -6,9 +6,14 @@ readme = "README.md"
 authors = ["Snehil Kishore <snehil.kishore@okta.com>"]
 license = "MIT"
 
-# Tells Poetry to look for a package named `auth_server` under `src/`
 packages = [
-  { include = "auth", from = "src" }
+  { include = "auth", from = "src" },
+  { include = "errors", from = "src" },
+  { include = "server", from = "src" },
+  { include = "auth", from = "src" },
+  { include = "server", from = "src" },
+  { include = "stores", from = "src" },
+  { include = "util", from = "src" }
 ]
 
 [tool.poetry.dependencies]

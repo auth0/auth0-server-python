@@ -1,16 +1,16 @@
 The Auth0-FastAPI SDK is a library for implementing user authentication in FastAPI web applications using [Auth0](https://auth0.com).
 
-![Release](https://img.shields.io/pypi/v/auth0-python)[![Codecov](https://img.shields.io/codecov/c/github/auth0/auth0-python)](https://codecov.io/gh/auth0/auth0-python)![Downloads](https://img.shields.io/pypi/dw/auth0-python)[![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)[![CircleCI](https://img.shields.io/circleci/build/github/auth0/auth0-python)](https://circleci.com/gh/auth0/auth0-python)
+![Release](https://img.shields.io/pypi/v/auth0-fastapi)[![Codecov](https://img.shields.io/codecov/c/github/auth0/auth0-fastapi)](https://codecov.io/gh/auth0/auth0-fastapi)![Downloads](https://img.shields.io/pypi/dw/auth0-fastapi)[![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)[![CircleCI](https://img.shields.io/circleci/build/github/auth0/auth0-fastapi)](https://circleci.com/gh/auth0/auth0-fastapi)
 
 <div>
-📚 <a href="#documentation">Documentation</a> - 🚀 <a href="#getting-started">Getting started</a> - 💻 <a href="#api-reference">API reference</a> - 💬 <a href="#feedback">Feedback</a>
+📚 <a href="#documentation">Documentation</a> - 🚀 <a href="#getting-started">Getting started</a> - 💬 <a href="#feedback">Feedback</a>
 </div>
 
 
 ## Documentation
 
-- [QuickStart](https://auth0.com/docs/quickstart/webapp/fastify)- our guide for adding Auth0 to your Fastify app.
-- [Examples](https://github.com/auth0/auth0-server-python/blob/main/packages/auth0-fastify/examples) - examples for your different use cases.
+- [QuickStart](https://auth0.com/docs/quickstart/webapp/fastapi)- our guide for adding Auth0 to your Fastapi app.
+- [Examples](https://github.com/auth0/auth0-server-python/blob/main/packages/auth0-fastapi/examples) - examples for your different use cases.
 - [Docs Site](https://auth0.com/docs) - explore our docs site and learn more about Auth0.
 
 ## Getting Started
@@ -194,8 +194,6 @@ Additionally, by setting `mount_connect_routes` to `true` (it's false by default
 3. `/auth/unconnect`: the route that the user will be redirected to to initiate account linking
 4. `/auth/unconnect/callback`: the callback route for account linking that must be added to your Auth0 application's Allowed Callback URLs
 
-> [!IMPORTANT]  
-> When `mount_routes` is set to `false`, setting `mount_connect_routes` has no effect.
 
 #### Protecting Routes
 
@@ -257,12 +255,12 @@ The `AUTH0_AUDIENCE` is the identifier of the API you want to call. You can find
 We appreciate feedback and contribution to this repo! Before you get started, please read the following:
 
 - [Auth0's general contribution guidelines](https://github.com/auth0/open-source-template/blob/master/GENERAL-CONTRIBUTING.md)
-- [Auth0's code of conduct guidelines](https://github.com/auth0/auth0-server-js/blob/main/CODE-OF-CONDUCT.md)
+- [Auth0's code of conduct guidelines](https://github.com/auth0/auth0-fastapi/blob/main/CODE-OF-CONDUCT.md)
 - [This repo's contribution guide](./../../CONTRIBUTING.md)
 
 ### Raise an issue
 
-To provide feedback or report a bug, please [raise an issue on our issue tracker](https://github.com/auth0/auth0-server-js/issues).
+To provide feedback or report a bug, please [raise an issue on our issue tracker](https://github.com/auth0/auth0-fastapi/issues).
 
 ## Vulnerability Reporting
 
@@ -281,5 +279,5 @@ Please do not report security vulnerabilities on the public GitHub issue tracker
   Auth0 is an easy to implement, adaptable authentication and authorization platform. To learn more checkout <a href="https://auth0.com/why-auth0">Why Auth0?</a>
 </p>
 <p align="center">
-  This project is licensed under the MIT license. See the <a href="https://github.com/auth0/auth0-server-js/blob/main/packages/auth0-fastify/LICENSE"> LICENSE</a> file for more info.
+  This project is licensed under the MIT license. See the <a href="https://github.com/auth0/auth0-server-python/blob/main/packages/auth0-fastapi/LICENSE"> LICENSE</a> file for more info.
 </p>
