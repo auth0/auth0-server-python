@@ -2,13 +2,12 @@ The `auth0-api-python` library allows you to secure APIs running on Python, part
 
 It’s intended as a foundation for building more framework-specific integrations (e.g., with FastAPI, Django, etc.), but you can also use it directly in any Python server-side environment.
 
-![Release](https://img.shields.io/pypi/v/auth0-python) ![Downloads](https://img.shields.io/pypi/dw/auth0-python) [![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
+![Release](https://img.shields.io/pypi/v/auth0-api-python) ![Downloads](https://img.shields.io/pypi/dw/auth0-api-python) [![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
 
 📚 [Documentation](#documentation) - 🚀 [Getting Started](#getting-started) - 💬 [Feedback](#feedback)
 
 ## Documentation
 
-- [Examples](https://github.com/auth0/auth0-server-python/blob/main/packages/auth0_server_python/EXAMPLES.md) - examples for your different use cases.
 - [Docs Site](https://auth0.com/docs) - explore our docs site and learn more about Auth0.
 
 ## Getting Started

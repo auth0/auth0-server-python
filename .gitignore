@@ -15,13 +15,13 @@ env/
 
 #Build files
 dist
+docs
 
 #testfile
 server.py
 setup.py
 test.py
 test-script.py
-auth0_server_python.egg-info
 .coverage
 coverage.xml
 
