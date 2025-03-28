@@ -192,8 +192,6 @@ Additionally, by setting `mount_connect_routes` to `True` (it's `False` by defau
 3. `/auth/unconnect`: the route that the user will be redirected to to initiate account linking
 4. `/auth/unconnect/callback`: the callback route for account linking that must be added to your Auth0 application's Allowed Callback URLs
 
-> [!IMPORTANT]
-> When `mount_routes` is set to `False`, setting `mount_connect_routes` to `True` has no effect.
 
 #### Protecting Routes
 
@@ -215,20 +213,11 @@ config = Auth0Config(
 
 auth_client = AuthClient(config)
 
-def require_session(request: Request, response: Response):
-    store_options = {"request": request, "response": response}
-    # If the user is logged in, get_session() returns a session object
-    session = auth_client.get_session(store_options=store_options)
-    if not session:
-        # Not logged in, so redirect or raise an error
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Please log in")
-    return session
-
 
 @app.get("/profile")
-async def profile(request: Request, response: Response, session=Depends(require_session)):
+async def profile(request: Request, response: Response, session=Depends(auth_client.require_session)):
     store_options = {"request": request, "response": response}
-    user = await auth_client.get_user(store_options=store_options)
+    user = await auth_client.client.get_user(store_options=store_options)
     if not user:
         return {"error": "User not authenticated"}
     
