@@ -192,8 +192,6 @@ Additionally, by setting `mount_connect_routes` to `True` (it's `False` by defau
 3. `/auth/unconnect`: the route that the user will be redirected to to initiate account linking
 4. `/auth/unconnect/callback`: the callback route for account linking that must be added to your Auth0 application's Allowed Callback URLs
 
-> [!IMPORTANT]
-> When `mount_routes` is set to `False`, setting `mount_connect_routes` to `True` has no effect.
 
 #### Protecting Routes
 
