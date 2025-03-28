@@ -1,12 +1,12 @@
 The Auth0 FastAPI SDK is a library for implementing user authentication in FastAPI web applications using [Auth0](https://auth0.com).
 
-![Release](https://img.shields.io/pypi/v/auth0-python) [![Codecov](https://img.shields.io/codecov/c/github/auth0/auth0-python)](https://codecov.io/gh/auth0/auth0-python) ![Downloads](https://img.shields.io/pypi/dw/auth0-python) [![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT) [![CircleCI](https://img.shields.io/circleci/build/github/auth0/auth0-python)](https://circleci.com/gh/auth0/auth0-python)
+![Release](https://img.shields.io/pypi/v/auth0-fastapi) [![Codecov](https://img.shields.io/codecov/c/github/auth0/auth0-fastapi)](https://codecov.io/gh/auth0/auth0-fastapi) ![Downloads](https://img.shields.io/pypi/dw/auth0-fastapi) [![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT) [![CircleCI](https://img.shields.io/circleci/build/github/auth0/auth0-fastapi)](https://circleci.com/gh/auth0/auth0-fastapi)
 
-📚 [Documentation](#documentation) - 🚀 [Getting Started](#getting-started) - 💻 [API Reference](#api-reference) - 💬 [Feedback](#feedback)
+📚 [Documentation](#documentation) - 🚀 [Getting Started](#getting-started) - 💬 [Feedback](#feedback)
 
 ## Documentation
 
-- [Examples](https://github.com/auth0/auth0-server-python/blob/main/packages/auth0_server_python/EXAMPLES.md) - examples for your different use cases.
+- [Examples](https://github.com/auth0/auth0-server-python/blob/main/packages/auth0_server_python/examples) - examples for your different use cases.
 - [Docs Site](https://auth0.com/docs) - explore our docs site and learn more about Auth0.
 
 ## Getting Started
@@ -282,5 +282,5 @@ Please do not report security vulnerabilities on the public GitHub issue tracker
   Auth0 is an easy to implement, adaptable authentication and authorization platform. To learn more checkout <a href="https://auth0.com/why-auth0">Why Auth0?</a>
 </p>
 <p align="center">
-  This project is licensed under the MIT license. See the <a href="https://github.com/auth0/auth0-server-python/blob/main/packages/auth0-fastapi/LICENSE"> LICENSE</a> file for more info.
+  This project is licensed under the MIT license. See the <a href="https://github.com/auth0/auth0-server-python/blob/main/packages/auth0_fastapi/LICENSE"> LICENSE</a> file for more info.
 </p>

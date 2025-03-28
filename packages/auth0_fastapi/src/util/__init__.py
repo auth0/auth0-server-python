@@ -1,6 +1,8 @@
 from urllib.parse import urljoin, urlparse
 from typing import Optional
 
+from fastapi.responses import RedirectResponse
+
 def ensure_no_leading_slash(url: str) -> str:
     """
     Removes any leading slash from the given URL string.
@@ -57,3 +59,33 @@ def to_safe_redirect(dangerous_redirect: str, safe_base_url: str) -> Optional[st
     if route_origin == safe_origin:
         return route_url
     return None
+
+def merge_set_cookie_headers(source_response, target_response: RedirectResponse) -> RedirectResponse:
+    """
+    Merges any 'set-cookie' headers from the source_response into the target_response.
+    
+    This helper handles:
+      - No set-cookie header present.
+      - A single set-cookie header.
+      - Multiple set-cookie headers.
+    
+    Args:
+        source_response: A response object that has a 'headers' attribute containing cookie headers.
+        target_response: The RedirectResponse to which the set-cookie headers should be added.
+    
+    Returns:
+        The modified RedirectResponse with merged set-cookie headers.
+    """
+    cookies = []
+    if hasattr(source_response.headers, "getlist"):
+        cookies = source_response.headers.getlist("set-cookie")
+    else:
+
+        cookie = source_response.headers.get("set-cookie")
+        if cookie:
+            cookies = [cookie]
+
+    for cookie in cookies:
+        target_response.headers.append("set-cookie", cookie)
+    
+    return target_response

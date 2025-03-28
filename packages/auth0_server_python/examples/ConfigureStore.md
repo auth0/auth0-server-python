@@ -1,6 +1,8 @@
 # Configuring the Store
 
-The auth0-server-python library provides abstract base classes for storing session data (via a `State Store`) and for storing short-lived transaction data (via a `Transaction Store`). However, it doesn’t force a particular storage mechanism – you can pick cookies, a server-side database/cache, or anything else that suits your application.
+The `auth0-server-python` library provides abstract base classes for storing session data (via a `State Store`) and for storing short-lived transaction data (via a `Transaction Store`). 
+
+However, it doesn’t force a particular storage mechanism – you can pick cookies, a server-side database/cache, or anything else that suits your application.
 
 Your `auth0-fastapi` layer (or your custom integration) is responsible for instantiating these stores and passing them to the `ServerClient` (in **auth0-server-python**) or to the `AuthClient` wrapper (in **auth0-fastapi**). This guide shows how to do exactly that.
 
@@ -10,9 +12,9 @@ Your `auth0-fastapi` layer (or your custom integration) is responsible for insta
 
 In `auth0-server-python`, you have:
 
-1. `TransactionStore` – holds short-lived data for ongoing Auth0 flows (PKCE code_verifier, state param, etc.).
+1. **TransactionStore** – holds short-lived data for ongoing Auth0 flows (PKCE code_verifier, state param, etc.).
 
-2. StateStore – holds user “session” data over longer periods (ID token, refresh token, user profile, etc.).
+2. **StateStore** – holds user “session” data over longer periods (ID token, refresh token, user profile, etc.).
 
 Each store implements `set`, `get`, and `delete`. The `StateStore` adds an optional `delete_by_logout_token` for backchannel logout scenarios.
 
@@ -22,17 +24,17 @@ When you **start** or **complete** an Auth0 flow, you can pass a `store_options`
 
 ```python
 store_options = {"request": request, "response": response}
-await auth_client.start_login(app_state={"returnTo": "/profile"}, store_options=store_options)
+await auth_client.start_login(app_state={"return_to": "/profile"}, store_options=store_options)
 ```
 ## 2.Stateless Store (All Data in Cookies)
 ### When to Use It
 A **stateless** store puts **all** the session data directly in the cookie – typically encrypted. It’s easy to set up but limited by cookie size constraints and overhead on each request. For small to medium session data, it can be sufficient.
 
 ### Example: `StatelessStateStore` and `CookieTransactionStore` in FastAPI
-If you’re using auth0-fastapi, you already have:
+If you’re using `auth0-fastapi`, you already have:
 
-1. `StatelessStateStore` – stores the session data (ID tokens, refresh tokens, etc.) in an encrypted cookie.
-2. `CookieTransactionStore` – stores short-lived transaction data (PKCE code_verifier) in another encrypted cookie.
+1. **StatelessStateStore** – stores the session data (ID tokens, refresh tokens, etc.) in an encrypted cookie.
+2. **CookieTransactionStore** – stores short-lived transaction data (PKCE code_verifier) in another encrypted cookie.
 
 ```python
 from store.abstract import StateStore, TransactionStore
@@ -212,7 +214,7 @@ class RedisStateStore(StateStore):
                     await self.redis_client.delete(k)
 
 ```
-#### Usage in FastAPI
+#### Usage (FastAPI)
 ```python
 from auth0_fastapi.auth.auth_client import AuthClient
 from your_module.redis_state_store import RedisStateStore
@@ -235,7 +237,7 @@ auth_client = AuthClient(
 Now your user’s session data is in **Redis**, and only a minimal session ID is in the cookie.
 
 ### 3.2. Postgres-Based Example
-If you prefer a **SQL database** for session data, here’s a `PostgresStateStore` example using [asyncpg](https://github.com/MagicStack/asyncpg)
+If you prefer a **SQL database** for session data, here’s a `PostgresStateStore` example using [asyncpg](https://github.com/MagicStack/asyncpg).
 
 ```python
 import asyncpg
@@ -362,7 +364,7 @@ class PostgresStateStore(StateStore):
                 claims.get("sub")
             )
 ```
-#### Usage in FastAPI
+#### Usage (FastAPI)
 ```python
 from auth0_fastapi.auth.auth_client import AuthClient
 from your_module.postgres_state_store import PostgresStateStore
@@ -376,7 +378,7 @@ pg_store = PostgresStateStore(
 
 await pg_store.init_pool()  # do this in an @app.on_event("startup") if using FastAPI
 
-transaction_store = CookieTransactionStore(secret="YOUR_SECRET")
+transaction_store = CookieTransactionStore(secret="YOUR_APP_SECRET")
 
 auth_client = AuthClient(
     config=config,
@@ -385,7 +387,7 @@ auth_client = AuthClient(
 )
 
 ```
-## 4. Passing Store Options in a FastAPI Endpoint
+## 4. Passing Store Options (FastAPI Endpoint)
 
 Often you need `request` and `response` objects to set or clear cookies. In your route:
 
@@ -411,7 +413,7 @@ async def callback(request: Request, response: Response):
 ```
 The store sees `store_options["request"]` and `store_options["response"]`—it can handle cookies or read HTTP headers as needed.
 
-## 5. Handling Backchannel Logout
+## 5. Handling `delete_by_logout_token` (Backchannel Logout)
 
 If you want to support **OIDC Backchannel Logout**:
 

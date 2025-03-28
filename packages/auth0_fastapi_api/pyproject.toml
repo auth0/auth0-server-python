@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "auth0-fastapi-api"
-version = "0.1.0"
+version = "1.0.0b1"
 description = "SDK for verifying access tokens and securing APIs with Auth0, using Authlib."
 authors = ["Snehil Kishore snehil.kishore@okta.com"]
 license = "MIT"
@@ -14,6 +14,7 @@ packages = [
 python = "^3.9"
 fastapi = "^0.115.11"
 httpx = "^0.28.1"
+uvicorn = "^0.34.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"

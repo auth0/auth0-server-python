@@ -8,7 +8,7 @@ The SDK's `get_user()` can be used to retrieve the current logged-in user:
 user = await serverClient.get_user();
 ```
 
-### Passing `StoreOptions`
+### Passing Store Options
 
 Just like most methods, `getUser` accept an argument that is used to pass to the configured Transaction and State Store:
 
@@ -20,7 +20,7 @@ store_options = {
 user = await server_client.get_user(store_options=store_options)
 ```
 
-Read more above in [Configuring the Store](#configuring-the-store)
+Read more above in [Configuring the Store](./ConfigureStore.md).
 
 ## Retrieving the Session Data
 
@@ -30,7 +30,7 @@ The SDK's `get_session()` can be used to retrieve the current session data:
 session = await serverClient.get_session();
 ```
 
-### Passing `StoreOptions`
+### Passing Store Options
 
 Just like most methods, `get_session` accept an argument that is used to pass to the configured Transaction and State Store:
 
@@ -42,21 +42,21 @@ store_options = {
 session = await server_client.get_session(store_options=store_options)
 ```
 
-Read more above in [Configuring the Store](#configuring-the-store)
+Read more above in [Configuring the Store](./ConfigureStore.md).
 
 ## Retrieving an Access Token
 
-The SDK's `getAccessToken()` can be used to retrieve an Access Token for the current logged-in user:
+The SDK's `get_access_token()` can be used to retrieve an Access Token for the current logged-in user:
 
 ```python
 access_token = await server_client.get_access_token()
 ```
 
-The SDK will cache the token internally, and return it from the cache when not expired. When no token is found in the cache, or the token is expired, calling `getAccessToken()` will call Auth0 to retrieve a new token and update the cache.
+The SDK will cache the token internally, and return it from the cache when not expired. When no token is found in the cache, or the token is expired, calling `get_access_token()` will call Auth0 to retrieve a new token and update the cache.
 
 In order to do this, the SDK needs access to a Refresh Token. By default, the SDK is configured to request the `offline_access` scope. If you override the scopes, ensure to always include `offline_access` if you want to be able to retrieve and refresh an access token.
 
-### Passing `StoreOptions`
+### Passing Store Options
 
 Just like most methods, `getAccessToken` accept an argument that is used to pass to the configured Transaction and State Store:
 
@@ -68,7 +68,7 @@ store_options = {
 access_token = await server_client.get_access_token(store_options=store_options)
 ```
 
-Read more above in [Configuring the Store](#configuring-the-store)
+Read more above in [Configuring the Store](./ConfigureStore.md).
 
 ## Retrieving an Access Token for a Connections
 
@@ -90,7 +90,7 @@ The SDK will cache the token internally, and return it from the cache when not e
 
 In order to do this, the SDK needs access to a Refresh Token. By default, the SDK is configured to request the `offline_access` scope. If you override the scopes, ensure to always include `offline_access` if you want to be able to retrieve and refresh an access token for a connection.
 
-### Passing `StoreOptions`
+### Passing Store Options 
 
 Just like most methods, `get_access_token_for_connection()` accepts a second argument that is used to pass to the configured Transaction and State Store:
 
@@ -102,5 +102,5 @@ store_options = {
 access_token_for_google = await server_client.get_access_token_for_connection(connection_options, store_options=store_options)
 ```
 
-Read more above in [Configuring the Store](#configuring-the-store)
+Read more above in [Configuring the Store](./ConfigureStore.md).
 

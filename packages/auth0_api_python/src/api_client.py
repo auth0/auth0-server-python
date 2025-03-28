@@ -90,8 +90,10 @@ class ApiClient:
 
         public_key = JsonWebKey.import_key(matching_key_dict)
 
+        if isinstance(access_token, str) and access_token.startswith("b'"):
+            access_token = access_token[2:-1]
         try:
-            claims = self._jwt.decode(access_token[2:-1], public_key)
+            claims = self._jwt.decode(access_token, public_key)
         except Exception as e:
             raise VerifyAccessTokenError(f"Signature verification failed: {str(e)}") from e
 
@@ -101,8 +103,16 @@ class ApiClient:
 
         if claims.get("iss") != issuer:
             raise VerifyAccessTokenError("Issuer mismatch")
-        if claims.get("aud") != self.options.audience:
-            raise VerifyAccessTokenError("Audience mismatch")
+        
+        expected_aud = self.options.audience
+        actual_aud = claims.get("aud")
+
+        if isinstance(actual_aud, list):
+            if expected_aud not in actual_aud:
+                raise VerifyAccessTokenError("Audience mismatch (not in token's aud array)")
+        else:
+            if actual_aud != expected_aud:
+                raise VerifyAccessTokenError("Audience mismatch (single aud)")
 
         now = int(time.time())
         if "exp" not in claims or now >= claims["exp"]:
