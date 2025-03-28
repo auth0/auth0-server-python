@@ -1,25 +1,26 @@
-The Auth0 FastAPI-API SDK library allows you to secure FastAPI APIs using bearer tokens from Auth0. 
+The Auth0 FastAPI API SDK library allows you to secure FastAPI APIs using bearer tokens from Auth0.
 
 It exposes a simple require_auth dependency that checks if incoming requests have a valid JWT, then provides the token claims to your route handler.
 
 ![Release](https://img.shields.io/pypi/v/auth0-fastapi-api) ![Downloads](https://img.shields.io/pypi/dw/auth0-fastapi-api) [![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
 
-📚 [Documentation](#documentation) - 🚀 [Getting Started](#getting-started) - 💻 [API Reference](https://auth0.github.io/auth0-fastapi-api/) - 💬 [Feedback](#feedback)
+📚 [Documentation](#documentation) - 🚀 [Getting Started](#getting-started) - 💬 [Feedback](#feedback)
 
 ## Documentation
 
 - [QuickStart](https://auth0.com/docs/quickstart/webapp/fastapi)- our guide for adding Auth0 to your Fastapi app.
-- [Examples](https://github.com/auth0/auth0-server-python/blob/main/packages/auth0-fastapi-api/EXAMPLES.md) - examples for your different use cases.
+- [Examples](https://github.com/auth0/auth0-server-python/blob/main/packages/auth0_server_python/EXAMPLES.md) - examples for your different use cases.
 - [Docs Site](https://auth0.com/docs) - explore our docs site and learn more about Auth0.
 
 ## Getting Started
 
 ### 1. Install the SDK
 
+_This library requires Python 3.9+._
+
 ```shell
 pip install auth0-fastapi-api
 ```
-_This library requires Python 3.9+._
 
 If you’re using Poetry:
 
@@ -32,6 +33,7 @@ poetry install auth0-fastapi-api
 In your FastAPI application, create an instance of the `Auth0FastAPI` class. Supply the `domain` and `audience` from Auth0:
 - The `AUTH0_DOMAIN` can be obtained from the [Auth0 Dashboard](https://manage.auth0.com) once you've created an API. 
 - The `AUTH0_AUDIENCE` is the identifier of the API that is being called. You can find this in the API section of the Auth0 dashboard.
+
 ```python
 from auth0_fastapi_api import Auth0FastAPI
 
@@ -54,7 +56,6 @@ async def protected(
 ):
     # `claims` is the verified JWT payload (dict) extracted by the SDK
     return {"message": f"Hello, {claims['sub']}"}
-
 ```
 
 #### How It Works
@@ -117,11 +118,9 @@ def test_public_route():
     response = client.get("/public")
     assert response.status_code == 200
     assert response.json() == {"message": "No token required here"}
-
 ```
 
 </details>
-
 
 ## Feedback
 
@@ -130,7 +129,7 @@ def test_public_route():
 We appreciate feedback and contribution to this repo! Before you get started, please read the following:
 
 - [Auth0's general contribution guidelines](https://github.com/auth0/open-source-template/blob/master/GENERAL-CONTRIBUTING.md)
-- [Auth0's code of conduct guidelines](https://github.com/auth0/auth0-server-python/blob/main/CODE-OF-CONDUCT.md)
+- [Auth0's code of conduct guidelines](https://github.com/auth0/open-source-template/blob/master/CODE-OF-CONDUCT.md)
 - [This repo's contribution guide](./../../CONTRIBUTING.md)
 
 ### Raise an issue
@@ -154,5 +153,5 @@ Please do not report security vulnerabilities on the public GitHub issue tracker
   Auth0 is an easy to implement, adaptable authentication and authorization platform. To learn more checkout <a href="https://auth0.com/why-auth0">Why Auth0?</a>
 </p>
 <p align="center">
-  This project is licensed under the MIT license. See the <a href="https://github.com/auth0/auth0-server-python/blob/main/packages/auth0-fastapi-api/LICENSE"> LICENSE</a> file for more info.
+  This project is licensed under the MIT license. See the <a href="https://github.com/auth0/auth0-server-python/blob/main/packages/auth0_fastapi_api/LICENSE"> LICENSE</a> file for more info.
 </p>
