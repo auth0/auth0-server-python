@@ -13,10 +13,14 @@ env/
 .sessions_cache
 .DS_Store
 
+#Build files
+dist
+
 #testfile
 server.py
 setup.py
 test.py
+test-script.py
 auth0_server_python.egg-info
 .coverage
 coverage.xml
