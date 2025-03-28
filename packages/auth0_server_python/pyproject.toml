@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "auth0-server-python"
+version = "1.0.0.b1"
+description = "Auth0 server-side Python SDK"
+readme = "README.md"
+authors = ["Snehil Kishore <snehil.kishore@okta.com>"]
+license = "MIT"
+
+packages = [
+  { include = "auth_server", from = "src" },
+  { include = "auth_types", from = "src" },
+  { include = "encryption", from = "src" },
+  { include = "error", from = "src" },
+  { include = "store", from = "src" },
+  { include = "utils", from = "src" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.9"
+cryptography = ">=43.0.1" # pyjwt has a weak dependency on cryptography
+pyjwt = ">=2.8.0"
+authlib = "^1.2"
+httpx = "^0.28.1"
+pydantic = "^2.10.6"
+fastapi = "^0.115.11"
+jwcrypto = "^1.5.6"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.2"
+pytest-cov = "^4.0"
+pytest-asyncio = "^0.20.3"
+pytest-mock = "^3.14.0"
+twine = "^6.1.0"
+
+[tool.pytest.ini_options]
+addopts = "--cov=auth_server --cov-report=term-missing:skip-covered --cov-report=xml"
+
+[build-system]
+requires = ["poetry-core>=1.4.0"]
+build-backend = "poetry.core.masonry.api"
