@@ -50,16 +50,6 @@ async def generate_token(
     Returns:
         A RS256-signed JWT string.
 
-    Example usage:
-        token = generate_token(
-            domain="example.us.auth0.com",
-            user_id="user123",
-            audience="my-api",
-            issuer=False,
-            iat=False,
-            exp=False,
-            claims={"scope": "read:stuff"}
-        )
     """
     token_claims = dict(claims or {})
     token_claims.setdefault("sub", user_id)
