@@ -56,16 +56,10 @@ jobs:
           tag_name: ${{ github.event.inputs.sdk }}-v${{ steps.get_version.outputs.version }}
           name: "${{ github.event.inputs.sdk }} v${{ steps.get_version.outputs.version }}"
           body: |
-            ## 📦 SDK: `${{ github.event.inputs.sdk }}`
             Version: `${{ steps.get_version.outputs.version }}`
 
-            ### 🔗 Source Directory
-            [View Source](https://github.com/${{ github.repository }}/tree/main/packages/${{ github.event.inputs.sdk }})
+            (https://github.com/${{ github.repository }}/tree/main/packages/${{ github.event.inputs.sdk }})
 
-            ### 📥 Build Artifacts
-            These are the built distributions for this release.
-
-            > ℹ️ GitHub's "Source code" links below point to the full monorepo.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
