@@ -2,8 +2,8 @@ from typing import Any, Dict, Optional, Union
 from fastapi import Request, Response
 
 #Imported from auth0-server-python
-from store.abstract import StateStore
-from auth_types import StateData
+from auth0_server_python.store.abstract import StateStore
+from auth0_server_python.auth_types import StateData
 
 class StatelessStateStore(StateStore):
     """
