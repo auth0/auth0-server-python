@@ -1,8 +1,8 @@
 [tool.poetry]
 name = "auth0-api-python"
-version = "1.0.0.b1"
+version = "1.0.0.b2"
 description = "SDK for verifying access tokens and securing APIs with Auth0, using Authlib."
-authors = ["Snehil Kishore snehil.kishore@okta.com"]
+authors = ["Auth0 <support@auth0.com>"]
 license = "MIT"
 readme = "README.md"
 

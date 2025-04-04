@@ -2,8 +2,8 @@ from fastapi import Request, Response
 from typing import Any, Dict, Optional
 
 #Imported from auth0-server-python
-from store.abstract import TransactionStore
-from auth_types import TransactionData
+from auth0_server_python.store.abstract import TransactionStore
+from auth0_server_python.auth_types import TransactionData
 
 class CookieTransactionStore(TransactionStore):
     """

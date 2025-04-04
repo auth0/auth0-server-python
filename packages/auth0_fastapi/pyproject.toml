@@ -1,24 +1,18 @@
 [tool.poetry]
 name = "auth0-fastapi"
-version = "1.0.0.b1"
+version = "1.0.0.b2"
 description = "Auth0 FastAPI Python SDK"
 readme = "README.md"
-authors = ["Snehil Kishore <snehil.kishore@okta.com>"]
+authors = ["Auth0 <support@auth0.com>"]
 license = "MIT"
 
 packages = [
-  { include = "auth", from = "src" },
-  { include = "errors", from = "src" },
-  { include = "server", from = "src" },
-  { include = "auth", from = "src" },
-  { include = "server", from = "src" },
-  { include = "stores", from = "src" },
-  { include = "util", from = "src" }
+  { include = "auth0_fastapi", from = "src" }
 ]
 
 [tool.poetry.dependencies]
 python = ">=3.9"
-auth0-server-python = "1.0.0b1"  
+auth0-server-python = ">=1.0.0b1"  
 fastapi = "^0.115.11"
 itsdangerous = "^2.2.0"
 

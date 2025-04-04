@@ -1,18 +1,13 @@
 [tool.poetry]
 name = "auth0-server-python"
-version = "1.0.0.b1"
+version = "1.0.0.b2"
 description = "Auth0 server-side Python SDK"
 readme = "README.md"
-authors = ["Snehil Kishore <snehil.kishore@okta.com>"]
+authors = ["Auth0 <support@okta.com>"]
 license = "MIT"
 
 packages = [
-  { include = "auth_server", from = "src" },
-  { include = "auth_types", from = "src" },
-  { include = "encryption", from = "src" },
-  { include = "error", from = "src" },
-  { include = "store", from = "src" },
-  { include = "utils", from = "src" }
+  { include = "auth0_server_python", from = "src" }
 ]
 
 [tool.poetry.dependencies]
