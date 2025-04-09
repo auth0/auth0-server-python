@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "auth0-server-python"
-version = "1.0.0.b2"
+version = "1.0.0.b3"
 description = "Auth0 server-side Python SDK"
 readme = "README.md"
 authors = ["Auth0 <support@okta.com>"]
