@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar, Optional, Dict, Any
 
-from encryption import encrypt, decrypt
+from auth0_server_python.encryption import encrypt, decrypt
 
 T = TypeVar('T')  # Generic type for the data stored
 
