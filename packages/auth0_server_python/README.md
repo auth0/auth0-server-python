@@ -1,6 +1,6 @@
 The Auth0 Server Python SDK is a library for implementing user authentication in Python applications.
 
-![PyPI](https://img.shields.io/pypi/v/auth0-server-python) ![Downloads](https://img.shields.io/pypi/dw/auth0-server-python) [![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT) [![Codecov](https://img.shields.io/codecov/c/github/auth0/auth0-server-python)](https://codecov.io/gh/auth0/auth0-server-python) [![CI](https://github.com/auth0/auth0-server-python/actions/workflows/ci.yml/badge.svg)](https://github.com/auth0/auth0-server-python/actions)
+![PyPI](https://img.shields.io/pypi/v/auth0-server-python) ![Downloads](https://img.shields.io/pypi/dw/auth0-server-python) [![License](https://img.shields.io/:license-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
 
 📚 [Documentation](#documentation) - 🚀 [Getting Started](#getting-started) - 💬 [Feedback](#feedback)
 
@@ -29,7 +29,7 @@ Create an instance of the Auth0 client. This instance will be imported and used 
 
 
 ```python
-from auth0_server_python import ServerClient
+from auth0_server_python.auth_server.server_client import ServerClient
 
 auth0 = ServerClient(
     domain='<AUTH0_DOMAIN>',
@@ -109,7 +109,7 @@ We appreciate feedback and contribution to this repo! Before you get started, pl
 
 - [Auth0's general contribution guidelines](https://github.com/auth0/open-source-template/blob/master/GENERAL-CONTRIBUTING.md)
 - [Auth0's code of conduct guidelines](https://github.com/auth0/open-source-template/blob/master/CODE-OF-CONDUCT.md)
-- [This repo's contribution guide](./CONTRIBUTING.md)
+- [This repo's contribution guide](./../../CONTRIBUTING.md)
 
 ### Raise an issue
 

@@ -12,7 +12,7 @@ ENC = 'A256CBC-HS512'
 ALG = 'dir'
 DIGEST = hashes.SHA256()
 BYTE_LENGTH = 64
-ENCRYPTION_INFO = b'Auth0 Generated ryption'
+ENCRYPTION_INFO = b'Auth0 Generated Encryption'
 
 
 

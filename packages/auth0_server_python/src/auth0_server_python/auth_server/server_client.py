@@ -16,7 +16,7 @@ import httpx
 
 from pydantic import BaseModel, ValidationError
 
-from error import (
+from auth0_server_python.error import (
     MissingTransactionError, 
     ApiError, 
     MissingRequiredArgumentError,
@@ -28,7 +28,7 @@ from error import (
     AccessTokenForConnectionErrorCode
     
 )
-from auth_types import (
+from auth0_server_python.auth_types import (
     StateData, 
     TransactionData, 
     UserClaims, 
@@ -37,7 +37,7 @@ from auth_types import (
     StartInteractiveLoginOptions,
     LogoutOptions
 )
-from utils import PKCE, State, URL
+from auth0_server_python.utils import PKCE, State, URL
 
 
 # Generic type for store options

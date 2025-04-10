@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "auth0-server-python"
-version = "1.0.0.b2"
+version = "1.0.0.b3"
 description = "Auth0 server-side Python SDK"
 readme = "README.md"
 authors = ["Auth0 <support@okta.com>"]
@@ -17,7 +17,6 @@ pyjwt = ">=2.8.0"
 authlib = "^1.2"
 httpx = "^0.28.1"
 pydantic = "^2.10.6"
-fastapi = "^0.115.11"
 jwcrypto = "^1.5.6"
 
 [tool.poetry.group.dev.dependencies]
