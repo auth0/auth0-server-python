@@ -4,7 +4,7 @@ from starlette.responses import Response
 
 from .utils import get_bearer_token, validate_scopes, http_exception
 
-from src.api_client import ApiClient, ApiClientOptions, VerifyAccessTokenError
+from auth0_api_python.api_client import ApiClient, ApiClientOptions, VerifyAccessTokenError
 
 
 class Auth0FastAPI:

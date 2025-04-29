@@ -15,7 +15,7 @@ python = "^3.9"
 fastapi = "^0.115.11"
 httpx = "^0.28.1"
 uvicorn = "^0.34.0"
-auth0-api-python = ">=1.0.0b1"
+auth0-api-python = ">=1.0.0b1" 
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"
