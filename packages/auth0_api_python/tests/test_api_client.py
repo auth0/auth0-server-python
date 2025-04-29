@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 from src.auth0_api_python.api_client import ApiClient
 from src.auth0_api_python.config import ApiClientOptions
-from src.auth0_api_python.errors import MissingRequiredArgumentError, VerifyAccessTokenError, MissingRequiredArgumentError
+from src.auth0_api_python.errors import MissingRequiredArgumentError, VerifyAccessTokenError
 from src.auth0_api_python.token_utils import generate_token
 
 
