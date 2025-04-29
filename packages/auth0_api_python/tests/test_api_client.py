@@ -2,10 +2,10 @@ import pytest
 from pytest_httpx import HTTPXMock
 from unittest.mock import AsyncMock, patch
 
-from src.api_client import ApiClient
-from src.config import ApiClientOptions
-from src.errors import MissingRequiredArgumentError, VerifyAccessTokenError, MissingRequiredArgumentError
-from src.token_utils import generate_token
+from src.auth0_api_python.api_client import ApiClient
+from src.auth0_api_python.config import ApiClientOptions
+from src.auth0_api_python.errors import MissingRequiredArgumentError, VerifyAccessTokenError
+from src.auth0_api_python.token_utils import generate_token
 
 
 @pytest.mark.asyncio
