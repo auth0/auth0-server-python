@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 
 packages = [
-    { include = "src" }
+    { include = "auth0_api_python", from = "src" }
 ]
 
 [tool.poetry.dependencies]
