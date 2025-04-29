@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "auth0-fastapi-api"
-version = "1.0.0.b2"
+version = "1.0.0.b3"
 description = "SDK for verifying access tokens and securing APIs with Auth0, using Authlib."
 authors = ["Auth0 <support@okta.com>"]
 license = "MIT"
