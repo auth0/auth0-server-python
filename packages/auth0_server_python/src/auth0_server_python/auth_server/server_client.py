@@ -37,7 +37,7 @@ from auth0_server_python.auth_types import (
     StartInteractiveLoginOptions,
     LogoutOptions
 )
-from auth0_server_python.utils import PKCE, State, URL
+from auth0_server_python.utils.helpers import PKCE, State, URL
 
 
 # Generic type for store options
