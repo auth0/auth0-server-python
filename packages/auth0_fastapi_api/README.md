@@ -35,7 +35,7 @@ In your FastAPI application, create an instance of the `Auth0FastAPI` class. Sup
 - The `AUTH0_AUDIENCE` is the identifier of the API that is being called. You can find this in the API section of the Auth0 dashboard.
 
 ```python
-from auth0_fastapi_api import Auth0FastAPI
+from fastapi_plugin import Auth0FastAPI
 
 # Create the Auth0 integration
 auth0 = Auth0FastAPI(
