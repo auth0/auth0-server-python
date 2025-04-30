@@ -6,16 +6,16 @@ Auth0 Auth Python Mono Repo, containing SDKs for implementing user authenticatio
 
 
 ## Packages
-- [auth0-api-python](./packages/auth0-api-python/README.md)  
+- [auth0-api-python](./packages/auth0_api_python/README.md)  
   **Authentication SDK for securing APIs on Python** (JWT verification, claims checks, etc.)
 
-- [auth0-server-python](./packages/auth0-server-python/README.md)  
+- [auth0-server-python](./packages/auth0_server_python/README.md)  
   **Authentication SDK for server-side Python apps**, built on Authlib. Handles OAuth flows, session logic.
 
-- [auth0-fastapi](./packages/auth0-fastapi/README.md)  
+- [auth0-fastapi](./packages/auth0_fastapi/README.md)  
   **Authentication SDK for FastAPI**. Provides routes, session/cookie handling, and user linking.
 
-- [auth0-fastapi-api](./packages/auth0-fastapi-api/README.md)
+- [auth0-fastapi-api](./packages/auth0_fastapi_api/README.md)
   **Additional tooling** for combining `auth0-fastapi` with custom API flows.
 
 >[!IMPORTANT]
