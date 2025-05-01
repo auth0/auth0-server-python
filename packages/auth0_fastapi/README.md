@@ -48,12 +48,12 @@ poetry install auth0-fastapi
 # main.py
 import os
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Request, Response
 from starlette.middleware.sessions import SessionMiddleware
 
 from auth0_fastapi.config import Auth0Config
 from auth0_fastapi.auth.auth_client import AuthClient
-from auth0_fastapi.server.routes import router
+from auth0_fastapi.server.routes import router, register_auth_routes
 from auth0_fastapi.errors import register_exception_handlers
 
 app = FastAPI(title="Auth0-FastAPI Example")
@@ -78,7 +78,7 @@ app.state.config = config
 app.state.auth_client = auth_client
 
 # 4) Conditionally register routes
-register_auth_routes((router, config))
+register_auth_routes(router, config)
 
 # 5) Include the SDK’s default routes
 app.include_router(router)
@@ -127,7 +127,7 @@ To tweak these stores - to change cookie names or expiration dates - or to use a
 # main.py
 import os
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Request, Response
 from starlette.middleware.sessions import SessionMiddleware
 
 from auth0_fastapi.config import Auth0Config
@@ -157,7 +157,7 @@ app.state.config = config
 app.state.auth_client = auth_client
 
 # 4) Conditionally register routes
-register_auth_routes((router, config))
+register_auth_routes(router, config)
 
 # 5) Include the SDK’s default routes
 app.include_router(router)
