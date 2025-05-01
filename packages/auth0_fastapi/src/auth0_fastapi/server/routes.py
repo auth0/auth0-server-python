@@ -1,9 +1,10 @@
+from ..util import to_safe_redirect, create_route_url, merge_set_cookie_headers
+from ..util import to_safe_redirect, create_route_url
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, Query
 from fastapi.responses import RedirectResponse
 from typing import Optional
 from ..auth.auth_client import AuthClient
 from ..config import Auth0Config
-from ..util import to_safe_redirect, create_route_url
 
 router = APIRouter()
 
@@ -34,8 +35,11 @@ def register_auth_routes(router: APIRouter, config: Auth0Config):
             """
 
             return_to: Optional[str] = request.query_params.get("returnTo")
+            authorization_params = {k: v for k, v in request.query_params.items() if k not in [
+                "returnTo"]}
             auth_url = await auth_client.start_login(
                 app_state={"returnTo": return_to} if return_to else None,
+                authorization_params=authorization_params,
                 store_options={"response": response}
             )
 

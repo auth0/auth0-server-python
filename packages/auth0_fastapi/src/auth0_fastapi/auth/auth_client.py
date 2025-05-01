@@ -6,12 +6,13 @@ from auth0_fastapi.stores.stateless_state_store import StatelessStateStore
 
 from auth0_fastapi.config import Auth0Config
 
-#Imported from auth0-server-python
+# Imported from auth0-server-python
 from auth0_server_python.auth_server.server_client import ServerClient
 from auth0_server_python.auth_types import (
     StartInteractiveLoginOptions,
     LogoutOptions
 )
+
 
 class AuthClient:
     """
@@ -20,18 +21,21 @@ class AuthClient:
     and exposes helper methods for starting login, completing the login callback,
     logging out, and handling backchannel logout.
     """
+
     def __init__(self, config: Auth0Config, state_store=None, transaction_store=None):
         self.config = config
         # Build the redirect URI based on the provided app_base_url
-        redirect_uri =  f"{str(config.app_base_url).rstrip('/')}/auth/callback"
-        
+        redirect_uri = f"{str(config.app_base_url).rstrip('/')}/auth/callback"
+
         # Use provided state_store or default to cookie implementation
         if state_store is None:
-            state_store = StatelessStateStore(config.secret, cookie_name="_a0_session", expiration=config.session_expiration)
+            state_store = StatelessStateStore(
+                config.secret, cookie_name="_a0_session", expiration=config.session_expiration)
         # Use provided transaction_store or default to an cookie implementation
         if transaction_store is None:
-            transaction_store = CookieTransactionStore(config.secret, cookie_name="_a0_tx")
-        
+            transaction_store = CookieTransactionStore(
+                config.secret, cookie_name="_a0_tx")
+
         self.client = ServerClient(
             domain=config.domain,
             client_id=config.client_id,
@@ -47,37 +51,41 @@ class AuthClient:
                 **(config.authorization_params or {})
             },
         )
-    
-    async def start_login(self, app_state: dict = None, store_options: dict = None) -> str:
+
+    async def start_login(self, app_state: dict = None, authorization_params: dict = None, store_options: dict = None) -> str:
         """
         Initiates the interactive login process.
         Optionally, an app_state dictionary can be passed to persist additional state.
         Returns the authorization URL to redirect the user.
         """
-        options = StartInteractiveLoginOptions(app_state=app_state)
+        pushed_authorization_requests = self.config.pushed_authorization_requests
+        options = StartInteractiveLoginOptions(
+            pushed_authorization_requests=pushed_authorization_requests,
+            app_state=app_state,
+            authorization_params=authorization_params if not pushed_authorization_requests else None
+        )
         return await self.client.start_interactive_login(options, store_options=store_options)
-    
+
     async def complete_login(self, callback_url: str, store_options: dict = None) -> dict:
         """
         Completes the interactive login process using the callback URL.
         Returns a dictionary with the session state data.
         """
         return await self.client.complete_interactive_login(callback_url, store_options=store_options)
-    
-    async def logout(self, return_to: str = None, store_options: dict = None ) -> str:
+
+    async def logout(self, return_to: str = None, store_options: dict = None) -> str:
         """
         Initiates logout by clearing the session and generating a logout URL.
         Optionally accepts a return_to URL for redirection after logout.
         """
         options = LogoutOptions(return_to=return_to)
         return await self.client.logout(options, store_options=store_options)
-    
+
     async def handle_backchannel_logout(self, logout_token: str) -> None:
         """
         Processes a backchannel logout using the provided logout token.
         """
         return await self.client.handle_backchannel_logout(logout_token)
-    
 
     async def start_link_user(self, options: dict, store_options: dict = None) -> str:
         """
@@ -90,7 +98,7 @@ class AuthClient:
         Returns a URL to redirect the user to for linking.
         """
         return await self.client.start_link_user(options, store_options=store_options)
-    
+
     async def complete_link_user(self, url: str, store_options: dict = None) -> dict:
         """
         Completes the user linking process.
@@ -98,7 +106,7 @@ class AuthClient:
         Returns a dictionary containing the original appState.
         """
         return await self.client.complete_link_user(url, store_options=store_options)
-    
+
     async def start_unlink_user(self, options: dict, store_options: dict = None) -> str:
         """
         Initiates the user unlinking process.
@@ -109,7 +117,7 @@ class AuthClient:
         Returns a URL to redirect the user to for unlinking.
         """
         return await self.client.start_unlink_user(options, store_options=store_options)
-    
+
     async def complete_unlink_user(self, url: str, store_options: dict = None) -> dict:
         """
         Completes the user unlinking process.
@@ -117,7 +125,7 @@ class AuthClient:
         Returns a dictionary containing the original appState.
         """
         return await self.client.complete_unlink_user(url, store_options=store_options)
-    
+
     async def require_session(self, request: Request, response: Response) -> dict:
         """
         Dependency method to ensure a session exists.
@@ -127,5 +135,6 @@ class AuthClient:
         store_options = {"request": request, "response": response}
         session = await self.client.get_session(store_options=store_options)
         if not session:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Please log in")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Please log in")
         return session
