@@ -79,6 +79,20 @@ async def custom_claims_route(claims: dict = Depends(auth0.require_auth())):
 ```
 You can parse or validate these claims however you like in your application code.
 
+### Dependency in the path operation decorator
+
+In case you don't need to use the `claims` dictionary in your endpoint you can also use the dependency as part of the path decorator. For example:
+
+```python
+@app.get("/protected", dependencies=Depends(auth0.require_auth()))
+async def protected():
+    # Protected endpoint 
+    return {"msg": "You need to have an access token to see this endpoint."}
+
+```
+
+This way you can protected your endpoint and not have an unused variable.
+
 ### 4. Advanced Configuration
 - **Scopes**: If you need to check for specific scopes (like `read:data`), call r`equire_auth(scopes="read:data")` or pass a list of scopes. The SDK will return a 403 if the token lacks those scopes in its `scope` claim.
 ```python
