@@ -48,7 +48,7 @@ poetry install auth0-fastapi
 # main.py
 import os
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Request, Response
 from starlette.middleware.sessions import SessionMiddleware
 
 from auth0_fastapi.config import Auth0Config
@@ -127,7 +127,7 @@ To tweak these stores - to change cookie names or expiration dates - or to use a
 # main.py
 import os
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Request, Response
 from starlette.middleware.sessions import SessionMiddleware
 
 from auth0_fastapi.config import Auth0Config
