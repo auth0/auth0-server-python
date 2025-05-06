@@ -204,11 +204,14 @@ from auth0_fastapi.auth.auth_client import AuthClient
 
 
 config = Auth0Config(
-    domain="YOUR_AUTH0_DOMAIN",          # e.g., "dev-1234abcd.us.auth0.com"
+    domain="YOUR_AUTH0_DOMAIN",            # e.g., "dev-1234abcd.us.auth0.com"
     client_id="YOUR_CLIENT_ID",
     client_secret="YOUR_CLIENT_SECRET",
     app_base_url="http://localhost:3000",  # or your production URL
-    secret="YOUR_SESSION_SECRET"
+    secret="YOUR_SESSION_SECRET",
+    authorization_params={
+        "scope": "openid profile",         # required get the user information from Auth0
+    }
 )
 
 auth_client = AuthClient(config)
@@ -230,6 +233,7 @@ async def profile(request: Request, response: Response, session=Depends(auth_cli
 
 > [!IMPORTANT]  
 > The above is to protect server-side rendering routes by the means of a session, and not API routes using a bearer token.
+> The `authorization_params` passing the `scope` is used in to retrieve the user information from Auth0. Can be omitted if you don't need the user information.
 
 
 #### Requesting an Access Token to call an API
