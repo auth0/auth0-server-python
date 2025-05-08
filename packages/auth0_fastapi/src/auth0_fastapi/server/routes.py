@@ -1,4 +1,4 @@
-from ..util import to_safe_redirect, create_route_url, merge_set_cookie_headers
+from ..util import to_safe_redirect, create_route_url
 from ..util import to_safe_redirect, create_route_url
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, Query
 from fastapi.responses import RedirectResponse
