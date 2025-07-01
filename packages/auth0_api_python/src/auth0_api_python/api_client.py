@@ -187,7 +187,7 @@ class ApiClient:
             raise InvalidDpopProofError("Invalid typ header")
        
         alg = header.get("alg")
-        if alg not in self.options.dpop_algorithms:
+        if alg not in self._dpop_algorithms:
             raise InvalidDpopProofError(f"Unsupported alg: {alg}")
 
     
