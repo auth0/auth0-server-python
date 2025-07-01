@@ -1,11 +1,12 @@
 import time
-from typing import Optional, List, Dict, Any
+import hashlib
+from typing import Optional, List, Dict, Any, Tuple
 
 from authlib.jose import JsonWebToken, JsonWebKey
 
 from .config import ApiClientOptions
-from .errors import MissingRequiredArgumentError, VerifyAccessTokenError
-from .utils import fetch_oidc_metadata, fetch_jwks, get_unverified_header
+from .errors import MissingRequiredArgumentError, VerifyAccessTokenError, InvalidAuthSchemeError, InvalidDpopProofError
+from .utils import fetch_oidc_metadata, fetch_jwks, get_unverified_header, normalize_url_for_htu, sha256_base64url
 
 class ApiClient:
     """
@@ -25,6 +26,34 @@ class ApiClient:
         self._jwks_data: Optional[Dict[str, Any]] = None
 
         self._jwt = JsonWebToken(["RS256"])
+
+        self._dpop_algorithms = ["ES256"]
+        self._dpop_jwt = JsonWebToken(self._dpop_algorithms)
+
+    
+    def _build_www_authenticate(self) -> List[Tuple[str,str]]:
+        """
+        Build one or two WWW-Authenticate headers:
+        - Required mode: single DPoP challenge
+        - Allowed mode: Bearer + DPoP challenges
+        """
+        realm = self.options.realm \
+              or f'https://{self.options.domain}'
+        algs = " ".join(self._dpop_algorithms)
+
+        # 1) If DPoP *required*, only send a DPoP header
+        if self.options.dpop_required:
+            return [
+                ("WWW-Authenticate", f'DPoP algs="{algs}"')
+            ]
+
+        # 2) Otherwise, send Bearer then DPoP
+        bearer = f'Bearer realm="{realm}"'
+        dpop   = f'DPoP algs="{algs}"'
+        return [
+            ("WWW-Authenticate", bearer),
+            ("WWW-Authenticate", dpop)
+        ]
 
     async def _discover(self) -> Dict[str, Any]:
         """Lazy-load OIDC discovery metadata."""
@@ -126,3 +155,116 @@ class ApiClient:
                 raise VerifyAccessTokenError(f"Missing required claim: {rc}")
 
         return claims
+    
+    async def verify_dpop_proof(
+        self,
+        access_token: str,
+        proof: str,
+        http_method: str,
+        http_url: str
+    ) -> Dict[str, Any]:
+        """
+        1. Single well-formed compact JWS
+        2. typ="dpop+jwt", alg∈allowed, alg≠none
+        3. jwk header present & public only
+        4. Signature verifies with jwk
+        5. iat within leeway
+        6. htm == http_method
+        7. htu == http_url (normalized)
+        8. ath == SHA256(access_token)
+        Raises InvalidDpopProofError on any failure.
+        """
+        if not proof:
+            raise MissingRequiredArgumentError("dpop_proof")
+        if not access_token:
+            raise MissingRequiredArgumentError("access_token")
+        if not http_method or not http_url:
+            raise MissingRequiredArgumentError("http_method/http_url")
+
+        header = await get_unverified_header(proof)
+      
+        if header.get("typ") != "dpop+jwt":
+            raise InvalidDpopProofError("Invalid typ header")
+       
+        alg = header.get("alg")
+        if alg not in self.options.dpop_algorithms:
+            raise InvalidDpopProofError(f"Unsupported alg: {alg}")
+
+    
+        jwk_dict = header.get("jwk")
+        if not jwk_dict or "d" in jwk_dict:
+            raise InvalidDpopProofError("Missing or private jwk in header")
+
+   
+        public_key = JsonWebKey.import_key(jwk_dict)
+        try:
+            claims = self._dpop_jwt.decode(proof, public_key)
+        except Exception as e:
+            raise InvalidDpopProofError(f"Signature verification failed: {e}")
+
+        now = int(time.time())
+        iat = claims.get("iat")
+
+        if not isinstance(iat, int):
+            raise InvalidDpopProofError("Missing or invalid iat claim")
+        leeway = getattr(self.options, "dpop_iat_leeway", 30)
+        if abs(now - iat) > leeway:
+            raise InvalidDpopProofError("iat timestamp check failed")
+
+        if claims.get("htm") != http_method:
+            raise InvalidDpopProofError("htm claim mismatch")
+    
+        if normalize_url_for_htu(claims.get("htu","")) != normalize_url_for_htu(http_url):
+            raise InvalidDpopProofError("htu claim mismatch")
+
+        if claims.get("ath") != sha256_base64url(access_token):
+            raise InvalidDpopProofError("ath claim mismatch")
+
+        return claims
+    
+    async def verify_request(
+        self,
+        authorization_header: str,
+        dpop_proof: Optional[str],
+        http_method: Optional[str],
+        http_url: Optional[str]
+    ) -> Dict[str, Any]:
+        """
+        Dispatch based on Authorization scheme:
+          • If scheme is 'DPoP', calls verify_dpop_request()
+          • Else treats as Bearer and calls verify_access_token()
+
+        Raises:
+          MissingRequiredArgumentError if required args are missing
+          InvalidDpopSchemeError   if an unsupported scheme is provided
+        """
+
+        if not authorization_header:
+            raise MissingRequiredArgumentError("authorization_header")
+        try:
+            scheme, token = authorization_header.split(" ", 1)
+        except ValueError:
+            raise InvalidAuthSchemeError("Malformed Authorization header (expected '<scheme> <token>')")
+
+        scheme = scheme.strip().lower()
+
+        if scheme == "dpop":
+            if not self.options.dpop_enabled:
+                raise InvalidAuthSchemeError("DPoP is disabled")
+            if not dpop_proof:
+                raise MissingRequiredArgumentError("dpop_proof")
+            if not http_method or not http_url:
+                raise MissingRequiredArgumentError(
+                    "http_method and http_url are required for DPoP"
+                )
+            return await self.verify_dpop_proof(
+                access_token=token,
+                dpop_proof=dpop_proof,
+                http_method=http_method,
+                http_url=http_url
+            )
+
+        if scheme == "bearer":
+            return await self.verify_access_token(token)
+
+        raise InvalidAuthSchemeError(f"Unsupported auth scheme: {scheme}")

@@ -6,7 +6,10 @@ using httpx or a custom fetch approach.
 import httpx
 import base64
 import json
+import hashlib
 from typing import Any, Dict, Optional, Callable, Union
+
+from urllib.parse import urlparse, urlunparse
 
 async def fetch_oidc_metadata(
     domain: str, 
@@ -86,3 +89,21 @@ def remove_bytes_prefix(s: str) -> str:
     if s.startswith("b'"):
         return s[2:]  # cut off the leading b'
     return s
+
+def normalize_url_for_htu(raw_url: str) -> str:
+    """
+    Strip query and fragment from the URL so it can be compared to the
+    DPoP proof's htu claim (RFC 3986 §6.2.2/6.2.3).
+    """
+    p = urlparse(raw_url)
+    return urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+
+
+def sha256_base64url(input_str: str) -> str:
+    """
+    Compute SHA-256 digest of the input string and return a
+    Base64URL-encoded string *without* padding.
+    """
+    digest = hashlib.sha256(input_str.encode("utf-8")).digest()
+    b64 = base64.urlsafe_b64encode(digest).decode("utf-8")
+    return b64.rstrip("=")

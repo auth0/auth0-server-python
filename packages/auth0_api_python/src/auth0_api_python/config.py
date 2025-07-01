@@ -17,8 +17,13 @@ class ApiClientOptions:
         self,
         domain: str,
         audience: str,
-        custom_fetch: Optional[Callable[..., object]] = None
+        custom_fetch: Optional[Callable[..., object]] = None,
+        realm: Optional[str] = None
     ):
         self.domain = domain
         self.audience = audience
         self.custom_fetch = custom_fetch
+        self.realm = realm
+        self.dpop_enabled = True
+        self.dpop_required = False
+        self.dpop_iat_leeway = 30
