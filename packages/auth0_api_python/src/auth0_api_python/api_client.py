@@ -31,28 +31,34 @@ class ApiClient:
         self._dpop_jwt = JsonWebToken(self._dpop_algorithms)
 
     
-    def _build_www_authenticate(self) -> List[Tuple[str,str]]:
+    def _build_www_authenticate(
+        self,
+        *,
+        dpop_error: Optional[str] = None,
+        dpop_error_description: Optional[str] = None
+    ) -> List[Tuple[str, str]]:
         """
-        Build one or two WWW-Authenticate headers:
-        - Required mode: single DPoP challenge
-        - Allowed mode: Bearer + DPoP challenges
+        Returns one or two ('WWW-Authenticate', ...) tuples.
+        If dpop_required mode → single DPoP challenge (with optional error params).
+        Otherwise → Bearer realm=…, then DPoP algs=… (with error params).
         """
-        realm = self.options.realm \
-              or f'https://{self.options.domain}'
+        realm = getattr(self.options, "realm", None) or f'https://{self.options.domain}'
         algs = " ".join(self._dpop_algorithms)
 
-        # 1) If DPoP *required*, only send a DPoP header
-        if self.options.dpop_required:
-            return [
-                ("WWW-Authenticate", f'DPoP algs="{algs}"')
-            ]
+        dpop_parts = [f'algs="{algs}"']
+        if dpop_error:
+            dpop_parts.append(f'error="{dpop_error}"')
+        if dpop_error_description:
+            dpop_parts.append(f'error_description="{dpop_error_description}"')
+        dpop_header = "DPoP " + ", ".join(dpop_parts)
 
-        # 2) Otherwise, send Bearer then DPoP
-        bearer = f'Bearer realm="{realm}"'
-        dpop   = f'DPoP algs="{algs}"'
+        if getattr(self.options, "dpop_required", False):
+            return [("WWW-Authenticate", dpop_header)]
+
+        bearer_header = f'Bearer realm="{realm}"'
         return [
-            ("WWW-Authenticate", bearer),
-            ("WWW-Authenticate", dpop)
+            ("WWW-Authenticate", bearer_header),
+            ("WWW-Authenticate", dpop_header),
         ]
 
     async def _discover(self) -> Dict[str, Any]:
@@ -205,11 +211,14 @@ class ApiClient:
         now = int(time.time())
         iat = claims.get("iat")
 
+        offset = getattr(self.options, "dpop_iat_offset", 300)    # default 5 minutes
+        leeway = getattr(self.options, "dpop_iat_leeway", 30)     # default 30 seconds
+
         if not isinstance(iat, int):
             raise InvalidDpopProofError("Missing or invalid iat claim")
-        leeway = getattr(self.options, "dpop_iat_leeway", 30)
-        if abs(now - iat) > leeway:
-            raise InvalidDpopProofError("iat timestamp check failed")
+
+        if iat < now - offset or iat > now + leeway:
+            raise InvalidDpopProofError("DPoP proof iat outside allowed window")
 
         if claims.get("htm") != http_method:
             raise InvalidDpopProofError("htm claim mismatch")
@@ -257,9 +266,10 @@ class ApiClient:
                 raise MissingRequiredArgumentError(
                     "http_method and http_url are required for DPoP"
                 )
+            await self.verify_access_token(token)
             return await self.verify_dpop_proof(
                 access_token=token,
-                dpop_proof=dpop_proof,
+                proof=dpop_proof,
                 http_method=http_method,
                 http_url=http_url
             )

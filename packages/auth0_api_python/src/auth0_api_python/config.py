@@ -27,3 +27,4 @@ class ApiClientOptions:
         self.dpop_enabled = True
         self.dpop_required = False
         self.dpop_iat_leeway = 30
+        self.dpop_iat_offset = 300
