@@ -6,7 +6,8 @@ from authlib.jose import JsonWebToken, JsonWebKey
 
 from .config import ApiClientOptions
 from .errors import MissingRequiredArgumentError, VerifyAccessTokenError, InvalidAuthSchemeError, InvalidDpopProofError
-from .utils import fetch_oidc_metadata, fetch_jwks, get_unverified_header, normalize_url_for_htu, sha256_base64url
+from .utils import fetch_oidc_metadata, fetch_jwks, get_unverified_header, normalize_url_for_htu, sha256_base64url, calculate_jwk_thumbprint
+from .types import RequestData
 
 class ApiClient:
     """
@@ -45,6 +46,7 @@ class ApiClient:
         realm = getattr(self.options, "realm", None) or f'https://{self.options.domain}'
         algs = " ".join(self._dpop_algorithms)
 
+        # build the DPoP piece
         dpop_parts = [f'algs="{algs}"']
         if dpop_error:
             dpop_parts.append(f'error="{dpop_error}"')
@@ -55,6 +57,7 @@ class ApiClient:
         if getattr(self.options, "dpop_required", False):
             return [("WWW-Authenticate", dpop_header)]
 
+        # allowed mode: first Bearer, then DPoP
         bearer_header = f'Bearer realm="{realm}"'
         return [
             ("WWW-Authenticate", bearer_header),
@@ -233,20 +236,34 @@ class ApiClient:
     
     async def verify_request(
         self,
-        authorization_header: str,
-        dpop_proof: Optional[str],
-        http_method: Optional[str],
-        http_url: Optional[str]
+        request: RequestData,  # More specific than Mapping[str, Any]
     ) -> Dict[str, Any]:
         """
         Dispatch based on Authorization scheme:
-          • If scheme is 'DPoP', calls verify_dpop_request()
-          • Else treats as Bearer and calls verify_access_token()
+          • If scheme is 'DPoP', verifies both access token and DPoP proof
+          • If scheme is 'Bearer', verifies only the access token
+
+        Args:
+            request: A mapping containing:
+                - authorization_header: The Authorization header value (required)
+                - dpop_proof: The DPoP proof header value (required for DPoP)
+                - http_method: The HTTP method (required for DPoP)
+                - http_url: The HTTP URL (required for DPoP)
+
+        Returns:
+            The decoded access token claims
 
         Raises:
-          MissingRequiredArgumentError if required args are missing
-          InvalidDpopSchemeError   if an unsupported scheme is provided
+            MissingRequiredArgumentError: If required args are missing
+            InvalidAuthSchemeError: If an unsupported scheme is provided
+            InvalidDpopProofError: If DPoP verification fails
+            VerifyAccessTokenError: If access token verification fails
         """
+
+        authorization_header = request.get("authorization_header", "")
+        dpop_proof  = request.get("dpop_proof")
+        http_method = request.get("http_method")
+        http_url    = request.get("http_url")
 
         if not authorization_header:
             raise MissingRequiredArgumentError("authorization_header")
@@ -266,13 +283,20 @@ class ApiClient:
                 raise MissingRequiredArgumentError(
                     "http_method and http_url are required for DPoP"
                 )
-            await self.verify_access_token(token)
-            return await self.verify_dpop_proof(
+            access_token_claims = await self.verify_access_token(token)
+            await self.verify_dpop_proof(
                 access_token=token,
                 proof=dpop_proof,
                 http_method=http_method,
                 http_url=http_url
             )
+            jwk_dict = (await get_unverified_header(dpop_proof))["jwk"]
+            actual_jkt = calculate_jwk_thumbprint(jwk_dict)
+            expected_jkt = access_token_claims.get("cnf", {}).get("jkt")
+            if expected_jkt != actual_jkt:
+                raise InvalidDpopProofError("cnf.jkt thumbprint mismatch")
+            
+            return access_token_claims
 
         if scheme == "bearer":
             return await self.verify_access_token(token)

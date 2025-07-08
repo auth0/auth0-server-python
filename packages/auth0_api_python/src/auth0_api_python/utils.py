@@ -107,3 +107,28 @@ def sha256_base64url(input_str: str) -> str:
     digest = hashlib.sha256(input_str.encode("utf-8")).digest()
     b64 = base64.urlsafe_b64encode(digest).decode("utf-8")
     return b64.rstrip("=")
+
+def calculate_jwk_thumbprint(jwk: Dict[str, str]) -> str:
+    """
+    Compute the RFC 7638 JWK thumbprint for a public JWK.
+
+    - For EC keys, includes only: crv, kty, x, y
+    - For RSA keys, includes only: e, kty, n
+    - Serializes with no whitespace, keys sorted lexicographically
+    - Hashes with SHA-256 and returns base64url-encoded string without padding
+    """
+    kty = jwk.get("kty")
+    if kty == "EC":
+        members = ("crv", "kty", "x", "y")
+    elif kty == "RSA":
+        members = ("e", "kty", "n")
+    else:
+        members = tuple(sorted(k for k,v in jwk.items() if isinstance(v, str)))
+
+    ordered = {k: jwk[k] for k in members if k in jwk}
+
+    thumbprint_json = json.dumps(ordered, separators=(",",":"), sort_keys=True)
+
+    digest = hashlib.sha256(thumbprint_json.encode("utf-8")).digest()
+
+    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
