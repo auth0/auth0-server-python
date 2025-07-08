@@ -114,20 +114,35 @@ def calculate_jwk_thumbprint(jwk: Dict[str, str]) -> str:
 
     - For EC keys, includes only: crv, kty, x, y
     - For RSA keys, includes only: e, kty, n
+    - For OKP keys, includes only: crv, kty, x
+    - For oct keys, includes only: k, kty
     - Serializes with no whitespace, keys sorted lexicographically
     - Hashes with SHA-256 and returns base64url-encoded string without padding
     """
     kty = jwk.get("kty")
+    
     if kty == "EC":
+        if not all(k in jwk for k in ["crv", "x", "y"]):
+            raise ValueError("EC key missing required parameters")
         members = ("crv", "kty", "x", "y")
     elif kty == "RSA":
+        if not all(k in jwk for k in ["e", "n"]):
+            raise ValueError("RSA key missing required parameters")
         members = ("e", "kty", "n")
+    elif kty == "OKP":
+        if not all(k in jwk for k in ["crv", "x"]):
+            raise ValueError("OKP key missing required parameters")
+        members = ("crv", "kty", "x")
+    elif kty == "oct":
+        if "k" not in jwk:
+            raise ValueError("oct key missing required parameter")
+        members = ("k", "kty")
     else:
-        members = tuple(sorted(k for k,v in jwk.items() if isinstance(v, str)))
+        raise ValueError(f"Unsupported key type: {kty}")
 
     ordered = {k: jwk[k] for k in members if k in jwk}
 
-    thumbprint_json = json.dumps(ordered, separators=(",",":"), sort_keys=True)
+    thumbprint_json = json.dumps(ordered, separators=(",", ":"), sort_keys=True)
 
     digest = hashlib.sha256(thumbprint_json.encode("utf-8")).digest()
 
