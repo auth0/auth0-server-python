@@ -199,10 +199,18 @@ class ApiClient:
         if alg not in self._dpop_algorithms:
             raise InvalidDpopProofError(f"Unsupported alg: {alg}")
 
+        self._validate_claims_presence(claims, ["iat", "ath", "htm", "htu", "jti"])
     
         jwk_dict = header.get("jwk")
-        if not jwk_dict or "d" in jwk_dict:
-            raise InvalidDpopProofError("Missing or private jwk in header")
+            
+        if "d" in jwk_dict:
+            raise InvalidDpopProofError("Private key material found in jwk header")
+        
+        if jwk_dict.get("kty") != "EC":
+            raise InvalidDpopProofError("Only EC keys are supported for DPoP")
+            
+        if jwk_dict.get("crv") != "P-256":
+            raise InvalidDpopProofError("Only P-256 curve is supported")
 
    
         public_key = JsonWebKey.import_key(jwk_dict)
@@ -210,6 +218,16 @@ class ApiClient:
             claims = self._dpop_jwt.decode(proof, public_key)
         except Exception as e:
             raise InvalidDpopProofError(f"Signature verification failed: {e}")
+        
+        
+
+        jti = claims["jti"]
+        
+        if not isinstance(jti, str):
+            raise InvalidDpopProofError("jti claim must be a string")
+        
+        if not jti.strip():
+            raise InvalidDpopProofError("jti claim must not be empty")
 
         now = int(time.time())
         iat = claims.get("iat")
@@ -259,6 +277,7 @@ class ApiClient:
             InvalidDpopProofError: If DPoP verification fails
             VerifyAccessTokenError: If access token verification fails
         """
+  
 
         authorization_header = request.get("authorization_header", "")
         dpop_proof  = request.get("dpop_proof")
@@ -267,6 +286,9 @@ class ApiClient:
 
         if not authorization_header:
             raise MissingRequiredArgumentError("authorization_header")
+        if authorization_header is not None:
+            if isinstance(authorization_header, list) and len(authorization_header) > 1:
+                raise InvalidAuthSchemeError("Multiple Authorization headers are not allowed")
         try:
             scheme, token = authorization_header.split(" ", 1)
         except ValueError:
@@ -302,3 +324,32 @@ class ApiClient:
             return await self.verify_access_token(token)
 
         raise InvalidAuthSchemeError(f"Unsupported auth scheme: {scheme}")
+    
+    def _validate_claims_presence(
+        self, 
+        claims: Dict[str, Any], 
+        required_claims: List[str]
+    ) -> None:
+        """
+        Validates that all required claims are present in the claims dict.
+        
+        Args:
+            claims: The claims dictionary to validate
+            required_claims: List of claim names that must be present
+            
+        Raises:
+            InvalidDpopProofError: If any required claim is missing
+        """
+        missing_claims = []
+        
+        for claim in required_claims:
+            if claim not in claims:
+                missing_claims.append(claim)
+        
+        if missing_claims:
+            if len(missing_claims) == 1:
+                error_message = f"Missing required claim: {missing_claims[0]}"
+            else:
+                error_message = f"Missing required claims: {', '.join(missing_claims)}"
+            
+            raise InvalidDpopProofError(error_message)
