@@ -100,6 +100,9 @@ If the token lacks `my_custom_claim` or fails any standard check (issuer mismatc
 
 ### 4. DPoP Authentication
 
+> [!NOTE]  
+> This feature is currently available in [Early Access](https://auth0.com/docs/troubleshoot/product-lifecycle/product-release-stages#early-access). Please reach out to Auth0 support to get it enabled for your tenant.
+
 This library supports **DPoP (Demonstrating Proof-of-Possession)** for enhanced security, allowing clients to prove possession of private keys bound to access tokens.
 
 #### Allowed Mode (Default)
