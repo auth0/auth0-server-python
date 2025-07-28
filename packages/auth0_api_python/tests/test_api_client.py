@@ -4,10 +4,10 @@ import json
 import time
 from pytest_httpx import HTTPXMock
 
-from src.auth0_api_python.api_client import ApiClient
-from src.auth0_api_python.config import ApiClientOptions
-from src.auth0_api_python.errors import MissingRequiredArgumentError, VerifyAccessTokenError, InvalidDpopProofError, InvalidAuthSchemeError, MissingAuthorizationError
-from src.auth0_api_python.token_utils import generate_token, generate_dpop_proof, generate_token_with_cnf, PRIVATE_JWK, PRIVATE_EC_JWK
+from auth0_api_python.api_client import ApiClient
+from auth0_api_python.config import ApiClientOptions
+from auth0_api_python.errors import MissingRequiredArgumentError, VerifyAccessTokenError, InvalidDpopProofError, InvalidAuthSchemeError, MissingAuthorizationError
+from auth0_api_python.token_utils import generate_token, generate_dpop_proof, generate_token_with_cnf, PRIVATE_JWK, PRIVATE_EC_JWK
 
 # Create public RSA JWK by excluding private key components
 PUBLIC_RSA_JWK = {k: v for k, v in PRIVATE_JWK.items() if k not in ["d", "p", "q", "dp", "dq", "qi"]}
