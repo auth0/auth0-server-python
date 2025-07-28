@@ -6,6 +6,24 @@ It’s intended as a foundation for building more framework-specific integration
 
 📚 [Documentation](#documentation) - 🚀 [Getting Started](#getting-started) - 💬 [Feedback](#feedback)
 
+## Features & Authentication Schemes
+
+This SDK provides comprehensive support for securing APIs with Auth0-issued access tokens:
+
+### **Authentication Schemes**
+- **Bearer Token Authentication** - Traditional OAuth 2.0 Bearer tokens (RS256)
+- **DPoP Authentication** - Enhanced security with Demonstrating Proof-of-Possession (ES256)
+- **Mixed Mode Support** - Seamlessly handle both Bearer and DPoP in the same API
+
+### **Core Features**
+- **Unified Entry Point**: `verify_request()` - automatically detects and validates Bearer or DPoP schemes
+- **OIDC Discovery** - Automatic fetching of Auth0 metadata and JWKS
+- **JWT Validation** - Complete RS256 signature verification with claim validation
+- **DPoP Proof Verification** - Full RFC 9449 compliance with ES256 signature validation
+- **Flexible Configuration** - Support for both "Allowed" and "Required" DPoP modes
+- **Comprehensive Error Handling** - Detailed errors with proper HTTP status codes and WWW-Authenticate headers
+- **Framework Agnostic** - Works with FastAPI, Django, Flask, or any Python web framework
+
 ## Documentation
 
 - [Docs Site](https://auth0.com/docs) - explore our docs site and learn more about Auth0.
@@ -79,6 +97,60 @@ decoded_and_verified_token = await api_client.verify_access_token(
 ```
 
 If the token lacks `my_custom_claim` or fails any standard check (issuer mismatch, expired token, invalid signature), the method raises a `VerifyAccessTokenError`.
+
+### 4. DPoP Authentication
+
+This library supports **DPoP (Demonstrating Proof-of-Possession)** for enhanced security, allowing clients to prove possession of private keys bound to access tokens.
+
+#### Allowed Mode (Default)
+
+Accepts both Bearer and DPoP tokens - ideal for gradual migration:
+
+```python
+api_client = ApiClient(ApiClientOptions(
+    domain="<AUTH0_DOMAIN>",
+    audience="<AUTH0_AUDIENCE>",
+    dpop_enabled=True,      # Default - enables DPoP support
+    dpop_required=False     # Default - allows both Bearer and DPoP
+))
+
+# Use verify_request() for automatic scheme detection
+result = await api_client.verify_request(
+    headers={
+        "authorization": "DPoP eyJ0eXAiOiJKV1Q...",  # DPoP scheme
+        "dpop": "eyJ0eXAiOiJkcG9wK2p3dC...",        # DPoP proof
+    },
+    http_method="GET",
+    http_url="https://api.example.com/resource"
+)
+```
+
+#### Required Mode
+
+Enforces DPoP-only authentication, rejecting Bearer tokens:
+
+```python
+api_client = ApiClient(ApiClientOptions(
+    domain="<AUTH0_DOMAIN>",
+    audience="<AUTH0_AUDIENCE>", 
+    dpop_required=True      # Rejects Bearer tokens
+))
+```
+
+#### Configuration Options
+
+```python
+api_client = ApiClient(ApiClientOptions(
+    domain="<AUTH0_DOMAIN>",
+    audience="<AUTH0_AUDIENCE>",
+    dpop_enabled=True,          # Enable/disable DPoP support
+    dpop_required=False,        # Require DPoP (reject Bearer)
+    dpop_iat_leeway=30,         # Clock skew tolerance (seconds)
+    dpop_iat_offset=300,        # Maximum proof age (seconds)
+))
+```
+
+📖 **[Complete DPoP Documentation](docs/DPOP.md)** - Detailed guide with examples, error handling, and security considerations.
 
 ## Feedback
 

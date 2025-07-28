@@ -6,7 +6,11 @@ using httpx or a custom fetch approach.
 import httpx
 import base64
 import json
+import hashlib
+import uuid
 from typing import Any, Dict, Optional, Callable, Union
+
+from urllib.parse import urlparse, urlunparse
 
 async def fetch_oidc_metadata(
     domain: str, 
@@ -86,3 +90,69 @@ def remove_bytes_prefix(s: str) -> str:
     if s.startswith("b'"):
         return s[2:]  # cut off the leading b'
     return s
+
+def normalize_url_for_htu(raw_url: str) -> str:
+    """
+    Normalize URL for DPoP htu comparison following RFC 3986.
+    Matches the level of normalization that browsers typically do.
+    """
+    p = urlparse(raw_url)
+    
+    # Lowercase scheme and netloc (host)
+    scheme = p.scheme.lower()
+    netloc = p.netloc.lower()
+    
+    # Remove default ports
+    if scheme == "http" and netloc.endswith(":80"):
+        netloc = netloc[:-3]
+    elif scheme == "https" and netloc.endswith(":443"):
+        netloc = netloc[:-4]
+    
+    # Ensure non-empty path for http(s)
+    path = p.path
+    if scheme in ("http", "https") and not path:
+        path = "/"
+    
+    return urlunparse((scheme, netloc, path, "", "", ""))
+
+
+def sha256_base64url(input_str: Union[str, bytes]) -> str:
+    """
+    Compute SHA-256 digest of the input string and return a
+    Base64URL-encoded string *without* padding.
+    """
+    if isinstance(input_str, str):
+        digest = hashlib.sha256(input_str.encode("utf-8")).digest()
+    else:
+        digest = hashlib.sha256(input_str).digest()
+    b64 = base64.urlsafe_b64encode(digest).decode("utf-8")
+    return b64.rstrip("=")
+
+def calculate_jwk_thumbprint(jwk: Dict[str, str]) -> str:
+    """
+    Compute the RFC 7638 JWK thumbprint for a public JWK.
+
+    - For EC keys, includes only: crv, kty, x, y
+    - Serializes with no whitespace, keys sorted lexicographically
+    - Hashes with SHA-256 and returns base64url-encoded string without padding
+    """
+    kty = jwk.get("kty")
+    
+    if kty == "EC":
+        if not all(k in jwk for k in ["crv", "x", "y"]):
+            raise ValueError("EC key missing required parameters")
+        members = ("crv", "kty", "x", "y")
+    else:
+        raise ValueError(f"{kty}(Key Type) Parameter missing or unsupported ")
+
+    # order the members and filter out any missing keys
+    ordered = {k: jwk[k] for k in members if k in jwk}
+
+    # Serialize to JSON with no whitespace, sorted keys
+    thumbprint_json = json.dumps(ordered, separators=(",", ":"), sort_keys=True)
+
+    #Using SHA-256 to hash the JSON string
+    digest = hashlib.sha256(thumbprint_json.encode("utf-8")).digest()
+
+    # Base64URL-encode the digest and remove padding
+    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
