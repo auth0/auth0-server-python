@@ -153,8 +153,6 @@ api_client = ApiClient(ApiClientOptions(
 ))
 ```
 
-📖 **[Complete DPoP Documentation](docs/DPOP.md)** - Detailed guide with examples, error handling, and security considerations.
-
 ## Feedback
 
 ### Contributing
