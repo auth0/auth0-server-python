@@ -1,21 +1,21 @@
 """
-Utility functions for OIDC discovery and JWKS fetching (asynchronously) 
+Utility functions for OIDC discovery and JWKS fetching (asynchronously)
 using httpx or a custom fetch approach.
 """
 
-import httpx
 import base64
-import json
 import hashlib
-import uuid
-from typing import Any, Dict, Optional, Callable, Union
-
+import json
+from typing import Any, Callable, Optional, Union
 from urllib.parse import urlparse, urlunparse
 
+import httpx
+
+
 async def fetch_oidc_metadata(
-    domain: str, 
+    domain: str,
     custom_fetch: Optional[Callable[..., Any]] = None
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Asynchronously fetch the OIDC config from https://{domain}/.well-known/openid-configuration.
     Returns a dict with keys like issuer, jwks_uri, authorization_endpoint, etc.
@@ -33,14 +33,14 @@ async def fetch_oidc_metadata(
 
 
 async def fetch_jwks(
-    jwks_uri: str, 
+    jwks_uri: str,
     custom_fetch: Optional[Callable[..., Any]] = None
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Asynchronously fetch the JSON Web Key Set from jwks_uri.
     Returns the raw JWKS JSON, e.g. {'keys': [...]}
 
-    If custom_fetch is provided, it must be an async callable 
+    If custom_fetch is provided, it must be an async callable
     that fetches data from the jwks_uri.
     """
     if custom_fetch:
@@ -51,7 +51,7 @@ async def fetch_jwks(
             resp = await client.get(jwks_uri)
             resp.raise_for_status()
             return resp.json()
-        
+
 
 async def get_unverified_header(token: Union[str, bytes]) -> dict:
     """
@@ -62,9 +62,9 @@ async def get_unverified_header(token: Union[str, bytes]) -> dict:
         token = token.decode("utf-8")
     try:
         header_b64, _, _ = token.split(".", 2)
-    except ValueError:
-        raise ValueError("Not enough segments in token")
-    
+    except ValueError as e:
+        raise ValueError("Not enough segments in token") from e
+
     header_b64 = remove_bytes_prefix(header_b64)
 
     header_b64 = fix_base64_padding(header_b64)
@@ -76,7 +76,7 @@ async def get_unverified_header(token: Union[str, bytes]) -> dict:
 
 def fix_base64_padding(segment: str) -> str:
     """
-    If `segment`'s length is not a multiple of 4, add '=' padding 
+    If `segment`'s length is not a multiple of 4, add '=' padding
     so that base64.urlsafe_b64decode won't produce nonsense bytes.
     No extra '=' added if length is already a multiple of 4.
     """
@@ -97,22 +97,22 @@ def normalize_url_for_htu(raw_url: str) -> str:
     Matches the level of normalization that browsers typically do.
     """
     p = urlparse(raw_url)
-    
+
     # Lowercase scheme and netloc (host)
     scheme = p.scheme.lower()
     netloc = p.netloc.lower()
-    
+
     # Remove default ports
     if scheme == "http" and netloc.endswith(":80"):
         netloc = netloc[:-3]
     elif scheme == "https" and netloc.endswith(":443"):
         netloc = netloc[:-4]
-    
+
     # Ensure non-empty path for http(s)
     path = p.path
     if scheme in ("http", "https") and not path:
         path = "/"
-    
+
     return urlunparse((scheme, netloc, path, "", "", ""))
 
 
@@ -128,7 +128,7 @@ def sha256_base64url(input_str: Union[str, bytes]) -> str:
     b64 = base64.urlsafe_b64encode(digest).decode("utf-8")
     return b64.rstrip("=")
 
-def calculate_jwk_thumbprint(jwk: Dict[str, str]) -> str:
+def calculate_jwk_thumbprint(jwk: dict[str, str]) -> str:
     """
     Compute the RFC 7638 JWK thumbprint for a public JWK.
 
@@ -137,7 +137,7 @@ def calculate_jwk_thumbprint(jwk: Dict[str, str]) -> str:
     - Hashes with SHA-256 and returns base64url-encoded string without padding
     """
     kty = jwk.get("kty")
-    
+
     if kty == "EC":
         if not all(k in jwk for k in ["crv", "x", "y"]):
             raise ValueError("EC key missing required parameters")

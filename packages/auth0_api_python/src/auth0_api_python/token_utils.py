@@ -1,9 +1,10 @@
 import time
-from typing import Optional, Dict, Any, Union
-from authlib.jose import JsonWebKey, jwt
 import uuid
-from .utils import sha256_base64url, normalize_url_for_htu, calculate_jwk_thumbprint
+from typing import Any, Optional, Union
 
+from authlib.jose import JsonWebKey, jwt
+
+from .utils import calculate_jwk_thumbprint, normalize_url_for_htu, sha256_base64url
 
 # A private RSA JWK for test usage.
 
@@ -30,7 +31,7 @@ async def generate_token(
     issuer: Union[str, bool, None] = None,
     iat: bool = True,
     exp: bool = True,
-    claims: Optional[Dict[str, Any]] = None,
+    claims: Optional[dict[str, Any]] = None,
     expiration_time: int = 3600,
 ) -> str:
     """
@@ -103,8 +104,8 @@ async def generate_dpop_proof(
     http_url: str,
     jti: Optional[str] = None,
     iat: bool = True,
-    claims: Optional[Dict[str, Any]] = None,
-    header_overrides: Optional[Dict[str, Any]] = None,
+    claims: Optional[dict[str, Any]] = None,
+    header_overrides: Optional[dict[str, Any]] = None,
     iat_time: Optional[int] = None
 ) -> str:
     """
@@ -132,36 +133,36 @@ async def generate_dpop_proof(
             claims={"custom": "claim"}
         )
     """
-   
-    
+
+
     proof_claims = dict(claims or {})
-    
+
     if iat:
         proof_claims["iat"] = iat_time if iat_time is not None else int(time.time())
-    
+
     if jti is not None:
         proof_claims["jti"] = jti
     else:
         proof_claims["jti"] = str(uuid.uuid4())
-    
+
     proof_claims["htm"] = http_method
     proof_claims["htu"] = normalize_url_for_htu(http_url)
     proof_claims["ath"] = sha256_base64url(access_token)
-    
-    
+
+
     public_jwk = {k: v for k, v in PRIVATE_EC_JWK.items() if k != "d"}
-    
-   
+
+
     header = {
         "alg": "ES256",
         "typ": "dpop+jwt",
         "jwk": public_jwk
     }
-    
-    
+
+
     if header_overrides:
         header.update(header_overrides)
-    
+
     key = JsonWebKey.import_key(PRIVATE_EC_JWK)
     token = jwt.encode(header, proof_claims, key)
     # Ensure we return a string, not bytes
@@ -197,19 +198,19 @@ async def generate_token_with_cnf(
             jkt_thumbprint="custom_thumbprint"
         )
     """
-    
-    
+
+
     if jkt_thumbprint is None:
         public_jwk = {k: v for k, v in PRIVATE_EC_JWK.items() if k != "d"}
         jkt_thumbprint = calculate_jwk_thumbprint(public_jwk)
-    
-    
+
+
     existing_claims = kwargs.get('claims', {})
     cnf_claims = dict(existing_claims)
     cnf_claims["cnf"] = {"jkt": jkt_thumbprint}
     kwargs['claims'] = cnf_claims
-    
-    
+
+
     return await generate_token(
         domain=domain,
         user_id=user_id,

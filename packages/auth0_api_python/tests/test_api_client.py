@@ -1,13 +1,25 @@
-import pytest
 import base64
 import json
 import time
-from pytest_httpx import HTTPXMock
 
+import pytest
 from auth0_api_python.api_client import ApiClient
 from auth0_api_python.config import ApiClientOptions
-from auth0_api_python.errors import MissingRequiredArgumentError, VerifyAccessTokenError, InvalidDpopProofError, InvalidAuthSchemeError, MissingAuthorizationError
-from auth0_api_python.token_utils import generate_token, generate_dpop_proof, generate_token_with_cnf, PRIVATE_JWK, PRIVATE_EC_JWK
+from auth0_api_python.errors import (
+    InvalidAuthSchemeError,
+    InvalidDpopProofError,
+    MissingAuthorizationError,
+    MissingRequiredArgumentError,
+    VerifyAccessTokenError,
+)
+from auth0_api_python.token_utils import (
+    PRIVATE_EC_JWK,
+    PRIVATE_JWK,
+    generate_dpop_proof,
+    generate_token,
+    generate_token_with_cnf,
+)
+from pytest_httpx import HTTPXMock
 
 # Create public RSA JWK by excluding private key components
 PUBLIC_RSA_JWK = {k: v for k, v in PRIVATE_JWK.items() if k not in ["d", "p", "q", "dp", "dq", "qi"]}
@@ -19,7 +31,7 @@ async def test_init_missing_args():
     """
     with pytest.raises(MissingRequiredArgumentError):
         _ = ApiClient(ApiClientOptions(domain="", audience="some_audience"))
-    
+
     with pytest.raises(MissingRequiredArgumentError):
         _ = ApiClient(ApiClientOptions(domain="example.us.auth0.com", audience=""))
 
@@ -27,7 +39,7 @@ async def test_init_missing_args():
 @pytest.mark.asyncio
 async def test_verify_access_token_successfully(httpx_mock: HTTPXMock):
     """
-    Test that a valid RS256 token with correct issuer, audience, iat, and exp 
+    Test that a valid RS256 token with correct issuer, audience, iat, and exp
     is verified successfully by ApiClient.
     """
     httpx_mock.add_response(
@@ -561,27 +573,27 @@ async def test_verify_dpop_proof_fail_invalid_alg():
     """
     Test that a DPoP proof with unsupported algorithm fails verification.
     """
-   
-    
+
+
     access_token = "test_token"
-    
+
     # First generate a valid DPoP proof
     valid_proof = await generate_dpop_proof(
         access_token=access_token,
         http_method="GET",
         http_url="https://api.example.com/resource"
     )
-    
+
     # Manually craft an invalid proof by modifying the algorithm
     parts = valid_proof.split('.')
     header = json.loads(base64.urlsafe_b64decode(parts[0] + '==').decode('utf-8'))
     header['alg'] = 'RS256'  # Invalid algorithm for DPoP (should be ES256)
-    
+
     # Re-encode the header
     modified_header = base64.urlsafe_b64encode(
         json.dumps(header, separators=(',', ':')).encode('utf-8')
     ).decode('utf-8').rstrip('=')
-    
+
     # Create invalid proof with modified header but same payload and signature
     invalid_proof = f"{modified_header}.{parts[1]}.{parts[2]}"
 
@@ -661,11 +673,11 @@ async def test_verify_dpop_proof_fail_private_key_in_jwk():
     """
     Test that a DPoP proof with private key material in jwk fails verification.
     """
-    
+
     access_token = "test_token"
     # Include private key material (the 'd' parameter)
     invalid_jwk = dict(PRIVATE_EC_JWK)  # This includes the 'd' parameter
-    
+
     dpop_proof = await generate_dpop_proof(
         access_token=access_token,
         http_method="GET",
@@ -754,11 +766,11 @@ async def test_verify_dpop_proof_iat_exact_boundary_conditions():
     Test IAT timing validation at exact boundary conditions.
     """
     access_token = "test_token"
-    
+
     # Test with timestamp exactly at the leeway boundary (should pass)
     current_time = int(time.time())
     boundary_time = current_time + 30  # Exactly at default leeway limit
-    
+
     dpop_proof = await generate_dpop_proof(
         access_token=access_token,
         http_method="GET",
@@ -818,7 +830,7 @@ async def test_verify_dpop_proof_iat_clock_skew_scenarios():
     """
     access_token = "test_token"
     current_time = int(time.time())
-    
+
     # Test within acceptable skew (should pass)
     dpop_proof = await generate_dpop_proof(
         access_token=access_token,
@@ -876,7 +888,7 @@ async def test_verify_dpop_proof_jti_uniqueness_scenarios():
     Test JTI uniqueness and replay protection scenarios.
     """
     access_token = "test_token"
-    
+
     # Generate DPoP proof with specific JTI using the jti parameter
     custom_jti = "unique-jti-12345"
     dpop_proof = await generate_dpop_proof(
@@ -964,7 +976,7 @@ async def test_verify_dpop_proof_htu_url_normalization_case_sensitivity():
     Test HTU URL normalization handles case sensitivity correctly.
     """
     access_token = "test_token"
-    
+
     # Test with different case in domain (should be normalized and pass)
     dpop_proof = await generate_dpop_proof(
         access_token=access_token,
@@ -1016,7 +1028,7 @@ async def test_verify_dpop_proof_htu_query_parameters():
     Query parameters are stripped during normalization, so different params should succeed.
     """
     access_token = "test_token"
-    
+
     # Test with query parameters (should be normalized)
     dpop_proof = await generate_dpop_proof(
         access_token=access_token,
@@ -1045,7 +1057,7 @@ async def test_verify_dpop_proof_htu_port_numbers():
     Default ports (443 for HTTPS, 80 for HTTP) are stripped during normalization.
     """
     access_token = "test_token"
-    
+
     # Test with explicit default port (should be normalized)
     dpop_proof = await generate_dpop_proof(
         access_token=access_token,
@@ -1073,7 +1085,7 @@ async def test_verify_dpop_proof_htu_fragment_handling():
     Test HTU URL validation ignores fragments.
     """
     access_token = "test_token"
-    
+
     # Test with fragment (should be ignored)
     dpop_proof = await generate_dpop_proof(
         access_token=access_token,
@@ -1102,7 +1114,7 @@ async def test_verify_dpop_proof_fail_ath_mismatch():
     """
     access_token = "test_token"
     wrong_token = "wrong_token"
-    
+
     dpop_proof = await generate_dpop_proof(
         access_token=wrong_token,  # Generate proof for wrong token
         http_method="GET",
@@ -1238,7 +1250,7 @@ async def test_verify_request_fail_dpop_required_mode():
 
     api_client = ApiClient(
         ApiClientOptions(
-            domain="auth0.local", 
+            domain="auth0.local",
             audience="my-audience",
             dpop_required=True  # Require DPoP
         )
@@ -1285,7 +1297,7 @@ async def test_verify_request_fail_dpop_enabled_bearer_with_cnf_conflict(httpx_m
 
     api_client = ApiClient(
         ApiClientOptions(
-            domain="auth0.local", 
+            domain="auth0.local",
             audience="my-audience",
             dpop_enabled=True  # DPoP enabled
         )
@@ -1315,7 +1327,7 @@ async def test_verify_request_fail_dpop_disabled():
 
     api_client = ApiClient(
         ApiClientOptions(
-            domain="auth0.local", 
+            domain="auth0.local",
             audience="my-audience",
             dpop_enabled=False  # DPoP disabled
         )
@@ -1341,7 +1353,7 @@ async def test_verify_request_fail_missing_authorization_header():
         ApiClientOptions(domain="auth0.local", audience="my-audience")
     )
 
-    with pytest.raises(MissingAuthorizationError) as err:
+    with pytest.raises(MissingAuthorizationError):
         await api_client.verify_request(
             headers={},
             http_method="GET",
@@ -1358,7 +1370,7 @@ async def test_verify_request_fail_malformed_authorization_header():
         ApiClientOptions(domain="auth0.local", audience="my-audience")
     )
 
-    with pytest.raises(MissingAuthorizationError) as err:
+    with pytest.raises(MissingAuthorizationError):
         await api_client.verify_request(
             headers={"authorization": "InvalidFormat"},  # Missing scheme and token
             http_method="GET",
@@ -1375,9 +1387,9 @@ async def test_verify_request_fail_unsupported_scheme():
         ApiClientOptions(domain="auth0.local", audience="my-audience")
     )
 
-    with pytest.raises(MissingAuthorizationError) as err:
+    with pytest.raises(MissingAuthorizationError):
         await api_client.verify_request(
-            headers={"authorization": "Basic dXNlcjpwYXNz"},  
+            headers={"authorization": "Basic dXNlcjpwYXNz"},
             http_method="GET",
             http_url="https://api.example.com/resource"
         )

@@ -2,7 +2,8 @@
 Configuration classes and utilities for auth0-api-python.
 """
 
-from typing import Optional, Callable
+from typing import Callable, Optional
+
 
 class ApiClientOptions:
     """

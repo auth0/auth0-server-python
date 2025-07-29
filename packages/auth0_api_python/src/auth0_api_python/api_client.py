@@ -1,19 +1,25 @@
 import time
-import hashlib
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Any, Optional
 
-from authlib.jose import JsonWebToken, JsonWebKey
+from authlib.jose import JsonWebKey, JsonWebToken
 
 from .config import ApiClientOptions
 from .errors import (
-    MissingRequiredArgumentError, 
-    VerifyAccessTokenError, 
-    InvalidAuthSchemeError, 
+    BaseAuthError,
+    InvalidAuthSchemeError,
     InvalidDpopProofError,
-    MissingAuthorizationError,  
-    BaseAuthError
+    MissingAuthorizationError,
+    MissingRequiredArgumentError,
+    VerifyAccessTokenError,
 )
-from .utils import fetch_oidc_metadata, fetch_jwks, get_unverified_header, normalize_url_for_htu, sha256_base64url, calculate_jwk_thumbprint
+from .utils import (
+    calculate_jwk_thumbprint,
+    fetch_jwks,
+    fetch_oidc_metadata,
+    get_unverified_header,
+    normalize_url_for_htu,
+    sha256_base64url,
+)
 
 
 class ApiClient:
@@ -29,21 +35,21 @@ class ApiClient:
             raise MissingRequiredArgumentError("audience")
 
         self.options = options
-        self._metadata: Optional[Dict[str, Any]] = None
-        self._jwks_data: Optional[Dict[str, Any]] = None
+        self._metadata: Optional[dict[str, Any]] = None
+        self._jwks_data: Optional[dict[str, Any]] = None
 
         self._jwt = JsonWebToken(["RS256"])
 
         self._dpop_algorithms = ["ES256"]
         self._dpop_jwt = JsonWebToken(self._dpop_algorithms)
 
-    
+
     async def verify_request(
         self,
-        headers: Dict[str, str],
+        headers: dict[str, str],
         http_method: Optional[str] = None,
         http_url: Optional[str] = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Dispatch based on Authorization scheme:
           • If scheme is 'DPoP', verifies both access token and DPoP proof
@@ -75,20 +81,20 @@ class ApiClient:
                     )
             else :
                 raise self._prepare_error(MissingAuthorizationError())
-        
-        
+
+
         parts = authorization_header.split(" ", 1)
         if len(parts) < 2:
             raise self._prepare_error(MissingAuthorizationError())
-       
-        
+
+
         try:
             scheme, token = authorization_header.split(" ", 1)
         except ValueError:
             raise self._prepare_error(
                 MissingAuthorizationError()
             )
-        
+
 
         scheme = scheme.strip().lower()
 
@@ -110,7 +116,7 @@ class ApiClient:
         if scheme == "dpop":
             if not self.options.dpop_enabled:
                 raise self._prepare_error(MissingAuthorizationError())
-            
+
             if not dpop_proof:
                 if getattr(self.options, "dpop_required", False):
                     raise self._prepare_error(
@@ -119,10 +125,10 @@ class ApiClient:
                     )
                 else:
                     raise self._prepare_error(
-                        InvalidDpopProofError("Operation indicated DPoP use but the request has no DPoP HTTP Header"), 
+                        InvalidDpopProofError("Operation indicated DPoP use but the request has no DPoP HTTP Header"),
                         auth_scheme=scheme
                     )
-            
+
             if "," in dpop_proof:
                 raise self._prepare_error(
                     InvalidDpopProofError("Multiple DPoP proofs are not allowed"),
@@ -133,25 +139,25 @@ class ApiClient:
                 await get_unverified_header(dpop_proof)
             except Exception:
                 raise self._prepare_error(InvalidDpopProofError("Failed to verify DPoP proof"), auth_scheme=scheme)
-            
+
             if not http_method or not http_url:
                 raise self._prepare_error(
                     InvalidDpopProofError("Operation indicated DPoP use but the request has no http_method or http_url"), auth_scheme=scheme
                 )
-            
+
             try:
                 access_token_claims = await self.verify_access_token(token)
             except VerifyAccessTokenError as e:
                 raise self._prepare_error(e, auth_scheme=scheme)
-            
+
             cnf_claim = access_token_claims.get("cnf")
-            
+
             if not cnf_claim:
                 raise self._prepare_error(
                     InvalidDpopProofError("Operation indicated DPoP use but the JWT Access Token has no jkt confirmation claim"),
                     auth_scheme=scheme
                 )
-            
+
             if not isinstance(cnf_claim, dict):
                 raise self._prepare_error(
                     InvalidDpopProofError("Operation indicated DPoP use but the JWT Access Token has invalid confirmation claim format"),
@@ -177,16 +183,16 @@ class ApiClient:
                     VerifyAccessTokenError("Access token 'cnf' claim missing 'jkt'"),
                     auth_scheme=scheme
                 )
-            
+
             if expected_jkt != actual_jkt:
                 raise self._prepare_error(
                     VerifyAccessTokenError("JWT Access Token confirmation mismatch"),
                     auth_scheme=scheme
                 )
-            
+
             return access_token_claims
 
-        if scheme == "bearer": 
+        if scheme == "bearer":
             if dpop_proof:
                 if self.options.dpop_enabled:
                     raise self._prepare_error(
@@ -195,7 +201,7 @@ class ApiClient:
                         ),
                         auth_scheme=scheme
                     )
-                
+
             try:
                 claims = await self.verify_access_token(token)
                 if claims.get("cnf") and claims["cnf"].get("jkt"):
@@ -206,8 +212,8 @@ class ApiClient:
                             ),
                             auth_scheme=scheme
                         )
-                        
-                
+
+
                 return claims
             except VerifyAccessTokenError as e:
                 raise self._prepare_error(e, auth_scheme=scheme)
@@ -217,11 +223,11 @@ class ApiClient:
     async def verify_access_token(
         self,
         access_token: str,
-        required_claims: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        required_claims: Optional[list[str]] = None
+    ) -> dict[str, Any]:
         """
         Asynchronously verifies the provided JWT access token.
-        
+
         - Fetches OIDC metadata and JWKS if not already cached.
         - Decodes and validates signature (RS256) with the correct key.
         - Checks standard claims: 'iss', 'aud', 'exp', 'iat'
@@ -269,7 +275,7 @@ class ApiClient:
 
         if claims.get("iss") != issuer:
             raise VerifyAccessTokenError("Issuer mismatch")
-        
+
         expected_aud = self.options.audience
         actual_aud = claims.get("aud")
 
@@ -299,7 +305,7 @@ class ApiClient:
         proof: str,
         http_method: str,
         http_url: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         1. Single well-formed compact JWS
         2. typ="dpop+jwt", alg∈allowed, alg≠none
@@ -316,10 +322,10 @@ class ApiClient:
             raise MissingRequiredArgumentError("http_method/http_url")
 
         header = await get_unverified_header(proof)
-      
+
         if header.get("typ") != "dpop+jwt":
             raise InvalidDpopProofError("Unexpected JWT 'typ' header parameter value")
-       
+
         alg = header.get("alg")
         if alg not in self._dpop_algorithms:
             raise InvalidDpopProofError(f"Unsupported alg: {alg}")
@@ -327,13 +333,13 @@ class ApiClient:
         jwk_dict = header.get("jwk")
         if not jwk_dict or not isinstance(jwk_dict, dict):
             raise InvalidDpopProofError("Missing or invalid jwk in header")
-            
+
         if "d" in jwk_dict:
             raise InvalidDpopProofError("Private key material found in jwk header")
-        
+
         if jwk_dict.get("kty") != "EC":
             raise InvalidDpopProofError("Only EC keys are supported for DPoP")
-            
+
         if jwk_dict.get("crv") != "P-256":
             raise InvalidDpopProofError("Only P-256 curve is supported")
 
@@ -347,16 +353,16 @@ class ApiClient:
         self._validate_claims_presence(claims, ["iat", "ath", "htm", "htu", "jti"])
 
         jti = claims["jti"]
-        
+
         if not isinstance(jti, str):
             raise InvalidDpopProofError("jti claim must be a string")
-        
+
         if not jti.strip():
             raise InvalidDpopProofError("jti claim must not be empty")
-        
+
 
         now = int(time.time())
-        iat = claims["iat"]  
+        iat = claims["iat"]
         offset = getattr(self.options, "dpop_iat_offset", 300)    # default 5 minutes
         leeway = getattr(self.options, "dpop_iat_leeway", 30)     # default 30 seconds
 
@@ -368,18 +374,18 @@ class ApiClient:
 
         if claims["htm"] != http_method:
             raise InvalidDpopProofError("DPoP Proof htm mismatch")
-    
+
         if normalize_url_for_htu(claims["htu"]) != normalize_url_for_htu(http_url):
             raise InvalidDpopProofError("DPoP Proof htu mismatch")
 
         if claims["ath"] != sha256_base64url(access_token):
             raise InvalidDpopProofError("DPoP Proof ath mismatch")
-        
+
         return claims
 
     # ===== Private Methods =====
 
-    async def _discover(self) -> Dict[str, Any]:
+    async def _discover(self) -> dict[str, Any]:
         """Lazy-load OIDC discovery metadata."""
         if self._metadata is None:
             self._metadata = await fetch_oidc_metadata(
@@ -388,88 +394,88 @@ class ApiClient:
             )
         return self._metadata
 
-    async def _load_jwks(self) -> Dict[str, Any]:
+    async def _load_jwks(self) -> dict[str, Any]:
         """Fetches and caches JWKS data from the OIDC metadata."""
         if self._jwks_data is None:
             metadata = await self._discover()
             jwks_uri = metadata["jwks_uri"]
             self._jwks_data = await fetch_jwks(
-                jwks_uri=jwks_uri, 
+                jwks_uri=jwks_uri,
                 custom_fetch=self.options.custom_fetch
             )
         return self._jwks_data
 
     def _validate_claims_presence(
-        self, 
-        claims: Dict[str, Any], 
-        required_claims: List[str]
+        self,
+        claims: dict[str, Any],
+        required_claims: list[str]
     ) -> None:
         """
         Validates that all required claims are present in the claims dict.
-        
+
         Args:
             claims: The claims dictionary to validate
             required_claims: List of claim names that must be present
-            
+
         Raises:
             InvalidDpopProofError: If any required claim is missing
         """
         missing_claims = []
-        
+
         for claim in required_claims:
             if claim not in claims:
                 missing_claims.append(claim)
-        
+
         if missing_claims:
             if len(missing_claims) == 1:
                 error_message = f"Missing required claim: {missing_claims[0]}"
             else:
                 error_message = f"Missing required claims: {', '.join(missing_claims)}"
-            
+
             raise InvalidDpopProofError(error_message)
 
     def _prepare_error(self, error: BaseAuthError, auth_scheme: Optional[str] = None) -> BaseAuthError:
         """
         Prepare an error with WWW-Authenticate headers based on error type and context.
-        
+
         Args:
             error: The error to prepare
             auth_scheme: The authentication scheme that was used ("bearer" or "dpop")
         """
         error_code = error.get_error_code()
         error_description = error.get_error_description()
-        
+
         www_auth_headers = self._build_www_authenticate(
             error_code=error_code if error_code != "unauthorized" else None,
             error_description=error_description if error_code != "unauthorized" else None,
             auth_scheme=auth_scheme
         )
-        
+
         headers = {}
         www_auth_values = []
         for header_name, header_value in www_auth_headers:
             if header_name == "WWW-Authenticate":
                 www_auth_values.append(header_value)
-    
+
         if www_auth_values:
             headers["WWW-Authenticate"] = ", ".join(www_auth_values)
-    
+
         error._headers = headers
-    
+
         return error
-    
+
     def _build_www_authenticate(
         self,
         *,
         error_code: Optional[str] = None,
         error_description: Optional[str] = None,
         auth_scheme: Optional[str] = None
-    ) -> List[Tuple[str, str]]:
+    ) -> list[tuple[str, str]]:
         """
         Returns one or two ('WWW-Authenticate', ...) tuples based on context.
         If dpop_required mode → single DPoP challenge (with optional error params).
         Otherwise → Bearer and/or DPoP challenges based on auth_scheme and error.
-        
+
         Args:
             error_code: Error code (e.g., "invalid_token", "invalid_request")
             error_description: Error description if any
@@ -484,7 +490,7 @@ class ApiClient:
                     bearer_parts.append(f'error_description="{error_description}"')
                 return [("WWW-Authenticate", "Bearer " + ", ".join(bearer_parts))]
             return [("WWW-Authenticate", "Bearer")]
-        
+
         algs = " ".join(self._dpop_algorithms)
         dpop_required = getattr(self.options, "dpop_required", False)
 
