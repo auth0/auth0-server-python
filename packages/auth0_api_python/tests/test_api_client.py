@@ -1010,7 +1010,7 @@ async def test_verify_dpop_proof_htu_trailing_slash_normalization():
             http_method="GET",
             http_url="https://api.example.com/resource"
         )
-    assert "htu mismatch" in str(err.value).lower() 
+    assert "htu mismatch" in str(err.value).lower()
 
 @pytest.mark.asyncio
 async def test_verify_dpop_proof_htu_query_parameters():
