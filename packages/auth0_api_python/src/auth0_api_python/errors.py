@@ -1,7 +1,6 @@
 """
 Custom exceptions for auth0-api-python SDK with HTTP response metadata
 """
-from typing import Any
 
 
 class BaseAuthError(Exception):
@@ -28,13 +27,6 @@ class BaseAuthError(Exception):
     def get_headers(self) -> dict[str, str]:
         """Return HTTP headers (including WWW-Authenticate if set)."""
         return self._headers
-
-    def to_response_dict(self) -> dict[str, Any]:
-        """Convert to a dictionary suitable for JSON response body."""
-        return {
-            "error": self.get_error_code(),
-            "error_description": self.get_error_description()
-        }
 
 
 class MissingRequiredArgumentError(BaseAuthError):

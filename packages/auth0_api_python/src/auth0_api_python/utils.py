@@ -6,10 +6,11 @@ using httpx or a custom fetch approach.
 import base64
 import hashlib
 import json
+import re
 from typing import Any, Callable, Optional, Union
-from urllib.parse import urlparse, urlunparse
 
 import httpx
+from ada_url import URL
 
 
 async def fetch_oidc_metadata(
@@ -93,28 +94,20 @@ def remove_bytes_prefix(s: str) -> str:
 
 def normalize_url_for_htu(raw_url: str) -> str:
     """
-    Normalize URL for DPoP htu comparison following RFC 3986.
-    Matches the level of normalization that browsers typically do.
+    Normalize URL for DPoP htu comparison .
     """
-    p = urlparse(raw_url)
 
-    # Lowercase scheme and netloc (host)
-    scheme = p.scheme.lower()
-    netloc = p.netloc.lower()
+    url_obj = URL(raw_url)
 
-    # Remove default ports
-    if scheme == "http" and netloc.endswith(":80"):
-        netloc = netloc[:-3]
-    elif scheme == "https" and netloc.endswith(":443"):
-        netloc = netloc[:-4]
+    normalized_url = url_obj.origin + url_obj.pathname
 
-    # Ensure non-empty path for http(s)
-    path = p.path
-    if scheme in ("http", "https") and not path:
-        path = "/"
+    normalized_url = re.sub(
+        r'%([0-9a-fA-F]{2})',
+        lambda m: f'%{m.group(1).upper()}',
+        normalized_url
+    )
 
-    return urlunparse((scheme, netloc, path, "", "", ""))
-
+    return normalized_url
 
 def sha256_base64url(input_str: Union[str, bytes]) -> str:
     """
@@ -145,14 +138,10 @@ def calculate_jwk_thumbprint(jwk: dict[str, str]) -> str:
     else:
         raise ValueError(f"{kty}(Key Type) Parameter missing or unsupported ")
 
-    # order the members and filter out any missing keys
     ordered = {k: jwk[k] for k in members if k in jwk}
 
-    # Serialize to JSON with no whitespace, sorted keys
     thumbprint_json = json.dumps(ordered, separators=(",", ":"), sort_keys=True)
 
-    #Using SHA-256 to hash the JSON string
     digest = hashlib.sha256(thumbprint_json.encode("utf-8")).digest()
 
-    # Base64URL-encode the digest and remove padding
     return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")

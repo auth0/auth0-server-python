@@ -407,7 +407,7 @@ async def test_verify_access_token_fail_no_audience_config():
 
 
 
-# DPOP PROOF VERIFICATION TESTS - Core Functionality & Validation
+# DPOP PROOF VERIFICATION TESTS
 
 # --- Core Success Tests ---
 
@@ -436,6 +436,7 @@ async def test_verify_dpop_proof_successfully():
     )
     assert claims["jti"]  # Verify it has the required jti claim
 
+# --- Header Validation Tests ---
 
 @pytest.mark.asyncio
 async def test_verify_dpop_proof_fail_no_access_token():
@@ -510,7 +511,7 @@ async def test_verify_dpop_proof_fail_no_http_method_url():
     assert "http_method" in str(err.value).lower() or "http_url" in str(err.value).lower()
 
 
-# --- Header Validation Tests ---
+# --- Claim Validation Tests ---
 
 @pytest.mark.asyncio
 async def test_verify_dpop_proof_fail_no_typ():
@@ -573,18 +574,14 @@ async def test_verify_dpop_proof_fail_invalid_alg():
     """
     Test that a DPoP proof with unsupported algorithm fails verification.
     """
-
-
     access_token = "test_token"
 
-    # First generate a valid DPoP proof
     valid_proof = await generate_dpop_proof(
         access_token=access_token,
         http_method="GET",
         http_url="https://api.example.com/resource"
     )
-
-    # Manually craft an invalid proof by modifying the algorithm
+    # Modify the proof to use an invalid algorithm
     parts = valid_proof.split('.')
     header = json.loads(base64.urlsafe_b64decode(parts[0] + '==').decode('utf-8'))
     header['alg'] = 'RS256'  # Invalid algorithm for DPoP (should be ES256)
@@ -799,7 +796,7 @@ async def test_verify_dpop_proof_iat_past_offset_boundary():
     Test IAT validation with timestamps too far in the past.
     """
     access_token = "test_token"
-    # Use a timestamp too far in the past (beyond acceptable skew)
+    # Use a timestamp too far in the past
     past_time = int(time.time()) - 3600  # 1 hour ago
     dpop_proof = await generate_dpop_proof(
         access_token=access_token,
@@ -1340,7 +1337,6 @@ async def test_verify_request_fail_dpop_disabled():
             http_url="https://api.example.com/resource"
         )
 
-    # MissingAuthorizationError doesn't have a specific message for disabled DPoP
     assert isinstance(err.value, MissingAuthorizationError)
 
 
