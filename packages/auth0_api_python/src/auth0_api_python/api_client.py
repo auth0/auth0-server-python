@@ -367,8 +367,10 @@ class ApiClient:
         if not isinstance(iat, (int, float)):
             raise InvalidDpopProofError("Invalid iat claim (must be integer or float)")
 
-        if iat < now - offset or iat > now + leeway:
-            raise InvalidDpopProofError("DPoP Proof iat is not recent enough")
+        if iat < now - offset:
+            raise InvalidDpopProofError("DPoP Proof iat is too old")
+        elif iat > now + leeway:
+            raise InvalidDpopProofError("DPoP Proof iat is from the future")
 
         if claims["htm"].lower() != http_method.lower():
             raise InvalidDpopProofError("DPoP Proof htm mismatch")
@@ -444,8 +446,8 @@ class ApiClient:
         error_description = error.get_error_description()
 
         www_auth_headers = self._build_www_authenticate(
-            error_code=error_code if error_code != "unauthorized" else None,
-            error_description=error_description if error_code != "unauthorized" else None,
+            error_code=error_code,
+            error_description=error_description,
             auth_scheme=auth_scheme
         )
 

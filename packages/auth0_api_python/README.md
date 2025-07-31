@@ -13,7 +13,7 @@ This SDK provides comprehensive support for securing APIs with Auth0-issued acce
 ### **Authentication Schemes**
 - **Bearer Token Authentication** - Traditional OAuth 2.0 Bearer tokens (RS256)
 - **DPoP Authentication** - Enhanced security with Demonstrating Proof-of-Possession (ES256)
-- **Mixed Mode Support** - Seamlessly handle both Bearer and DPoP in the same API
+- **Mixed Mode Support** - Seamlessly handles both Bearer and DPoP in the same API
 
 ### **Core Features**
 - **Unified Entry Point**: `verify_request()` - automatically detects and validates Bearer or DPoP schemes

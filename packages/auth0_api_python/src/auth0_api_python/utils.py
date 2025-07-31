@@ -57,7 +57,7 @@ async def fetch_jwks(
 def get_unverified_header(token: Union[str, bytes]) -> dict:
     """
     Parse the first segment (header) of a JWT without verifying signature.
-    Ensures correct Base64 padding before decode to avoid garbage bytes.\
+    Ensures correct Base64 padding before decode to avoid garbage bytes.
     """
     if isinstance(token, bytes):
         token = token.decode("utf-8")

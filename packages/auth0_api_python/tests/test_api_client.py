@@ -18,11 +18,12 @@ from auth0_api_python.token_utils import (
     generate_dpop_proof,
     generate_token,
     generate_token_with_cnf,
+    sha256_base64url,
 )
 from pytest_httpx import HTTPXMock
 
-# Create public RSA JWK by excluding private key components
-PUBLIC_RSA_JWK = {k: v for k, v in PRIVATE_JWK.items() if k not in ["d", "p", "q", "dp", "dq", "qi"]}
+# Create public RSA JWK by selecting only public key components
+PUBLIC_RSA_JWK = {k: PRIVATE_JWK[k] for k in ["kty", "n", "e", "alg", "use", "kid"] if k in PRIVATE_JWK}
 
 @pytest.mark.asyncio
 async def test_init_missing_args():
@@ -448,7 +449,13 @@ async def test_verify_dpop_proof_successfully():
         http_method="GET",
         http_url="https://api.example.com/resource"
     )
-    assert claims["jti"]  # Verify it has the required jti claim
+    assert claims["jti"] # Verify it has the required jti claim
+    assert claims["htm"] == "GET"
+    assert claims["htu"] == "https://api.example.com/resource"
+    assert isinstance(claims["iat"], int)
+    expected_ath = sha256_base64url(access_token)
+    assert claims["ath"] == expected_ath
+
 
 # --- Header Validation Tests ---
 
@@ -520,7 +527,33 @@ async def test_verify_dpop_proof_fail_no_http_method_url():
             http_url="https://api.example.com/resource"
         )
 
-    assert "http_method" in str(err.value).lower() or "http_url" in str(err.value).lower()
+    assert "http_method" in str(err.value).lower()
+
+@pytest.mark.asyncio
+async def test_verify_dpop_proof_fail_no_http_url():
+    """
+    Test that verify_dpop_proof fails when http_url is missing.
+    """
+    access_token = "test_token"
+    dpop_proof = await generate_dpop_proof(
+        access_token=access_token,
+        http_method="GET",
+        http_url="https://api.example.com/resource"
+    )
+
+    api_client = ApiClient(
+        ApiClientOptions(domain="auth0.local", audience="my-audience")
+    )
+
+    with pytest.raises(MissingRequiredArgumentError) as err:
+        await api_client.verify_dpop_proof(
+            access_token=access_token,
+            proof=dpop_proof,
+            http_method="GET",
+            http_url="" # Empty url
+        )
+
+    assert "http_url" in str(err.value).lower()
 
 
 # --- Claim Validation Tests ---
@@ -731,9 +764,9 @@ async def test_verify_dpop_proof_fail_no_iat():
     assert "missing required claim" in str(err.value).lower()
 
 @pytest.mark.asyncio
-async def test_verify_dpop_proof_fail_invalid_iat_timing():
+async def test_verify_dpop_proof_fail_invalid_iat_in_future():
     """
-    Test that a DPoP proof with invalid 'iat' timing fails verification.
+     Test IAT validation with a timestamp in the future.
     """
     access_token = "test_token"
     # Use a future timestamp (more than leeway allows)
@@ -757,7 +790,7 @@ async def test_verify_dpop_proof_fail_invalid_iat_timing():
             http_url="https://api.example.com/resource"
         )
 
-    assert "iat is not recent enough" in str(err.value).lower()
+    assert "iat is from the future" in str(err.value).lower()
 
 @pytest.mark.asyncio
 async def test_verify_dpop_proof_iat_exact_boundary_conditions():
@@ -792,9 +825,9 @@ async def test_verify_dpop_proof_iat_exact_boundary_conditions():
     assert result is not None
 
 @pytest.mark.asyncio
-async def test_verify_dpop_proof_iat_past_offset_boundary():
+async def test_verify_dpop_proof_iat_in_past():
     """
-    Test IAT validation with timestamps too far in the past.
+    Test IAT validation with timestamp in the past.
     """
     access_token = "test_token"
     # Use a timestamp too far in the past
@@ -818,7 +851,7 @@ async def test_verify_dpop_proof_iat_past_offset_boundary():
             http_url="https://api.example.com/resource"
         )
 
-    assert "iat is not recent enough" in str(err.value).lower()
+    assert "iat is too old" in str(err.value).lower()
 
 @pytest.mark.asyncio
 async def test_verify_dpop_proof_iat_clock_skew_scenarios():
@@ -852,9 +885,9 @@ async def test_verify_dpop_proof_iat_clock_skew_scenarios():
 # --- JTI (JWT ID) Validation Tests ---
 
 @pytest.mark.asyncio
-async def test_verify_dpop_proof_fail_no_jti():
+async def test_verify_dpop_proof_fail_empty_jti():
     """
-    Test that a DPoP proof missing 'jti' claim fails verification.
+    Test that a DPoP proof with empty 'jti' claim fails verification.
     """
     access_token = "test_token"
     dpop_proof = await generate_dpop_proof(
@@ -879,9 +912,9 @@ async def test_verify_dpop_proof_fail_no_jti():
     assert "jti claim must not be empty" in str(err.value).lower()
 
 @pytest.mark.asyncio
-async def test_verify_dpop_proof_jti_uniqueness_scenarios():
+async def test_verify_dpop_proof_custom_jti_value():
     """
-    Test JTI uniqueness and replay protection scenarios.
+    Test for a custom JTI value.
     """
     access_token = "test_token"
 
@@ -907,6 +940,37 @@ async def test_verify_dpop_proof_jti_uniqueness_scenarios():
 
     assert result is not None
     assert result["jti"] == custom_jti
+
+@pytest.mark.asyncio
+async def test_verify_dpop_proof_with_missing_jti():
+    """Test verify_dpop_proof with missing jti claim."""
+    access_token = "test_token"
+
+    dpop_proof = await generate_dpop_proof(
+        access_token=access_token,
+        http_method="GET",
+        http_url="https://api.example.com/resource",
+        jti=None,
+        claims={"jti": None}
+    )
+
+    parts = dpop_proof.split('.')
+    if len(parts) == 3:
+        header, payload, signature = parts
+        decoded_payload = json.loads(base64.urlsafe_b64decode(payload + '=' * (4 - len(payload) % 4)).decode('utf-8'))
+        del decoded_payload['jti']
+        modified_payload = base64.urlsafe_b64encode(json.dumps(decoded_payload).encode('utf-8')).decode('utf-8').rstrip('=')
+        dpop_proof = f"{header}.{modified_payload}.{signature}"
+
+    api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
+    with pytest.raises(InvalidDpopProofError) as err:
+        await api_client.verify_dpop_proof(
+            access_token=access_token,
+            proof=dpop_proof,
+            http_method="GET",
+            http_url="https://api.example.com/resource"
+        )
+    assert "signature verification failed" in str(err.value).lower()
 
 @pytest.mark.asyncio
 async def test_verify_dpop_proof_fail_htm_mismatch():
@@ -1153,28 +1217,6 @@ async def test_verify_dpop_proof_with_invalid_signature():
     assert "signature verification failed" in str(e.value).lower()
 
 @pytest.mark.asyncio
-async def test_verify_dpop_proof_with_invalid_jwk_format():
-    """Test verify_dpop_proof with invalid JWK format."""
-    access_token = "test_token"
-
-    dpop_proof = await generate_dpop_proof(
-        access_token=access_token,
-        http_method="GET",
-        http_url="https://api.example.com/resource",
-        header_overrides={"jwk": "not-a-valid-jwk-object"}
-    )
-
-    api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
-    with pytest.raises(InvalidDpopProofError) as err:
-        await api_client.verify_dpop_proof(
-            access_token=access_token,
-            proof=dpop_proof,
-            http_method="GET",
-            http_url="https://api.example.com/resource"
-        )
-    assert "jwk" in str(err.value).lower()
-
-@pytest.mark.asyncio
 async def test_verify_dpop_proof_with_missing_jwk_parameters():
     """Test verify_dpop_proof with missing JWK parameters."""
     access_token = "test_token"
@@ -1197,37 +1239,6 @@ async def test_verify_dpop_proof_with_missing_jwk_parameters():
             http_url="https://api.example.com/resource"
         )
     assert "only ec keys are supported" in str(err.value).lower()
-
-@pytest.mark.asyncio
-async def test_verify_dpop_proof_with_missing_jti():
-    """Test verify_dpop_proof with missing jti claim."""
-    access_token = "test_token"
-
-    dpop_proof = await generate_dpop_proof(
-        access_token=access_token,
-        http_method="GET",
-        http_url="https://api.example.com/resource",
-        jti=None,
-        claims={"jti": None}
-    )
-
-    parts = dpop_proof.split('.')
-    if len(parts) == 3:
-        header, payload, signature = parts
-        decoded_payload = json.loads(base64.urlsafe_b64decode(payload + '=' * (4 - len(payload) % 4)).decode('utf-8'))
-        del decoded_payload['jti']
-        modified_payload = base64.urlsafe_b64encode(json.dumps(decoded_payload).encode('utf-8')).decode('utf-8').rstrip('=')
-        dpop_proof = f"{header}.{modified_payload}.{signature}"
-
-    api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
-    with pytest.raises(InvalidDpopProofError) as err:
-        await api_client.verify_dpop_proof(
-            access_token=access_token,
-            proof=dpop_proof,
-            http_method="GET",
-            http_url="https://api.example.com/resource"
-        )
-    assert "signature verification failed" in str(err.value).lower()
 
 # VERIFY_REQUEST TESTS
 

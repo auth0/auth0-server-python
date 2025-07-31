@@ -201,8 +201,7 @@ async def generate_token_with_cnf(
 
 
     if jkt_thumbprint is None:
-        public_jwk = {k: v for k, v in PRIVATE_EC_JWK.items() if k != "d"}
-        jkt_thumbprint = calculate_jwk_thumbprint(public_jwk)
+        jkt_thumbprint = calculate_jwk_thumbprint(PRIVATE_EC_JWK)
 
 
     existing_claims = kwargs.get('claims', {})
