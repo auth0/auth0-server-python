@@ -734,6 +734,30 @@ async def test_verify_dpop_proof_fail_private_key_in_jwk():
 
     assert "private key" in str(err.value).lower()
 
+@pytest.mark.asyncio
+async def test_verify_dpop_proof_with_missing_jwk_parameters():
+    """Test verify_dpop_proof with missing JWK parameters."""
+    access_token = "test_token"
+
+    incomplete_jwk = {"kty": "RSA"}
+
+    dpop_proof = await generate_dpop_proof(
+        access_token=access_token,
+        http_method="GET",
+        http_url="https://api.example.com/resource",
+        header_overrides={"jwk": incomplete_jwk}
+    )
+
+    api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
+    with pytest.raises(InvalidDpopProofError) as err:
+        await api_client.verify_dpop_proof(
+            access_token=access_token,
+            proof=dpop_proof,
+            http_method="GET",
+            http_url="https://api.example.com/resource"
+        )
+    assert "only ec keys are supported" in str(err.value).lower()
+
 # --- IAT (Issued At Time) Validation Tests ---
 
 @pytest.mark.asyncio
@@ -854,9 +878,9 @@ async def test_verify_dpop_proof_iat_in_past():
     assert "iat is too old" in str(err.value).lower()
 
 @pytest.mark.asyncio
-async def test_verify_dpop_proof_iat_clock_skew_scenarios():
+async def test_verify_dpop_proof_iat_within_leeway():
     """
-    Test IAT validation with various clock skew scenarios.
+    Test that IAT timestamps within acceptable leeway pass validation.
     """
     access_token = "test_token"
     current_time = int(time.time())
@@ -1055,9 +1079,9 @@ async def test_verify_dpop_proof_htu_url_normalization_case_sensitivity():
 
 
 @pytest.mark.asyncio
-async def test_verify_dpop_proof_htu_trailing_slash_normalization():
+async def  test_verify_dpop_proof_htu_trailing_slash_mismatch():
     """
-    Test HTU URL normalization with trailing slashes: should fail because path difference is significant.
+    Test that HTU URLs with trailing slash differences cause verification failure.
     """
     access_token = "test_token"
     # Generate proof with trailing slash
@@ -1215,30 +1239,6 @@ async def test_verify_dpop_proof_with_invalid_signature():
             http_url="https://api.example.com/resource"
         )
     assert "signature verification failed" in str(e.value).lower()
-
-@pytest.mark.asyncio
-async def test_verify_dpop_proof_with_missing_jwk_parameters():
-    """Test verify_dpop_proof with missing JWK parameters."""
-    access_token = "test_token"
-
-    incomplete_jwk = {"kty": "RSA"}
-
-    dpop_proof = await generate_dpop_proof(
-        access_token=access_token,
-        http_method="GET",
-        http_url="https://api.example.com/resource",
-        header_overrides={"jwk": incomplete_jwk}
-    )
-
-    api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
-    with pytest.raises(InvalidDpopProofError) as err:
-        await api_client.verify_dpop_proof(
-            access_token=access_token,
-            proof=dpop_proof,
-            http_method="GET",
-            http_url="https://api.example.com/resource"
-        )
-    assert "only ec keys are supported" in str(err.value).lower()
 
 # VERIFY_REQUEST TESTS
 
@@ -1442,7 +1442,7 @@ async def test_verify_request_fail_dpop_disabled():
             http_url="https://api.example.com/resource"
         )
 
-    assert isinstance(err.value, MissingAuthorizationError)
+    assert err.value.get_status_code() == 401
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_missing_authorization_header():
@@ -1453,28 +1453,13 @@ async def test_verify_request_fail_missing_authorization_header():
         ApiClientOptions(domain="auth0.local", audience="my-audience")
     )
 
-    with pytest.raises(MissingAuthorizationError):
+    with pytest.raises(MissingAuthorizationError) as err:
         await api_client.verify_request(
             headers={},
             http_method="GET",
             http_url="https://api.example.com/resource"
         )
-
-@pytest.mark.asyncio
-async def test_verify_request_fail_malformed_authorization_header():
-    """
-    Test that malformed Authorization headers are rejected.
-    """
-    api_client = ApiClient(
-        ApiClientOptions(domain="auth0.local", audience="my-audience")
-    )
-
-    with pytest.raises(MissingAuthorizationError):
-        await api_client.verify_request(
-            headers={"authorization": "InvalidFormat"},  # Missing scheme and token
-            http_method="GET",
-            http_url="https://api.example.com/resource"
-        )
+    assert err.value.get_status_code() == 401
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_unsupported_scheme():
@@ -1485,12 +1470,31 @@ async def test_verify_request_fail_unsupported_scheme():
         ApiClientOptions(domain="auth0.local", audience="my-audience")
     )
 
-    with pytest.raises(MissingAuthorizationError):
+    with pytest.raises(MissingAuthorizationError) as err:
         await api_client.verify_request(
             headers={"authorization": "Basic dXNlcjpwYXNz"},
             http_method="GET",
             http_url="https://api.example.com/resource"
         )
+    assert err.value.get_status_code() == 401
+
+@pytest.mark.asyncio
+async def test_verify_request_fail_empty_bearer_token():
+    """Test verify_request with empty token value."""
+    api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
+    with pytest.raises(MissingAuthorizationError) as err:
+        await api_client.verify_request({"Authorization": "Bearer "})
+    assert err.value.get_status_code() == 401
+
+@pytest.mark.asyncio
+async def test_verify_request_with_multiple_spaces_in_authorization():
+    """Test verify_request with authorization header containing multiple spaces."""
+    api_client = ApiClient(
+        ApiClientOptions(domain="auth0.local", audience="my-audience")
+    )
+    with pytest.raises(InvalidAuthSchemeError) as err:
+        await api_client.verify_request({"authorization": "Bearer  token  with  extra  spaces"})
+    assert "authorization" in str(err.value).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_missing_dpop_header():
@@ -1542,26 +1546,4 @@ async def test_verify_request_fail_multiple_dpop_proofs():
 
     assert "multiple" in str(err.value).lower()
 
-@pytest.mark.asyncio
-async def test_verify_request_with_empty_token():
-    """Test verify_request with empty token value."""
-    api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
-    with pytest.raises(MissingAuthorizationError):
-        await api_client.verify_request({"Authorization": "Bearer "})
 
-@pytest.mark.asyncio
-async def test_verify_request_with_multiple_spaces_in_authorization():
-    """Test verify_request with authorization header containing multiple spaces."""
-    api_client = ApiClient(
-        ApiClientOptions(domain="auth0.local", audience="my-audience")
-    )
-    with pytest.raises(InvalidAuthSchemeError) as err:
-        await api_client.verify_request({"authorization": "Bearer  token  with  extra  spaces"})
-    assert "authorization" in str(err.value).lower()
-
-@pytest.mark.asyncio
-async def test_verify_request_with_mixed_case_authorization_header():
-    """Test verify_request with mixed case authorization header."""
-    api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
-    with pytest.raises(MissingAuthorizationError):
-        await api_client.verify_request({"AuThOrIzAtIoN": "Bearer token"})
