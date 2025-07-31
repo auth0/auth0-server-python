@@ -1367,7 +1367,7 @@ async def test_verify_request_fail_dpop_required_mode():
             http_url="https://api.example.com/resource"
         )
 
-    assert "dpop" in str(err.value).lower() or "bearer" in str(err.value).lower()
+    assert "expected dpop, but got bearer" in str(err.value).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_dpop_enabled_bearer_with_cnf_conflict(httpx_mock: HTTPXMock):
@@ -1413,7 +1413,7 @@ async def test_verify_request_fail_dpop_enabled_bearer_with_cnf_conflict(httpx_m
             http_url="https://api.example.com/resource"
         )
 
-    assert "cnf" in str(err.value).lower() or "dpop" in str(err.value).lower()
+    assert "request's authorization http header scheme is not dpop" in str(err.value).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_dpop_disabled():
