@@ -106,7 +106,8 @@ async def generate_dpop_proof(
     iat: bool = True,
     claims: Optional[dict[str, Any]] = None,
     header_overrides: Optional[dict[str, Any]] = None,
-    iat_time: Optional[int] = None
+    iat_time: Optional[int] = None,
+    include_jti: bool = True
 ) -> str:
     """
     Generates a real ES256-signed DPoP proof JWT using the EC private key above.
@@ -120,6 +121,7 @@ async def generate_dpop_proof(
         claims: Additional custom claims to merge into the proof.
         header_overrides: Override header parameters (e.g., for testing invalid headers).
         iat_time: Fixed time for iat claim (for testing). If None, uses current time.
+        include_jti: Whether to include the 'jti' claim. If False, jti is completely omitted.
 
     Returns:
         An ES256-signed DPoP proof JWT string.
@@ -140,10 +142,11 @@ async def generate_dpop_proof(
     if iat:
         proof_claims["iat"] = iat_time if iat_time is not None else int(time.time())
 
-    if jti is not None:
-        proof_claims["jti"] = jti
-    else:
-        proof_claims["jti"] = str(uuid.uuid4())
+    if include_jti:
+        if jti is not None:
+            proof_claims["jti"] = jti
+        else:
+            proof_claims["jti"] = str(uuid.uuid4())
 
     proof_claims["htm"] = http_method
     proof_claims["htu"] = normalize_url_for_htu(http_url)

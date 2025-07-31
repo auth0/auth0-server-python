@@ -970,21 +970,13 @@ async def test_verify_dpop_proof_with_missing_jti():
     """Test verify_dpop_proof with missing jti claim."""
     access_token = "test_token"
 
+    # Generate DPoP proof WITHOUT jti claim from the start
     dpop_proof = await generate_dpop_proof(
         access_token=access_token,
         http_method="GET",
         http_url="https://api.example.com/resource",
-        jti=None,
-        claims={"jti": None}
+        include_jti=False  # Completely omit jti claim
     )
-
-    parts = dpop_proof.split('.')
-    if len(parts) == 3:
-        header, payload, signature = parts
-        decoded_payload = json.loads(base64.urlsafe_b64decode(payload + '=' * (4 - len(payload) % 4)).decode('utf-8'))
-        del decoded_payload['jti']
-        modified_payload = base64.urlsafe_b64encode(json.dumps(decoded_payload).encode('utf-8')).decode('utf-8').rstrip('=')
-        dpop_proof = f"{header}.{modified_payload}.{signature}"
 
     api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
     with pytest.raises(InvalidDpopProofError) as err:
@@ -994,7 +986,7 @@ async def test_verify_dpop_proof_with_missing_jti():
             http_method="GET",
             http_url="https://api.example.com/resource"
         )
-    assert "signature verification failed" in str(err.value).lower()
+    assert "missing required claim: jti" in str(err.value).lower()
 
 @pytest.mark.asyncio
 async def test_verify_dpop_proof_fail_htm_mismatch():
