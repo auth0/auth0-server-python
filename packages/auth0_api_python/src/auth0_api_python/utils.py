@@ -54,20 +54,20 @@ async def fetch_jwks(
             return resp.json()
 
 
-async def get_unverified_header(token: Union[str, bytes]) -> dict:
+def get_unverified_header(token: Union[str, bytes]) -> dict:
     """
     Parse the first segment (header) of a JWT without verifying signature.
-    Ensures correct Base64 padding before decode to avoid garbage bytes.
+    Ensures correct Base64 padding before decode to avoid garbage bytes.\
     """
     if isinstance(token, bytes):
         token = token.decode("utf-8")
-    try:
-        header_b64, _, _ = token.split(".", 2)
-    except ValueError as e:
-        raise ValueError("Not enough segments in token") from e
 
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise ValueError(f"Invalid token format: expected 3 segments, got {len(parts)}")
+
+    header_b64 = parts[0]
     header_b64 = remove_bytes_prefix(header_b64)
-
     header_b64 = fix_base64_padding(header_b64)
 
     header_data = base64.urlsafe_b64decode(header_b64)

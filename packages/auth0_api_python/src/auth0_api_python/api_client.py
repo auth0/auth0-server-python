@@ -43,6 +43,10 @@ class ApiClient:
         self._dpop_algorithms = ["ES256"]
         self._dpop_jwt = JsonWebToken(self._dpop_algorithms)
 
+    def is_dpop_required(self) -> bool:
+        """Check if DPoP authentication is required."""
+        return getattr(self.options, "dpop_required", False)
+
 
     async def verify_request(
         self,
@@ -56,7 +60,7 @@ class ApiClient:
           • If scheme is 'Bearer', verifies only the access token
 
         Args:
-            headers: HTTP headers dict containing:
+            headers: HTTP headers dict containing (header keys should be lowercase):
                 - "authorization": The Authorization header value (required)
                 - "dpop": The DPoP proof header value (required for DPoP)
             http_method: The HTTP method (required for DPoP)
@@ -75,7 +79,7 @@ class ApiClient:
         dpop_proof = headers.get("dpop")
 
         if not authorization_header:
-            if getattr(self.options, "dpop_required", False):
+            if self.is_dpop_required():
                 raise self._prepare_error(
                         InvalidAuthSchemeError("Expecting Authorization header with DPoP scheme.")
                     )
@@ -92,28 +96,17 @@ class ApiClient:
                     InvalidAuthSchemeError("Invalid Authorization HTTP Header Format for authorization")
                 )
 
-
-        try:
-            scheme, token = authorization_header.split(" ", 1)
-        except ValueError:
-            raise self._prepare_error(
-                MissingAuthorizationError()
-            )
-
+        scheme, token = parts
 
         scheme = scheme.strip().lower()
 
-        if getattr(self.options, "dpop_required", False) and scheme != "dpop":
-                if scheme == "bearer":
-                    raise self._prepare_error(
-                        InvalidAuthSchemeError("Invalid scheme. Expected 'DPoP', but got 'bearer'."),
-                        auth_scheme=scheme
-                    )
-                else:
-                    raise self._prepare_error(
-                        InvalidAuthSchemeError("Invalid scheme. Expected 'DPoP' scheme."),
-                        auth_scheme=scheme
-                    )
+        if self.is_dpop_required() and scheme != "dpop":
+                raise self._prepare_error(
+                    InvalidAuthSchemeError(
+                        f"Invalid scheme. Expected DPoP{', but got ' + scheme + '.' if scheme and scheme != 'dpop' else ' scheme.'}"
+                    ),
+                    auth_scheme=scheme
+                )
         if not token.strip():
             raise self._prepare_error(MissingAuthorizationError())
 
@@ -123,7 +116,7 @@ class ApiClient:
                 raise self._prepare_error(MissingAuthorizationError())
 
             if not dpop_proof:
-                if getattr(self.options, "dpop_required", False):
+                if self.is_dpop_required():
                     raise self._prepare_error(
                         InvalidAuthSchemeError("Expecting Authorization header with DPoP scheme."),
                         auth_scheme=scheme
@@ -141,7 +134,7 @@ class ApiClient:
                 )
 
             try:
-                await get_unverified_header(dpop_proof)
+                dpop_header = get_unverified_header(dpop_proof)
             except Exception:
                 raise self._prepare_error(InvalidDpopProofError("Failed to verify DPoP proof"), auth_scheme=scheme)
 
@@ -179,7 +172,7 @@ class ApiClient:
                 raise self._prepare_error(e, auth_scheme=scheme)
 
             # DPoP binding verification
-            jwk_dict = (await get_unverified_header(dpop_proof))["jwk"]
+            jwk_dict = dpop_header["jwk"]
             actual_jkt = calculate_jwk_thumbprint(jwk_dict)
             expected_jkt = cnf_claim.get("jkt")
 
@@ -209,7 +202,7 @@ class ApiClient:
 
             try:
                 claims = await self.verify_access_token(token)
-                if claims.get("cnf") and claims["cnf"].get("jkt"):
+                if claims.get("cnf") and isinstance(claims["cnf"], dict) and claims["cnf"].get("jkt"):
                     if self.options.dpop_enabled:
                         raise self._prepare_error(
                             InvalidAuthSchemeError(
@@ -251,7 +244,7 @@ class ApiClient:
         required_claims = required_claims or []
 
         try:
-            header = await get_unverified_header(access_token)
+            header = get_unverified_header(access_token)
             kid = header["kid"]
         except Exception as e:
             raise VerifyAccessTokenError(f"Failed to parse token header: {str(e)}") from e
@@ -326,7 +319,7 @@ class ApiClient:
         if not http_method or not http_url:
             raise MissingRequiredArgumentError("http_method/http_url")
 
-        header = await get_unverified_header(proof)
+        header = get_unverified_header(proof)
 
         if header.get("typ") != "dpop+jwt":
             raise InvalidDpopProofError("Unexpected JWT 'typ' header parameter value")
@@ -371,13 +364,13 @@ class ApiClient:
         offset = getattr(self.options, "dpop_iat_offset", 300)    # default 5 minutes
         leeway = getattr(self.options, "dpop_iat_leeway", 30)     # default 30 seconds
 
-        if not isinstance(iat, int):
-            raise InvalidDpopProofError("Invalid iat claim (must be integer)")
+        if not isinstance(iat, (int, float)):
+            raise InvalidDpopProofError("Invalid iat claim (must be integer or float)")
 
         if iat < now - offset or iat > now + leeway:
             raise InvalidDpopProofError("DPoP Proof iat is not recent enough")
 
-        if claims["htm"] != http_method:
+        if claims["htm"].lower() != http_method.lower():
             raise InvalidDpopProofError("DPoP Proof htm mismatch")
 
         if normalize_url_for_htu(claims["htu"]) != normalize_url_for_htu(http_url):
@@ -497,7 +490,7 @@ class ApiClient:
             return [("WWW-Authenticate", "Bearer")]
 
         algs = " ".join(self._dpop_algorithms)
-        dpop_required = getattr(self.options, "dpop_required", False)
+        dpop_required = self.is_dpop_required()
 
         # No error details
         if error_code == "unauthorized" or not error_code:
