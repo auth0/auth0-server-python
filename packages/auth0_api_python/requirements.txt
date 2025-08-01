@@ -13,4 +13,4 @@ charset-normalizer>=3.4.1
 urllib3>=2.3.0
 rfc3986>=2.0.0
 cffi>=1.17.1
-pycparser>=2.220
+pycparser>=2.22
