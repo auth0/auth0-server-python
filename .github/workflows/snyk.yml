@@ -105,6 +105,7 @@ jobs:
 
       - name: Run Snyk security scan
         uses: snyk/actions/python@b98d498629f1c368650224d6d212bf7dfa89e4bf # pin@0.4.0
-        working-directory: packages/${{ matrix.package }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --file=packages/${{ matrix.package }}/requirements.txt --package-manager=pip
