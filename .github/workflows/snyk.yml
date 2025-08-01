@@ -21,20 +21,80 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-
-  check:
-
-    name: Check for Vulnerabilities
+  # First job to discover all packages dynamically
+  discover-packages:
+    name: Discover Packages
     runs-on: ubuntu-latest
-
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - if: github.actor == 'dependabot[bot]' || github.event_name == 'merge_group'
-        run: exit 0 # Skip unnecessary test runs for dependabot and merge queues. Artifically flag as successful, as this is a required check for branch protection.
+        run: exit 0
 
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
 
-      - uses: snyk/actions/python@b98d498629f1c368650224d6d212bf7dfa89e4bf # pin@0.4.0
+      - name: Discover packages
+        id: set-matrix
+        run: |
+          packages=$(find packages -maxdepth 1 -type d -name "auth0_*" | sed 's|^packages/||' | jq -R -s -c 'split("\n")[:-1]')
+          echo "matrix={\"package\":$packages}" >> $GITHUB_OUTPUT
+          echo "Found packages: $packages"
+
+  # Main security scanning job for each package
+  security-scan:
+    name: Security Scan (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    needs: discover-packages
+    if: needs.discover-packages.outputs.matrix != '{"package":[]}'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-packages.outputs.matrix) }}
+
+    steps:
+      - if: github.actor == 'dependabot[bot]' || github.event_name == 'merge_group'
+        run: exit 0 # Skip unnecessary test runs for dependabot and merge queues
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prepare dependencies for Snyk scan
+        working-directory: packages/${{ matrix.package }}
+        run: |
+          # Check if requirements.txt exists, if not, generate from Poetry
+          if [ -f "requirements.txt" ]; then
+            echo "Using existing requirements.txt for ${{ matrix.package }}"
+            cp requirements.txt snyk-requirements.txt
+          elif [ -f "pyproject.toml" ]; then
+            echo "Generating requirements.txt from pyproject.toml for ${{ matrix.package }}"
+            pip install poetry
+            poetry export --format requirements.txt --output snyk-requirements.txt --without-hashes
+          else
+            echo "No dependency file found for ${{ matrix.package }}"
+            exit 1
+          fi
+          
+          # Show what we're scanning
+          echo "Dependencies to scan:"
+          head -10 snyk-requirements.txt
+
+      - name: Run Snyk security scan
+        uses: snyk/actions/python@b98d498629f1c368650224d6d212bf7dfa89e4bf # pin@0.4.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --file=packages/${{ matrix.package }}/snyk-requirements.txt --package-manager=pip
+
+      - name: Upload Snyk results to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: snyk.sarif
+          category: snyk-${{ matrix.package }}
