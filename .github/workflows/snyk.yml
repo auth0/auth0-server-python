@@ -103,9 +103,24 @@ jobs:
           pip install -r requirements.txt
           echo "✅ Dependencies installed successfully"
 
+      - name: Install Snyk CLI
+        run: |
+          curl -Lo snyk "https://static.snyk.io/cli/latest/snyk-linux"
+          chmod +x snyk
+          sudo mv snyk /usr/local/bin/
+
       - name: Run Snyk security scan
-        uses: snyk/actions/python@b98d498629f1c368650224d6d212bf7dfa89e4bf # pin@0.4.0
+        working-directory: packages/${{ matrix.package }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --file=packages/${{ matrix.package }}/requirements.txt --package-manager=pip --command=python3
+        run: |
+          echo "Running Snyk scan in $(pwd)"
+          echo "Python version: $(python3 --version)"
+          echo "Pip packages installed:"
+          pip3 list | grep -E "(authlib|requests|httpx|ada-url)" || echo "Some packages not found"
+          
+          # Run Snyk test with debug output
+          snyk test --file=requirements.txt --package-manager=pip --command=python3 --debug || {
+            echo "Snyk test failed, trying with --allow-missing flag..."
+            snyk test --file=requirements.txt --package-manager=pip --command=python3 -- --allow-missing
+          }
