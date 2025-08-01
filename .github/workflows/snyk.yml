@@ -108,4 +108,4 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          args: --file=packages/${{ matrix.package }}/requirements.txt --package-manager=pip
+          args: --file=packages/${{ matrix.package }}/requirements.txt --package-manager=pip --command=python3
