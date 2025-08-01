@@ -1,7 +1,10 @@
 import time
-from typing import Optional, Dict, Any, Union
+import uuid
+from typing import Any, Optional, Union
+
 from authlib.jose import JsonWebKey, jwt
 
+from .utils import calculate_jwk_thumbprint, normalize_url_for_htu, sha256_base64url
 
 # A private RSA JWK for test usage.
 
@@ -28,7 +31,7 @@ async def generate_token(
     issuer: Union[str, bool, None] = None,
     iat: bool = True,
     exp: bool = True,
-    claims: Optional[Dict[str, Any]] = None,
+    claims: Optional[dict[str, Any]] = None,
     expiration_time: int = 3600,
 ) -> str:
     """
@@ -81,4 +84,138 @@ async def generate_token(
 
     header = {"alg": "RS256", "kid": PRIVATE_JWK["kid"]}
     token = jwt.encode(header, token_claims, key)
-    return token
+    # Ensure we return a string, not bytes
+    return token.decode('utf-8') if isinstance(token, bytes) else token
+
+
+# A private EC P-256 private key for DPoP proof generation (test only)
+PRIVATE_EC_JWK = {
+    "kty": "EC",
+    "crv": "P-256",
+    "x": "MKBCTNIcKUSDii11ySs3526iDZ8AiTo7Tu6KPAqv7D4",
+    "y": "4Etl6SRW2YiLUrN5vfvVHuhp7x8PxltmWWlbbM4IFyM",
+    "d": "870MB6gfuTJ4HtUnUvYMyJpr5eUZNP4Bk43bVdj3eAE"
+}
+
+
+async def generate_dpop_proof(
+    access_token: str,
+    http_method: str,
+    http_url: str,
+    jti: Optional[str] = None,
+    iat: bool = True,
+    claims: Optional[dict[str, Any]] = None,
+    header_overrides: Optional[dict[str, Any]] = None,
+    iat_time: Optional[int] = None,
+    include_jti: bool = True
+) -> str:
+    """
+    Generates a real ES256-signed DPoP proof JWT using the EC private key above.
+
+    Args:
+        access_token: The access token to create proof for (used for ath claim).
+        http_method: The HTTP method (e.g., "GET", "POST") for htm claim.
+        http_url: The HTTP URL for htu claim.
+        jti: The unique identifier for the proof. If omitted, generates random UUID.
+        iat: Whether to set the 'iat' (issued at) claim. If False, skip it.
+        claims: Additional custom claims to merge into the proof.
+        header_overrides: Override header parameters (e.g., for testing invalid headers).
+        iat_time: Fixed time for iat claim (for testing). If None, uses current time.
+        include_jti: Whether to include the 'jti' claim. If False, jti is completely omitted.
+
+    Returns:
+        An ES256-signed DPoP proof JWT string.
+
+    Example usage:
+        proof = await generate_dpop_proof(
+            access_token="eyJ...",
+            http_method="GET",
+            http_url="https://api.example.com/resource",
+            iat=False,  # Skip iat for testing
+            claims={"custom": "claim"}
+        )
+    """
+
+
+    proof_claims = dict(claims or {})
+
+    if iat:
+        proof_claims["iat"] = iat_time if iat_time is not None else int(time.time())
+
+    if include_jti:
+        if jti is not None:
+            proof_claims["jti"] = jti
+        else:
+            proof_claims["jti"] = str(uuid.uuid4())
+
+    proof_claims["htm"] = http_method
+    proof_claims["htu"] = normalize_url_for_htu(http_url)
+    proof_claims["ath"] = sha256_base64url(access_token)
+
+
+    public_jwk = {k: v for k, v in PRIVATE_EC_JWK.items() if k != "d"}
+
+
+    header = {
+        "alg": "ES256",
+        "typ": "dpop+jwt",
+        "jwk": public_jwk
+    }
+
+
+    if header_overrides:
+        header.update(header_overrides)
+
+    key = JsonWebKey.import_key(PRIVATE_EC_JWK)
+    token = jwt.encode(header, proof_claims, key)
+    # Ensure we return a string, not bytes
+    return token.decode('utf-8') if isinstance(token, bytes) else token
+
+
+async def generate_token_with_cnf(
+    domain: str,
+    user_id: str,
+    audience: str,
+    jkt_thumbprint: Optional[str] = None,
+    **kwargs
+) -> str:
+    """
+    Generates an access token with cnf (confirmation) claim for DPoP binding.
+    Extends the existing generate_token() function with DPoP support.
+
+    Args:
+        domain: The Auth0 domain (used if issuer is not False).
+        user_id: The 'sub' claim in the token.
+        audience: The 'aud' claim in the token.
+        jkt_thumbprint: JWK thumbprint to include in cnf claim. If None, calculates from PRIVATE_EC_JWK.
+        **kwargs: Additional arguments passed to generate_token().
+
+    Returns:
+        A RS256-signed JWT string with cnf claim.
+
+    Example usage:
+        token = await generate_token_with_cnf(
+            domain="auth0.local",
+            user_id="user123",
+            audience="my-api",
+            jkt_thumbprint="custom_thumbprint"
+        )
+    """
+
+
+    if jkt_thumbprint is None:
+        jkt_thumbprint = calculate_jwk_thumbprint(PRIVATE_EC_JWK)
+
+
+    existing_claims = kwargs.get('claims', {})
+    cnf_claims = dict(existing_claims)
+    cnf_claims["cnf"] = {"jkt": jkt_thumbprint}
+    kwargs['claims'] = cnf_claims
+
+
+    return await generate_token(
+        domain=domain,
+        user_id=user_id,
+        audience=audience,
+        **kwargs
+    )
