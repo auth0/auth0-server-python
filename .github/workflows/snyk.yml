@@ -79,6 +79,11 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Check for requirements.txt
         working-directory: packages/${{ matrix.package }}
         run: |
@@ -90,6 +95,13 @@ jobs:
           echo "✅ Found requirements.txt for ${{ matrix.package }}"
           echo "Dependencies to scan:"
           head -5 requirements.txt
+
+      - name: Install dependencies
+        working-directory: packages/${{ matrix.package }}
+        run: |
+          echo "Installing dependencies for Snyk scan..."
+          pip install -r requirements.txt
+          echo "✅ Dependencies installed successfully"
 
       - name: Run Snyk security scan
         uses: snyk/actions/python@b98d498629f1c368650224d6d212bf7dfa89e4bf # pin@0.4.0
