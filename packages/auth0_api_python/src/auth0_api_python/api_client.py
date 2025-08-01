@@ -101,12 +101,13 @@ class ApiClient:
         scheme = scheme.strip().lower()
 
         if self.is_dpop_required() and scheme != "dpop":
-                raise self._prepare_error(
-                    InvalidAuthSchemeError(
-                        f"Invalid scheme. Expected DPoP{', but got ' + scheme + '.' if scheme and scheme != 'dpop' else ' scheme.'}"
-                    ),
-                    auth_scheme=scheme
-                )
+            error_detail = f", but got '{scheme}'." if scheme == 'bearer' else " scheme."
+            raise self._prepare_error(
+                InvalidAuthSchemeError(
+                    f"Invalid scheme. Expected 'DPoP'{error_detail}"
+                ),
+                auth_scheme=scheme
+            )
         if not token.strip():
             raise self._prepare_error(MissingAuthorizationError())
 

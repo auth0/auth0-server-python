@@ -1359,7 +1359,7 @@ async def test_verify_request_fail_dpop_required_mode():
             http_url="https://api.example.com/resource"
         )
 
-    assert "expected dpop, but got bearer" in str(err.value).lower()
+    assert "expected 'dpop', but got 'bearer'" in str(err.value).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_dpop_enabled_bearer_with_cnf_conflict(httpx_mock: HTTPXMock):
