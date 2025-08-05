@@ -88,7 +88,7 @@ access_token_for_google = await server_client.get_access_token_for_connection(co
 
 The SDK will cache the token internally, and return it from the cache when not expired. When no token is found in the cache, or the token is expired, calling `get_access_token_for_connection()` will call Auth0 to retrieve a new token and update the cache.
 
-In order to do this, the SDK needs access to a Refresh Token. By default, the SDK is configured to request the `offline_access` scope. If you override the scopes, ensure to always include `offline_access` if you want to be able to retrieve and refresh an access token for a connection.
+In order to do this, the SDK needs access to a Refresh Token. So ensure to always include `offline_access` if you want to be able to retrieve and refresh an access token for a connection.
 
 ### Passing Store Options 
 

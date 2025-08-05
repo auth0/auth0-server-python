@@ -6,7 +6,7 @@ from urllib.parse import urlparse, parse_qs, urlencode
 
 
 from auth_server.server_client import ServerClient
-from error import MissingRequiredArgumentError, ApiError, MissingTransactionError, StartLinkUserError, AccessTokenError, AccessTokenForConnectionError,BackchannelLogoutError
+from auth0_server_python.error import MissingRequiredArgumentError, ApiError, MissingTransactionError, StartLinkUserError, AccessTokenError, AccessTokenForConnectionError,BackchannelLogoutError
 from auth_types import LogoutOptions, TransactionData
 
 
@@ -554,7 +554,7 @@ async def test_build_link_user_url_success(mocker):
     assert queries["id_token_hint"] == ["<id_token>"]
     assert queries["requested_connection"] == ["<connection>"]
     assert queries["requested_connection_scope"] == ["<scope>"]
-    assert queries["scope"] == ["openid link_account offline_access"]
+    assert queries["scope"] == ["openid link_account"]
     assert queries["state"] == ["xyz_state"]
     
 
@@ -596,7 +596,7 @@ async def test_build_link_user_url_fallback_authorize(mocker):
     # Just a quick check for e.g. "client_id" or "scope"
     assert queries["client_id"] == ["<client_id>"]
     assert queries["requested_connection_scope"] == ["<scope>"]
-    assert queries["scope"] == ["openid link_account offline_access"]
+    assert queries["scope"] == ["openid link_account"]
 
 @pytest.mark.asyncio
 async def test_build_unlink_user_url_success(mocker):
@@ -628,7 +628,7 @@ async def test_build_unlink_user_url_success(mocker):
     assert parsed.path == "/authorize"
     assert queries["client_id"] == ["<client_id>"]
     assert queries["redirect_uri"] == ["/test_redirect_uri"]
-    assert queries["scope"] == ["openid link_account offline_access"]
+    assert queries["scope"] == ["openid link_account"]
     assert queries["code_challenge_method"] == ["S256"]
     assert queries["id_token_hint"] == ["<id_token>"]
     assert queries["requested_connection"] == ["<connection>"]
@@ -658,7 +658,7 @@ async def test_build_unlink_user_url_fallback_authorize(mocker):
     assert parsed.path == "/authorize"
 
     queries = parse_qs(parsed.query)
-    assert queries["scope"] == ["openid unlink_account offline_access"]
+    assert queries["scope"] == ["openid unlink_account"]
 
 
 @pytest.mark.asyncio
@@ -706,7 +706,7 @@ async def test_build_unlink_user_url_success(mocker):
     # Check the main query parameters
     assert queries["client_id"] == ["<client_id>"]
     assert queries["redirect_uri"] == ["/test_redirect_uri"]
-    assert queries["scope"] == ["openid unlink_account offline_access"]
+    assert queries["scope"] == ["openid unlink_account"]
     assert queries["response_type"] == ["code"]
     assert "code_challenge" in queries
     assert queries["code_challenge_method"] == ["S256"]
@@ -743,7 +743,7 @@ async def test_build_unlink_user_url_no_authorization_endpoint(mocker):
     assert parsed.path == "/authorize"
 
     queries = parse_qs(parsed.query)
-    assert queries["scope"] == ["openid unlink_account offline_access"]
+    assert queries["scope"] == ["openid unlink_account"]
 
 
 @pytest.mark.asyncio
