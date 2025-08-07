@@ -67,7 +67,7 @@ result = asyncio.run(validate_request(headers))
 
 ## DPoP Authentication 
 
-**DPoP (Demonstrating Proof-of-Possession)** is a security extension that binds access tokens to cryptographic keys, preventing token theft and replay attacks.
+[DPoP](https://www.rfc-editor.org/rfc/rfc9449.html) (Demonstrating Proof of Posession) is an application-level mechanism for sender-constraining OAuth 2.0 access and refresh tokens by proving that the client application is in possession of a certain private key.
 
 This guide covers the DPoP implementation in `auth0-api-python` with complete examples for both operational modes.
 
