@@ -1176,6 +1176,49 @@ async def test_verify_dpop_proof_htu_fragment_handling():
     )
     assert result is not None
 
+
+@pytest.mark.asyncio
+async def test_verify_dpop_proof_htu_trailing_slash_preserved():
+    """
+    Test that trailing slashes are preserved when query params and fragments are removed.
+    """
+    access_token = "test_token"
+
+    # Generate proof with trailing slash and query parameters
+    dpop_proof = await generate_dpop_proof(
+        access_token=access_token,
+        http_method="GET",
+        http_url="https://api.example.com/resource/?abc=def"
+    )
+
+    api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
+
+    # This should succeed because normalization preserves
+    result = await api_client.verify_dpop_proof(
+        access_token=access_token,
+        proof=dpop_proof,
+        http_method="GET",
+        http_url="https://api.example.com/resource/"  # With trailing slash, no query params
+    )
+
+    assert result["htu"] == "https://api.example.com/resource/"
+
+    # Additional test with a different combination
+    dpop_proof2 = await generate_dpop_proof(
+        access_token=access_token,
+        http_method="GET",
+        http_url="https://api.example.com/resource/?abc=def#fragment" 
+    )
+
+    result2 = await api_client.verify_dpop_proof(
+        access_token=access_token,
+        proof=dpop_proof2,
+        http_method="GET",
+        http_url="https://api.example.com/resource/"
+    )
+
+    assert result2["htu"] == "https://api.example.com/resource/"
+
 @pytest.mark.asyncio
 async def test_verify_dpop_proof_fail_ath_mismatch():
     """

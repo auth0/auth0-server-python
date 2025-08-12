@@ -376,7 +376,12 @@ class ApiClient:
         if claims["htm"].lower() != http_method.lower():
             raise InvalidDpopProofError("DPoP Proof htm mismatch")
 
-        if normalize_url_for_htu(claims["htu"]) != normalize_url_for_htu(http_url):
+        try:
+            normalized_htu = normalize_url_for_htu(claims["htu"])
+            normalized_http_url = normalize_url_for_htu(http_url)
+            if normalized_htu != normalized_http_url:
+                raise InvalidDpopProofError("DPoP Proof htu mismatch")
+        except ValueError:
             raise InvalidDpopProofError("DPoP Proof htu mismatch")
 
         if claims["ath"] != sha256_base64url(access_token):

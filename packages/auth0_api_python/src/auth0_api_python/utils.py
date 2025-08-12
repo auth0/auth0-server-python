@@ -95,19 +95,29 @@ def remove_bytes_prefix(s: str) -> str:
 def normalize_url_for_htu(raw_url: str) -> str:
     """
     Normalize URL for DPoP htu comparison .
+
+    Args:
+        raw_url: The raw URL string to normalize
+    Returns:
+        The normalized URL string
+    Raises:
+        ValueError: If the URL is invalid or cannot be parsed
     """
 
-    url_obj = URL(raw_url)
+    try:
+        url_obj = URL(raw_url)
 
-    normalized_url = url_obj.origin + url_obj.pathname
+        normalized_url = url_obj.origin + url_obj.pathname
 
-    normalized_url = re.sub(
-        r'%([0-9a-fA-F]{2})',
-        lambda m: f'%{m.group(1).upper()}',
-        normalized_url
-    )
+        normalized_url = re.sub(
+            r'%([0-9a-fA-F]{2})',
+            lambda m: f'%{m.group(1).upper()}',
+            normalized_url
+        )
 
-    return normalized_url
+        return normalized_url
+    except Exception as e:
+        raise ValueError(f"Invalid URL format: {raw_url}") from e
 
 def sha256_base64url(input_str: Union[str, bytes]) -> str:
     """
