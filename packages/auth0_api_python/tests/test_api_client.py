@@ -1207,7 +1207,7 @@ async def test_verify_dpop_proof_htu_trailing_slash_preserved():
     dpop_proof2 = await generate_dpop_proof(
         access_token=access_token,
         http_method="GET",
-        http_url="https://api.example.com/resource/?abc=def#fragment" 
+        http_url="https://api.example.com/resource/?abc=def#fragment"
     )
 
     result2 = await api_client.verify_dpop_proof(
