@@ -6,7 +6,7 @@ from urllib.parse import urlparse, parse_qs, urlencode
 
 
 from auth_server.server_client import ServerClient
-from auth0_server_python.error import MissingRequiredArgumentError, ApiError, MissingTransactionError, StartLinkUserError, AccessTokenError, AccessTokenForConnectionError,BackchannelLogoutError
+from auth0_server_python.error import Auth0Error, MissingRequiredArgumentError, ApiError, MissingTransactionError, StartLinkUserError, AccessTokenError, AccessTokenForConnectionError,BackchannelLogoutError
 from auth_types import LogoutOptions, TransactionData
 
 
@@ -896,7 +896,7 @@ async def test_backchannel_auth_token_exchange_failed(mocker):
     assert mock_post.await_count == 2
 
 @pytest.mark.asyncio
-async def test_get_token_for_connection_success(mocker):
+async def test_get_token_for_connection_refresh_token_success(mocker):
     client = ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
@@ -938,10 +938,58 @@ async def test_get_token_for_connection_success(mocker):
     args, kwargs = mock_post.call_args
     assert kwargs["data"]["connection"] == "<connection>"
     assert kwargs["data"]["subject_token"] == "<refresh_token>"
+    assert kwargs["data"]["subject_token_type"] == "urn:ietf:params:oauth:token-type:refresh_token"
     assert kwargs["data"]["login_hint"] == "<sub>"
 
 @pytest.mark.asyncio
-async def test_get_token_for_connection_exchange_failed(mocker):
+async def test_get_token_for_connection_access_token_success(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client._oauth,
+        "metadata",
+        {"token_endpoint": "https://auth0.local/token"}
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+
+    success_response = AsyncMock()
+    success_response.status_code = 200
+    success_response.json = MagicMock(return_value={
+        "access_token": "federated_access_token_value",
+        "expires_in": 3600,
+        "scope": "openid profile"
+    })
+    mock_post.return_value = success_response
+
+
+    result = await client.get_token_for_connection({
+        "connection": "<connection>",
+        "access_token": "<refresh_token>",
+        "login_hint": "<sub>"
+    })
+
+
+    assert result is not None
+    assert result["access_token"] == "federated_access_token_value"
+    assert "expires_at" in result
+    assert result["scope"] == "openid profile"
+
+    mock_post.assert_awaited_once()
+    args, kwargs = mock_post.call_args
+    assert kwargs["data"]["connection"] == "<connection>"
+    assert kwargs["data"]["subject_token"] == "<refresh_token>"
+    assert kwargs["data"]["subject_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+    assert kwargs["data"]["login_hint"] == "<sub>"
+
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_exchange_api_failed(mocker):
 
     client = ServerClient(
         domain="auth0.local",
@@ -978,6 +1026,98 @@ async def test_get_token_for_connection_exchange_failed(mocker):
     assert "Failed to get token for connection: 400" in str(exc.value)
 
     mock_post.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_exchange_discovery_failed(mocker):
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    mock_fetch = mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        side_effect=Exception("Fetch failed")
+    )
+
+    with pytest.raises(Exception) as exc:
+        await client.get_token_for_connection({
+            "connection": "<connection>",
+            "refresh_token": "<refresh_token_should_fail>"
+        })
+
+
+    assert "There was an error while trying to retrieve an access token for a connection." in str(exc.value)
+    assert isinstance(exc.value.error, Exception)
+
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_exchange_missing_token_endpoint_failed(mocker):
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client._oauth,
+        "metadata",
+        {"issuer": "https://auth0.local/"}  # no token_endpoint
+    )
+
+    with pytest.raises(AccessTokenForConnectionError) as exc:
+        await client.get_token_for_connection({
+            "connection": "<connection>",
+            "refresh_token": "<refresh_token_should_fail>"
+        })
+
+
+    assert "Token endpoint missing in OIDC metadata" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_exchange_no_connection_failed(mocker):
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    with pytest.raises(MissingRequiredArgumentError) as exc:
+        await client.get_token_for_connection({
+            "refresh_token": "<refresh_token>"
+        })
+
+
+    assert "The argument 'connection' is required but was not provided." in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_exchange_no_token_failed(mocker):
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+
+    with pytest.raises(Auth0Error) as exc:
+        await client.get_token_for_connection({
+            "connection": "<connection>"
+        })
+
+
+    assert "Either 'refresh_token' or 'access_token' must be provided, but not both." in str(exc.value)
+
 
 @pytest.mark.asyncio
 async def test_get_token_by_refresh_token_success(mocker):

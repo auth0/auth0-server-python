@@ -17,6 +17,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from auth0_server_python.error import (
+    Auth0Error,
     MissingTransactionError,
     ApiError,
     MissingRequiredArgumentError,
@@ -38,7 +39,6 @@ from auth0_server_python.auth_types import (
     LogoutOptions
 )
 from auth0_server_python.utils import PKCE, State, URL
-
 
 # Generic type for store options
 TStoreOptions = TypeVar('TStoreOptions')
@@ -631,7 +631,8 @@ class ServerClient(Generic[TStoreOptions]):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
-                f"Failed to get token with refresh token: {str(e)}"
+                f"Failed to get token with refresh token: {str(e)}",
+                e
             )
 
     async def get_access_token_for_connection(
@@ -1080,7 +1081,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Args:
             options: Options for retrieving an access token for a connection.
-                Must include 'connection' and 'refresh_token' keys.
+                Must include 'connection' and 'refresh_token' or 'access_token' keys.
                 May optionally include 'login_hint'.
 
         Raises:
@@ -1091,8 +1092,21 @@ class ServerClient(Generic[TStoreOptions]):
         """
         # Constants
         SUBJECT_TYPE_REFRESH_TOKEN = "urn:ietf:params:oauth:token-type:refresh_token"
+        SUBJECT_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token"
         REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "http://auth0.com/oauth/token-type/federated-connection-access-token"
         GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"
+
+        connection = options.get("connection")
+        refresh_token = options.get("refresh_token")
+        access_token = options.get("access_token")
+
+        if not connection:
+            raise MissingRequiredArgumentError("connection")
+
+        if bool(refresh_token) == bool(access_token):
+            raise Auth0Error(
+                "Either 'refresh_token' or 'access_token' must be provided, but not both.")
+
         try:
             # Ensure we have OIDC metadata
             if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
@@ -1105,13 +1119,18 @@ class ServerClient(Generic[TStoreOptions]):
 
             # Prepare parameters
             params = {
-                "connection": options["connection"],
-                "subject_token_type": SUBJECT_TYPE_REFRESH_TOKEN,
-                "subject_token": options["refresh_token"],
+                "connection": connection,
                 "requested_token_type": REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN,
                 "grant_type": GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN,
                 "client_id": self._client_id
             }
+
+            if refresh_token:
+                params["subject_token"] = refresh_token
+                params["subject_token_type"] = SUBJECT_TYPE_REFRESH_TOKEN
+            else:
+                params["subject_token"] = access_token
+                params["subject_token_type"] = SUBJECT_TYPE_ACCESS_TOKEN
 
             # Add login_hint if provided
             if "login_hint" in options and options["login_hint"]:
@@ -1146,7 +1165,8 @@ class ServerClient(Generic[TStoreOptions]):
             if isinstance(e, ApiError):
                 raise AccessTokenForConnectionError(
                     AccessTokenForConnectionErrorCode.API_ERROR,
-                    str(e)
+                    str(e),
+                    e
                 )
             raise AccessTokenForConnectionError(
                 AccessTokenForConnectionErrorCode.FETCH_ERROR,

@@ -47,10 +47,11 @@ class ApiError(Auth0Error):
 class AccessTokenError(Auth0Error):
     """Error raised when there's an issue with access tokens."""
     
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, cause=None):
         super().__init__(message)
         self.code = code
         self.name = "AccessTokenError"
+        self.error = cause
 
 
 class MissingRequiredArgumentError(Auth0Error):
@@ -82,10 +83,11 @@ class BackchannelLogoutError(Auth0Error):
 class AccessTokenForConnectionError(Auth0Error):
     """Error when retrieving access tokens for a specific connection fails."""
     
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, cause=None):
         super().__init__(message)
         self.code = code
         self.name = "AccessTokenForConnectionError"
+        self.error = cause
 
 class StartLinkUserError(Auth0Error):
     """
