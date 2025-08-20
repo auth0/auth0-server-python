@@ -328,7 +328,7 @@ class ApiClient:
 
         alg = header.get("alg")
         if alg not in self._dpop_algorithms:
-            raise InvalidDpopProofError(f"Unsupported alg: {alg}")
+            raise InvalidDpopProofError("Unsupported algorithm in DPoP proof")
 
         jwk_dict = header.get("jwk")
         if not jwk_dict or not isinstance(jwk_dict, dict):
