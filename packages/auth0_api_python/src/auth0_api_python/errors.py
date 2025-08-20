@@ -32,8 +32,11 @@ class BaseAuthError(Exception):
 class MissingRequiredArgumentError(BaseAuthError):
     """Error raised when a required argument is missing."""
 
-    def __init__(self, argument: str):
-        super().__init__(f"The argument '{argument}' is required but was not provided.")
+    def __init__(self, argument: str, message: str = None):
+        if message:
+            super().__init__(message)
+        else:
+            super().__init__(f"The argument '{argument}' is required but was not provided.")
         self.argument = argument
 
     def get_status_code(self) -> int:
@@ -87,11 +90,7 @@ class MissingAuthorizationError(BaseAuthError):
         super().__init__("")
 
     def get_status_code(self) -> int:
-        return 401
+        return 400
 
     def get_error_code(self) -> str:
-        return ""
-
-    def get_error_description(self) -> str:
-        return ""
-
+        return "invalid_request"

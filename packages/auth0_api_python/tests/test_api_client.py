@@ -1402,7 +1402,8 @@ async def test_verify_request_fail_dpop_required_mode():
             http_url="https://api.example.com/resource"
         )
 
-    assert "expected 'dpop', but got 'bearer'" in str(err.value).lower()
+    assert err.value.get_status_code() == 400
+    assert "invalid_request" in str(err.value.get_error_code()).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_dpop_enabled_bearer_with_cnf_conflict(httpx_mock: HTTPXMock):
@@ -1441,14 +1442,14 @@ async def test_verify_request_fail_dpop_enabled_bearer_with_cnf_conflict(httpx_m
         )
     )
 
-    with pytest.raises(InvalidAuthSchemeError) as err:
+    with pytest.raises(VerifyAccessTokenError) as err:
         await api_client.verify_request(
             headers={"authorization": f"Bearer {token}"},
             http_method="GET",
             http_url="https://api.example.com/resource"
         )
 
-    assert "request's authorization http header scheme is not dpop" in str(err.value).lower()
+    assert "dpop-bound token requires the dpop authentication scheme, not bearer" in str(err.value).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_dpop_disabled():
@@ -1477,7 +1478,8 @@ async def test_verify_request_fail_dpop_disabled():
             http_url="https://api.example.com/resource"
         )
 
-    assert err.value.get_status_code() == 401
+    assert err.value.get_status_code() == 400
+    assert "invalid_request" in str(err.value.get_error_code()).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_missing_authorization_header():
@@ -1494,7 +1496,8 @@ async def test_verify_request_fail_missing_authorization_header():
             http_method="GET",
             http_url="https://api.example.com/resource"
         )
-    assert err.value.get_status_code() == 401
+    assert err.value.get_status_code() == 400
+    assert "invalid_request" in str(err.value.get_error_code()).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_unsupported_scheme():
@@ -1511,7 +1514,8 @@ async def test_verify_request_fail_unsupported_scheme():
             http_method="GET",
             http_url="https://api.example.com/resource"
         )
-    assert err.value.get_status_code() == 401
+    assert err.value.get_status_code() == 400
+    assert "invalid_request" in str(err.value.get_error_code()).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_empty_bearer_token():
@@ -1519,7 +1523,8 @@ async def test_verify_request_fail_empty_bearer_token():
     api_client = ApiClient(ApiClientOptions(domain="auth0.local", audience="my-audience"))
     with pytest.raises(MissingAuthorizationError) as err:
         await api_client.verify_request({"Authorization": "Bearer "})
-    assert err.value.get_status_code() == 401
+    assert err.value.get_status_code() == 400
+    assert "invalid_request" in str(err.value.get_error_code()).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_with_multiple_spaces_in_authorization():
@@ -1542,14 +1547,15 @@ async def test_verify_request_fail_missing_dpop_header():
         ApiClientOptions(domain="auth0.local", audience="my-audience")
     )
 
-    with pytest.raises(InvalidDpopProofError) as err:
+    with pytest.raises(InvalidAuthSchemeError) as err:
         await api_client.verify_request(
             headers={"authorization": f"DPoP {access_token}"},  # Missing DPoP header
             http_method="GET",
             http_url="https://api.example.com/resource"
         )
 
-    assert "request has no dpop http header" in str(err.value).lower()
+    assert err.value.get_status_code() == 400
+    assert "invalid_request" in str(err.value.get_error_code()).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_multiple_dpop_proofs():

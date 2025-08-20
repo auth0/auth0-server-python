@@ -81,7 +81,7 @@ class ApiClient:
         if not authorization_header:
             if self.is_dpop_required():
                 raise self._prepare_error(
-                        InvalidAuthSchemeError("Expecting Authorization header with DPoP scheme.")
+                        InvalidAuthSchemeError("")
                     )
             else :
                 raise self._prepare_error(MissingAuthorizationError())
@@ -93,7 +93,7 @@ class ApiClient:
                 raise self._prepare_error(MissingAuthorizationError())
             elif len(parts) > 2:
                 raise self._prepare_error(
-                    InvalidAuthSchemeError("Invalid Authorization HTTP Header Format for authorization")
+                    InvalidAuthSchemeError("Invalid Authorization HTTP Header Format")
                 )
 
         scheme, token = parts
@@ -101,11 +101,8 @@ class ApiClient:
         scheme = scheme.strip().lower()
 
         if self.is_dpop_required() and scheme != "dpop":
-            error_detail = f", but got '{scheme}'." if scheme == 'bearer' else " scheme."
             raise self._prepare_error(
-                InvalidAuthSchemeError(
-                    f"Invalid scheme. Expected 'DPoP'{error_detail}"
-                ),
+                InvalidAuthSchemeError(""),
                 auth_scheme=scheme
             )
         if not token.strip():
@@ -119,12 +116,12 @@ class ApiClient:
             if not dpop_proof:
                 if self.is_dpop_required():
                     raise self._prepare_error(
-                        InvalidAuthSchemeError("Expecting Authorization header with DPoP scheme."),
+                        InvalidAuthSchemeError(""),
                         auth_scheme=scheme
                     )
                 else:
                     raise self._prepare_error(
-                        InvalidDpopProofError("Operation indicated DPoP use but the request has no DPoP HTTP Header"),
+                        InvalidAuthSchemeError(""),
                         auth_scheme=scheme
                     )
 
@@ -140,8 +137,15 @@ class ApiClient:
                 raise self._prepare_error(InvalidDpopProofError("Failed to verify DPoP proof"), auth_scheme=scheme)
 
             if not http_method or not http_url:
+                missing_params = []
+                if not http_method:
+                    missing_params.append("http_method")
+                if not http_url:
+                    missing_params.append("http_url")
+
                 raise self._prepare_error(
-                    InvalidDpopProofError("Operation indicated DPoP use but the request has no http_method or http_url"), auth_scheme=scheme
+                    MissingRequiredArgumentError(f"DPoP authentication requires {' and '.join(missing_params)}"),
+                    auth_scheme=scheme
                 )
 
             try:
@@ -153,13 +157,13 @@ class ApiClient:
 
             if not cnf_claim:
                 raise self._prepare_error(
-                    InvalidDpopProofError("Operation indicated DPoP use but the JWT Access Token has no jkt confirmation claim"),
+                    VerifyAccessTokenError("JWT Access Token has no jkt confirmation claim"),
                     auth_scheme=scheme
                 )
 
             if not isinstance(cnf_claim, dict):
                 raise self._prepare_error(
-                    InvalidDpopProofError("Operation indicated DPoP use but the JWT Access Token has invalid confirmation claim format"),
+                    VerifyAccessTokenError("JWT Access Token has invalid confirmation claim format"),
                     auth_scheme=scheme
                 )
             try:
@@ -192,27 +196,24 @@ class ApiClient:
             return access_token_claims
 
         if scheme == "bearer":
-            if dpop_proof:
-                if self.options.dpop_enabled:
-                    raise self._prepare_error(
-                        InvalidAuthSchemeError(
-                            "Operation indicated DPoP use but the request's Authorization HTTP Header scheme is not DPoP"
-                        ),
-                        auth_scheme=scheme
-                    )
-
             try:
                 claims = await self.verify_access_token(token)
                 if claims.get("cnf") and isinstance(claims["cnf"], dict) and claims["cnf"].get("jkt"):
                     if self.options.dpop_enabled:
                         raise self._prepare_error(
-                            InvalidAuthSchemeError(
-                                "Operation indicated DPoP use but the request's Authorization HTTP Header scheme is not DPoP"
+                            VerifyAccessTokenError(
+                                "DPoP-bound token requires the DPoP authentication scheme, not Bearer"
                             ),
                             auth_scheme=scheme
                         )
-
-
+                if dpop_proof:
+                    if self.options.dpop_enabled:
+                        raise self._prepare_error(
+                            InvalidAuthSchemeError(
+                                "DPoP proof requires DPoP authentication scheme, not Bearer"
+                            ),
+                            auth_scheme=scheme
+                        )
                 return claims
             except VerifyAccessTokenError as e:
                 raise self._prepare_error(e, auth_scheme=scheme)
@@ -487,42 +488,44 @@ class ApiClient:
             error_description: Error description if any
             auth_scheme: The authentication scheme that was used ("bearer" or "dpop")
         """
+        # Check if we should omit error parameters (invalid_request with empty description)
+        should_omit_error = (error_code == "invalid_request" and error_description == "")
+
         # If DPoP is disabled, only return Bearer challenges
         if not self.options.dpop_enabled:
-            if error_code and error_code != "unauthorized":
+            if error_code and error_code != "unauthorized" and not should_omit_error:
                 bearer_parts = []
                 bearer_parts.append(f'error="{error_code}"')
                 if error_description:
                     bearer_parts.append(f'error_description="{error_description}"')
                 return [("WWW-Authenticate", "Bearer " + ", ".join(bearer_parts))]
-            return [("WWW-Authenticate", "Bearer")]
+            return [("WWW-Authenticate", 'Bearer realm="api"')]
 
         algs = " ".join(self._dpop_algorithms)
         dpop_required = self.is_dpop_required()
 
-        # No error details
-        if error_code == "unauthorized" or not error_code:
+        # No error details or should omit error cases
+        if error_code == "unauthorized" or not error_code or should_omit_error:
             if dpop_required:
                 return [("WWW-Authenticate", f'DPoP algs="{algs}"')]
-            return [("WWW-Authenticate", f'Bearer, DPoP algs="{algs}"')]
+            return [("WWW-Authenticate", f'Bearer realm="api", DPoP algs="{algs}"')]
 
         if dpop_required:
             # DPoP-required mode: Single DPoP challenge with error
             dpop_parts = []
-            if error_code:
+            if error_code and not should_omit_error:
                 dpop_parts.append(f'error="{error_code}"')
-            if error_description:
-                dpop_parts.append(f'error_description="{error_description}"')
+                if error_description:
+                    dpop_parts.append(f'error_description="{error_description}"')
             dpop_parts.append(f'algs="{algs}"')
             dpop_header = "DPoP " + ", ".join(dpop_parts)
             return [("WWW-Authenticate", dpop_header)]
 
         # DPoP-allowed mode: For DPoP errors, always include both challenges
-        if auth_scheme == "dpop" and error_code:
-            bearer_header = "Bearer"
+        if auth_scheme == "dpop" and error_code and not should_omit_error:
+            bearer_header = 'Bearer realm="api"'
             dpop_parts = []
-            if error_code:
-                dpop_parts.append(f'error="{error_code}"')
+            dpop_parts.append(f'error="{error_code}"')
             if error_description:
                 dpop_parts.append(f'error_description="{error_description}"')
             dpop_parts.append(f'algs="{algs}"')
@@ -533,7 +536,7 @@ class ApiClient:
             ]
 
         # If auth_scheme is "bearer", include error on Bearer challenge
-        if auth_scheme == "bearer" and error_code:
+        if auth_scheme == "bearer" and error_code and not should_omit_error:
             bearer_parts = []
             bearer_parts.append(f'error="{error_code}"')
             if error_description:
@@ -542,8 +545,8 @@ class ApiClient:
             dpop_header = f'DPoP algs="{algs}"'
             return [("WWW-Authenticate", f'{bearer_header}, {dpop_header}')]
 
-        # Default: no error or unknown context
+        # Default: no error or should omit error context
         return [
-            ("WWW-Authenticate", "Bearer"),
+            ("WWW-Authenticate", 'Bearer realm="api"'),
             ("WWW-Authenticate", f'DPoP algs="{algs}"'),
         ]
