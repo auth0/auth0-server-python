@@ -93,7 +93,7 @@ class ApiClient:
                 raise self._prepare_error(MissingAuthorizationError())
             elif len(parts) > 2:
                 raise self._prepare_error(
-                    InvalidAuthSchemeError("Invalid Authorization HTTP Header Format")
+                    InvalidAuthSchemeError("")
                 )
 
         scheme, token = parts

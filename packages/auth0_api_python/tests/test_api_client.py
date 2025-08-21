@@ -1534,7 +1534,8 @@ async def test_verify_request_with_multiple_spaces_in_authorization():
     )
     with pytest.raises(InvalidAuthSchemeError) as err:
         await api_client.verify_request({"authorization": "Bearer  token  with  extra  spaces"})
-    assert "authorization" in str(err.value).lower()
+    assert err.value.get_status_code() == 400
+    assert "invalid_request" in str(err.value.get_error_code()).lower()
 
 @pytest.mark.asyncio
 async def test_verify_request_fail_missing_dpop_header():
