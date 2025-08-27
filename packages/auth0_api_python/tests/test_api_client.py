@@ -11,6 +11,8 @@ from auth0_api_python.errors import (
     MissingAuthorizationError,
     MissingRequiredArgumentError,
     VerifyAccessTokenError,
+    GetTokenForConnectionError,
+    ApiError,
 )
 from auth0_api_python.token_utils import (
     PRIVATE_EC_JWK,
@@ -1589,3 +1591,102 @@ async def test_verify_request_fail_multiple_dpop_proofs():
     assert "multiple" in str(err.value).lower()
 
 
+@pytest.mark.asyncio
+async def test_get_token_for_connection_success(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url="https://auth0.local/.well-known/openid-configuration",
+        json={
+            "token_endpoint": "https://auth0.local/oauth/token"
+        }
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://auth0.local/oauth/token",
+        json={"access_token": "abc123", "expires_in": 3600, "scope": "openid"}
+    )
+    options = ApiClientOptions(
+        domain="auth0.local",
+        audience="my-audience",
+        associated_client={"client_id": "cid", "client_secret": "csecret"}
+    )
+    api_client = ApiClient(options)
+    result = await api_client.get_token_for_connection({
+        "connection": "test-conn",
+        "access_token": "user-token"
+    })
+    assert result["access_token"] == "abc123"
+    assert result["scope"] == "openid"
+    assert isinstance(result["expires_at"], int)
+
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_missing_connection():
+    options = ApiClientOptions(
+        domain="auth0.local",
+        audience="my-audience",
+        associated_client={"client_id": "cid", "client_secret": "csecret"}
+    )
+    api_client = ApiClient(options)
+    with pytest.raises(MissingRequiredArgumentError):
+        await api_client.get_token_for_connection({
+            "access_token": "user-token"
+        })
+
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_missing_access_token():
+    options = ApiClientOptions(
+        domain="auth0.local",
+        audience="my-audience",
+        associated_client={"client_id": "cid", "client_secret": "csecret"}
+    )
+    api_client = ApiClient(options)
+    with pytest.raises(MissingRequiredArgumentError):
+        await api_client.get_token_for_connection({
+            "connection": "test-conn"
+        })
+
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_no_associated_client():
+    options = ApiClientOptions(
+        domain="auth0.local",
+        audience="my-audience"
+        # associated_client missing
+    )
+    api_client = ApiClient(options)
+    with pytest.raises(GetTokenForConnectionError):
+        await api_client.get_token_for_connection({
+            "connection": "test-conn",
+            "access_token": "user-token"
+        })
+
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_token_endpoint_error(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url="https://auth0.local/.well-known/openid-configuration",
+        json={
+            "token_endpoint": "https://auth0.local/oauth/token"
+        }
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://auth0.local/oauth/token",
+        status_code=400,
+        json={"error": "invalid_request", "error_description": "Bad request"}
+    )
+    options = ApiClientOptions(
+        domain="auth0.local",
+        audience="my-audience",
+        associated_client={"client_id": "cid", "client_secret": "csecret"}
+    )
+    api_client = ApiClient(options)
+    with pytest.raises(ApiError) as err:
+        await api_client.get_token_for_connection({
+            "connection": "test-conn",
+            "access_token": "user-token"
+        })
+    assert err.value.code == "invalid_request"

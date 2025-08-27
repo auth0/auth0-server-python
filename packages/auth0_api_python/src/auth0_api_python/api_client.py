@@ -1,5 +1,6 @@
 import time
-from typing import Any, Optional
+import httpx
+from typing import Any, Optional, List, Dict
 
 from authlib.jose import JsonWebKey, JsonWebToken
 
@@ -11,6 +12,8 @@ from .errors import (
     MissingAuthorizationError,
     MissingRequiredArgumentError,
     VerifyAccessTokenError,
+    GetTokenForConnectionError,
+    ApiError,
 )
 from .utils import (
     calculate_jwk_thumbprint,
@@ -550,3 +553,81 @@ class ApiClient:
             ("WWW-Authenticate", 'Bearer realm="api"'),
             ("WWW-Authenticate", f'DPoP algs="{algs}"'),
         ]
+
+    async def get_token_for_connection(self, options: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Retrieves a token for a connection.
+
+        Args:
+            options: Options for retrieving an access token for a connection.
+                Must include 'connection' and 'access_token' keys.
+                May optionally include 'login_hint'.
+
+        Raises:
+            GetTokenForConnectionError: If there was an issue requesting the access token.
+            ApiError: If the token exchange endpoint returns an error.
+
+        Returns:
+            Dictionary containing the token response with access_token, expires_in, and scope.
+        """
+        # Constants
+        SUBJECT_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token"
+        REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "http://auth0.com/oauth/token-type/federated-connection-access-token"
+        GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"
+
+        connection = options.get("connection")
+        access_token = options.get("access_token")
+
+        if not connection:
+            raise MissingRequiredArgumentError("connection")
+
+        if not access_token:
+            raise MissingRequiredArgumentError("access_token")
+
+        associated_client = self.options.associated_client
+        if not associated_client:
+            raise GetTokenForConnectionError("You must configure the SDK with an associated_client to use get_token_for_connection.")
+
+        metadata = await self._discover()
+
+        token_endpoint = metadata.get("token_endpoint")
+        if not token_endpoint:
+            raise GetTokenForConnectionError("Token endpoint missing in OIDC metadata")
+
+        # Prepare parameters
+        params = {
+            "connection": connection,
+            "requested_token_type": REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN,
+            "grant_type": GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN,
+            "client_id": associated_client["client_id"],
+            "subject_token": access_token,
+            "subject_token_type": SUBJECT_TYPE_ACCESS_TOKEN,
+        }
+
+        # Add login_hint if provided
+        if "login_hint" in associated_client and associated_client["login_hint"]:
+            params["login_hint"] = options["login_hint"]
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                token_endpoint,
+                data=params,
+                auth=(associated_client["client_id"], associated_client["client_secret"])
+            )
+
+            if response.status_code != 200:
+                error_data = response.json() if response.headers.get(
+                    "content-type") == "application/json" else {}
+                raise ApiError(
+                    error_data.get("error", "connection_token_error"),
+                    error_data.get(
+                        "error_description", f"Failed to get token for connection: {response.status_code}")
+                )
+
+            token_endpoint_response = response.json()
+
+            return {
+                "access_token": token_endpoint_response.get("access_token"),
+                "expires_at": int(time.time()) + int(token_endpoint_response.get("expires_in", 3600)),
+                "scope": token_endpoint_response.get("scope", "")
+            }
