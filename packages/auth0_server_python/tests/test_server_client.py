@@ -6,7 +6,7 @@ from urllib.parse import urlparse, parse_qs, urlencode
 
 
 from auth_server.server_client import ServerClient
-from auth0_server_python.error import MissingRequiredArgumentError, ApiError, MissingTransactionError, StartLinkUserError, AccessTokenError, AccessTokenForConnectionError,BackchannelLogoutError
+from auth0_server_python.error import MissingRequiredArgumentError, ApiError, MissingTransactionError, StartLinkUserError, PollingApiError, AccessTokenForConnectionError,BackchannelLogoutError
 from auth_types import LogoutOptions, TransactionData
 
 
@@ -878,6 +878,7 @@ async def test_backchannel_auth_token_exchange_failed(mocker):
  
     second_response = AsyncMock()
     second_response.status_code = 400
+    second_response.headers = {}
     second_response.json = MagicMock(return_value={
         "error": "<error_code>",
         "error_description": "<error_description>"
@@ -894,6 +895,147 @@ async def test_backchannel_auth_token_exchange_failed(mocker):
     assert "Backchannel authentication failed: <error_description>" in str(exc.value)
 
     assert mock_post.await_count == 2
+
+@pytest.mark.asyncio
+async def test_start_backchannel_authentication_success(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "backchannel_authentication_endpoint": "https://auth0.local/backchannel"
+        }
+    )
+
+    # Mock httpx.AsyncClient.post
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "auth_req_id": "auth_req_123",
+        "expires_in": 60,
+        "interval": 2
+    })
+    mock_post.return_value = mock_response
+
+    options = {
+        "login_hint": {"sub": "user123"},
+        "binding_message": "Test message"
+    }
+    result = await client.start_backchannel_authentication(options)
+    assert result["auth_req_id"] == "auth_req_123"
+    assert result["expires_in"] == 60
+    assert result["interval"] == 2
+
+@pytest.mark.asyncio
+async def test_start_backchannel_authentication_missing_sub():
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    with pytest.raises(MissingRequiredArgumentError):
+        await client.start_backchannel_authentication({"login_hint": {}})
+
+@pytest.mark.asyncio
+async def test_start_backchannel_authentication_error_response(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "backchannel_authentication_endpoint": "https://auth0.local/backchannel"
+        }
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 400
+    mock_response.json = MagicMock(return_value={
+        "error": "invalid_request",
+        "error_description": "Bad request"
+    })
+    mock_post.return_value = mock_response
+
+    with pytest.raises(ApiError) as exc:
+        await client.start_backchannel_authentication({"login_hint": {"sub": "user123"}})
+    assert "Bad request" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_get_token_by_auth_req_id_success(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    # Mock OIDC metadata
+    client._oauth.metadata = {"token_endpoint": "https://auth0.local/token"}
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "access_token": "token_abc",
+        "expires_in": 3600
+    })
+    mock_post.return_value = mock_response
+
+    result = await client.get_token_by_auth_req_id("auth_req_123")
+    assert result["access_token"] == "token_abc"
+    assert result["expires_in"] == 3600
+
+@pytest.mark.asyncio
+async def test_get_token_by_auth_req_id_missing_auth_req_id():
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    with pytest.raises(MissingRequiredArgumentError):
+        await client.get_token_by_auth_req_id("")
+
+@pytest.mark.asyncio
+async def test_get_token_by_auth_req_id_error_response(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    client._oauth.metadata = {"token_endpoint": "https://auth0.local/token"}
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 400
+    mock_response.json = MagicMock(return_value={
+        "error": "invalid_grant",
+        "error_description": "Invalid auth_req_id",
+        "interval": 2
+    })
+    mock_response.headers = {"Retry-After": "2"}
+    mock_post.return_value = mock_response
+
+    with pytest.raises(PollingApiError) as exc:
+        await client.get_token_by_auth_req_id("bad_auth_req_id")
+    assert "Invalid auth_req_id" in str(exc.value)
+    assert 2 == exc.value.interval
+    assert "invalid_grant" in str(exc.value.code)
 
 @pytest.mark.asyncio
 async def test_get_token_for_connection_success(mocker):
@@ -919,6 +1061,7 @@ async def test_get_token_for_connection_success(mocker):
         "expires_in": 3600,
         "scope": "openid profile"
     })
+    success_response.headers = {}
     mock_post.return_value = success_response
 
 

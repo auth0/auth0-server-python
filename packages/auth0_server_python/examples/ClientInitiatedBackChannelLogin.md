@@ -29,7 +29,10 @@ async def authenticate_via_backchannel():
     # Configure backchannel options
     options = {
         "login_hint": {"sub": "user-id"},  # The user identifier
-        "binding_message": "Login to Example App"  # Message displayed to the user
+        "binding_message": "Login to Example App",  # Message displayed to the user
+        "authorization_params": {
+            "requested_expiry": 300,  # Optional: Token expiry time in seconds
+        }
     }
     
     # Initiate backchannel authentication
@@ -50,6 +53,7 @@ async def authenticate_via_backchannel():
 
 - `binding_message`: An optional, human-readable message to be displayed at the consumption device and authentication device. This allows the user to ensure the transaction initiated by the consumption device is the same that triggers the action on the authentication device.
 - `login_hint['sub']`: The `sub` claim of the user that is trying to login using Client-Initiated Backchannel Authentication, and to which a push notification to authorize the login will be sent.
+- `requested_expiry`: The requested lifetime, in seconds, of the authentication request. The default value on Auth0 is 30 seconds.
 
 > [!IMPORTANT]
 > - Using Client-Initiated Backchannel Authentication requires the feature to be enabled in the Auth0 dashboard.
