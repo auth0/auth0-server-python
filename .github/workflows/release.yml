@@ -46,6 +46,11 @@ jobs:
         working-directory: packages/${{ github.event.inputs.sdk }}
         run: poetry install --no-root
 
+      - name: Run tests with pytest
+        working-directory: packages/${{ github.event.inputs.sdk }}
+        run: |
+          poetry run pytest -v --cov=src --cov-report=term-missing --cov-report=xml
+
       - name: Build package
         working-directory: packages/${{ github.event.inputs.sdk }}
         run: poetry build
