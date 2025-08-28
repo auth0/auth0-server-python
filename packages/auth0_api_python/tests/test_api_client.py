@@ -6,13 +6,13 @@ import pytest
 from auth0_api_python.api_client import ApiClient
 from auth0_api_python.config import ApiClientOptions
 from auth0_api_python.errors import (
+    ApiError,
+    GetTokenForConnectionError,
     InvalidAuthSchemeError,
     InvalidDpopProofError,
     MissingAuthorizationError,
     MissingRequiredArgumentError,
     VerifyAccessTokenError,
-    GetTokenForConnectionError,
-    ApiError,
 )
 from auth0_api_python.token_utils import (
     PRIVATE_EC_JWK,

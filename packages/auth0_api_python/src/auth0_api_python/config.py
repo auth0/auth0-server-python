@@ -4,7 +4,6 @@ Configuration classes and utilities for auth0-api-python.
 
 from typing import Callable, Optional
 
-
 from auth0_api_python.errors import MissingRequiredArgumentError
 
 

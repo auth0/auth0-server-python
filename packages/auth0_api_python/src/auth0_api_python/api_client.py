@@ -1,19 +1,19 @@
 import time
-import httpx
-from typing import Any, Optional, List, Dict
+from typing import Any, Optional
 
+import httpx
 from authlib.jose import JsonWebKey, JsonWebToken
 
 from .config import ApiClientOptions
 from .errors import (
+    ApiError,
     BaseAuthError,
+    GetTokenForConnectionError,
     InvalidAuthSchemeError,
     InvalidDpopProofError,
     MissingAuthorizationError,
     MissingRequiredArgumentError,
     VerifyAccessTokenError,
-    GetTokenForConnectionError,
-    ApiError,
 )
 from .utils import (
     calculate_jwk_thumbprint,
@@ -554,7 +554,7 @@ class ApiClient:
             ("WWW-Authenticate", f'DPoP algs="{algs}"'),
         ]
 
-    async def get_token_for_connection(self, options: Dict[str, Any]) -> Dict[str, Any]:
+    async def get_token_for_connection(self, options: dict[str, Any]) -> dict[str, Any]:
         """
         Retrieves a token for a connection.
 
@@ -571,10 +571,9 @@ class ApiClient:
             Dictionary containing the token response with access_token, expires_in, and scope.
         """
         # Constants
-        SUBJECT_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token"
-        REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "http://auth0.com/oauth/token-type/federated-connection-access-token"
-        GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"
-
+        SUBJECT_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token"  # noqa S105
+        REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "http://auth0.com/oauth/token-type/federated-connection-access-token"  # noqa S105
+        GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"  # noqa S105
         connection = options.get("connection")
         access_token = options.get("access_token")
 
