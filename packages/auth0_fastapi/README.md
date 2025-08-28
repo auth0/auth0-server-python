@@ -80,9 +80,11 @@ app.state.auth_client = auth_client
 # 4) Conditionally register routes
 register_auth_routes(router, config)
 
-# 5) Include the SDK’s default routes
-app.include_router(router)
+# 5. Register exception handlers
+register_exception_handlers(app)
 
+# 6) Include the SDK’s default routes
+app.include_router(router)
 
 @app.get("/")
 def home():
@@ -104,7 +106,7 @@ openssl rand -hex 64
 
 - The `APP_BASE_URL` is the URL that your application is running on. When developing locally, this is most commonly `http://localhost:3000`.
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > You will need to register the following URLs in your Auth0 Application via the [Auth0 Dashboard](https://manage.auth0.com):
 >
 > - Add `http://localhost:3000/auth/callback` to the list of **Allowed Callback URLs**
@@ -150,7 +152,11 @@ config = Auth0Config(
 )
 
 # 3) Instantiate the AuthClient
-auth_client = AuthClient(config)
+auth_client = AuthClient(
+  config,
+  state_store=..., # custom store
+  transaction_store=... # custom store
+)
 
 # Attach to the FastAPI app state so internal routes can access it
 app.state.config = config
@@ -159,8 +165,12 @@ app.state.auth_client = auth_client
 # 4) Conditionally register routes
 register_auth_routes(router, config)
 
-# 5) Include the SDK’s default routes
+# 5. Register exception handlers
+register_exception_handlers(app)
+
+# 6) Include the SDK’s default routes
 app.include_router(router)
+
 ```
 
 #### 4. Routes
@@ -176,7 +186,7 @@ To disable this behavior, you can set the `mount_routes` option to `False` (it's
 
 ```python
 config = Auth0Config(
-    domain="YOUR_AUTH0_DOMAIN",    
+    domain="YOUR_AUTH0_DOMAIN",
     client_id="YOUR_CLIENT_ID",
     client_secret="YOUR_CLIENT_SECRET",
     app_base_url="http://localhost:3000",
@@ -223,7 +233,7 @@ async def profile(request: Request, response: Response, session=Depends(auth_cli
     user = await auth_client.client.get_user(store_options=store_options)
     if not user:
         return {"error": "User not authenticated"}
-    
+
     return {
         "message": "Your Profile",
         "user": user,
@@ -231,7 +241,7 @@ async def profile(request: Request, response: Response, session=Depends(auth_cli
     }
 ```
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > The above is to protect server-side rendering routes by the means of a session, and not API routes using a bearer token.
 > The `authorization_params` passing the `scope` is used in to retrieve the user information from Auth0. Can be omitted if you don't need the user information.
 
@@ -242,12 +252,12 @@ If you need to call an API on behalf of the user, you want to specify the `audie
 
 ```python
 config = Auth0Config(
-    domain="YOUR_AUTH0_DOMAIN",    
+    domain="YOUR_AUTH0_DOMAIN",
     client_id="YOUR_CLIENT_ID",
     client_secret="YOUR_CLIENT_SECRET",
     app_base_url="http://localhost:3000",
     secret="YOUR_SESSION_SECRET"
-    auhorization_params= {
+    authorization_params= {
       "audience": "YOUR_AUDIENCE"
     }
 )
