@@ -6,6 +6,7 @@ import urllib
 import pytest
 from auth0_api_python.api_client import ApiClient
 from auth0_api_python.config import ApiClientOptions
+from auth0_api_python.encryption import encrypt
 from auth0_api_python.errors import (
     ApiError,
     GetAccessTokenForConnectionError,
@@ -27,6 +28,18 @@ from pytest_httpx import HTTPXMock
 
 # Create public RSA JWK by selecting only public key components
 PUBLIC_RSA_JWK = {k: PRIVATE_JWK[k] for k in ["kty", "n", "e", "alg", "use", "kid"] if k in PRIVATE_JWK}
+
+class DummyTokenStore:
+    def __init__(self):
+        self.tokens = {}
+        self.deleted = set()
+    async def get(self, key):
+        return self.tokens.get(key)
+    async def delete(self, key):
+        self.deleted.add(key)
+        self.tokens.pop(key, None)
+    async def set(self, key, value):
+        self.tokens[key] = value
 
 @pytest.mark.asyncio
 async def test_init_missing_args():
@@ -1730,3 +1743,67 @@ async def test_get_access_token_for_connection_token_endpoint_error(httpx_mock: 
             "access_token": "user-token"
         })
     assert err.value.code == "invalid_request"
+
+@pytest.mark.asyncio
+async def test_get_access_token_for_connection_cache_hit(httpx_mock: HTTPXMock):
+    store = DummyTokenStore()
+    secret = "test-secret"
+    connection = "test-conn"
+    valid_token = {
+        "access_token": "cached-token",
+        "expires_at": int(time.time()) + 3600,
+        "scope": "openid"
+    }
+    store.tokens[connection] = encrypt(valid_token, secret)
+    options = ApiClientOptions(
+        domain="auth0.local",
+        audience="my-audience",
+        client_id="cid",
+        client_secret="csecret",
+        secret=secret,
+        token_store=store
+    )
+    api_client = ApiClient(options)
+    result = await api_client.get_access_token_for_connection({
+        "connection": connection,
+        "access_token": "user-token"
+    })
+    assert result["access_token"] == "cached-token"
+    assert connection not in store.deleted
+
+@pytest.mark.asyncio
+async def test_get_access_token_for_connection_cache_expired(httpx_mock: HTTPXMock):
+    store = DummyTokenStore()
+    secret = "test-secret"
+    connection = "test-conn"
+    expired_token = {
+        "access_token": "expired-token",
+        "expires_at": int(time.time()) - 10,
+        "scope": "openid"
+    }
+    store.tokens[connection] = encrypt(expired_token, secret)
+    options = ApiClientOptions(
+        domain="auth0.local",
+        audience="my-audience",
+        client_id="cid",
+        client_secret="csecret",
+        secret=secret,
+        token_store=store
+    )
+    api_client = ApiClient(options)
+    httpx_mock.add_response(
+        method="GET",
+        url="https://auth0.local/.well-known/openid-configuration",
+        json={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://auth0.local/oauth/token",
+        json={"access_token": "fresh-token", "expires_in": 3600, "scope": "openid"}
+    )
+    result = await api_client.get_access_token_for_connection({
+        "connection": connection,
+        "access_token": "user-token"
+    })
+    assert result["access_token"] == "fresh-token"
+    assert connection in store.deleted

@@ -5,6 +5,7 @@ import httpx
 from authlib.jose import JsonWebKey, JsonWebToken
 
 from .config import ApiClientOptions
+from .encryption import decrypt, encrypt
 from .errors import (
     ApiError,
     BaseAuthError,
@@ -427,6 +428,14 @@ class ApiClient:
         if not client_id or not client_secret:
             raise GetAccessTokenForConnectionError("You must configure the SDK with a client_id and client_secret to use get_access_token_for_connection.")
 
+        token_set = await self.options.token_store.get(connection)
+        if token_set:
+            decrypted = decrypt(token_set, self.options.secret)
+            if decrypted.get("expires_at", 0) > time.time():
+                return decrypted
+            else:
+                await self.options.token_store.delete(connection)
+
         metadata = await self._discover()
 
         token_endpoint = metadata.get("token_endpoint")
@@ -465,11 +474,13 @@ class ApiClient:
 
             token_endpoint_response = response.json()
 
-            return {
+            token_set = {
                 "access_token": token_endpoint_response.get("access_token"),
                 "expires_at": int(time.time()) + int(token_endpoint_response.get("expires_in", 3600)),
                 "scope": token_endpoint_response.get("scope", "")
             }
+            await self.options.token_store.set(connection, encrypt(token_set, self.options.secret))
+            return token_set
 
     # ===== Private Methods =====
 
