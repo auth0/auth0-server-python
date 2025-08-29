@@ -422,9 +422,10 @@ class ApiClient:
         if not access_token:
             raise MissingRequiredArgumentError("access_token")
 
-        associated_client = self.options.associated_client
-        if not associated_client:
-            raise GetAccessTokenForConnectionError("You must configure the SDK with an associated_client to use get_access_token_for_connection.")
+        client_id = self.options.client_id
+        client_secret = self.options.client_secret
+        if not client_id or not client_secret:
+            raise GetAccessTokenForConnectionError("You must configure the SDK with a client_id and client_secret to use get_access_token_for_connection.")
 
         metadata = await self._discover()
 
@@ -437,7 +438,7 @@ class ApiClient:
             "connection": connection,
             "requested_token_type": REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN,
             "grant_type": GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN,
-            "client_id": associated_client["client_id"],
+            "client_id": client_id,
             "subject_token": access_token,
             "subject_token_type": SUBJECT_TYPE_ACCESS_TOKEN,
         }
@@ -450,7 +451,7 @@ class ApiClient:
             response = await client.post(
                 token_endpoint,
                 data=params,
-                auth=(associated_client["client_id"], associated_client["client_secret"])
+                auth=(client_id, client_secret)
             )
 
             if response.status_code != 200:

@@ -98,10 +98,8 @@ async def main():
     api_client = ApiClient(ApiClientOptions(
         domain="<AUTH0_DOMAIN>",
         audience="<AUTH0_AUDIENCE>",
-        associated_client={
-            "client_id": "<AUTH0_CLIENT_ID>",
-            "client_secret": "<AUTH0_CLIENT_SECRET>"
-        }
+        client_id="<AUTH0_CLIENT_ID>",
+        client_secret="<AUTH0_CLIENT_SECRET>",
     ))
     connection = "my-connection" # The Auth0 connection to the upstream idp
     access_token = "..." # The Auth0 access token to exchange

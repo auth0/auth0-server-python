@@ -1609,7 +1609,8 @@ async def test_get_access_token_for_connection_success(httpx_mock: HTTPXMock):
     options = ApiClientOptions(
         domain="auth0.local",
         audience="my-audience",
-        associated_client={"client_id": "cid", "client_secret": "csecret"}
+        client_id="cid",
+        client_secret="csecret",
     )
     api_client = ApiClient(options)
     result = await api_client.get_access_token_for_connection({
@@ -1637,7 +1638,8 @@ async def test_get_access_token_for_connection_with_login_hint(httpx_mock: HTTPX
     options = ApiClientOptions(
         domain="auth0.local",
         audience="my-audience",
-        associated_client={"client_id": "cid", "client_secret": "csecret"}
+        client_id="cid",
+        client_secret="csecret",
     )
     api_client = ApiClient(options)
     result = await api_client.get_access_token_for_connection({
@@ -1658,7 +1660,8 @@ async def test_get_access_token_for_connection_missing_connection():
     options = ApiClientOptions(
         domain="auth0.local",
         audience="my-audience",
-        associated_client={"client_id": "cid", "client_secret": "csecret"}
+        client_id="cid",
+        client_secret="csecret",
     )
     api_client = ApiClient(options)
     with pytest.raises(MissingRequiredArgumentError):
@@ -1672,7 +1675,8 @@ async def test_get_access_token_for_connection_missing_access_token():
     options = ApiClientOptions(
         domain="auth0.local",
         audience="my-audience",
-        associated_client={"client_id": "cid", "client_secret": "csecret"}
+        client_id="cid",
+        client_secret="csecret",
     )
     api_client = ApiClient(options)
     with pytest.raises(MissingRequiredArgumentError):
@@ -1682,18 +1686,20 @@ async def test_get_access_token_for_connection_missing_access_token():
 
 
 @pytest.mark.asyncio
-async def test_get_access_token_for_connection_no_associated_client():
+async def test_get_access_token_for_connection_no_client_id():
     options = ApiClientOptions(
         domain="auth0.local",
         audience="my-audience"
-        # associated_client missing
+        # client_id missing
     )
     api_client = ApiClient(options)
-    with pytest.raises(GetAccessTokenForConnectionError):
+    with pytest.raises(GetAccessTokenForConnectionError) as err:
         await api_client.get_access_token_for_connection({
             "connection": "test-conn",
             "access_token": "user-token"
         })
+
+    assert "You must configure the SDK with a client_id and client_secret to use get_access_token_for_connection." == str(err.value)
 
 
 @pytest.mark.asyncio
@@ -1714,7 +1720,8 @@ async def test_get_access_token_for_connection_token_endpoint_error(httpx_mock: 
     options = ApiClientOptions(
         domain="auth0.local",
         audience="my-audience",
-        associated_client={"client_id": "cid", "client_secret": "csecret"}
+        client_id="cid",
+        client_secret="csecret",
     )
     api_client = ApiClient(options)
     with pytest.raises(ApiError) as err:
