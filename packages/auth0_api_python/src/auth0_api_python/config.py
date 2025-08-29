@@ -19,7 +19,7 @@ class ApiClientOptions:
         dpop_required: Whether DPoP is required (default: False, allows both Bearer and DPoP).
         dpop_iat_leeway: Leeway in seconds for DPoP proof iat claim (default: 30).
         dpop_iat_offset: Maximum age in seconds for DPoP proof iat claim (default: 300).
-        associated_client: Optional required if you want to use get_token_for_connection.
+        associated_client: Optional required if you want to use get_access_token_for_connection.
             Must be a dict with 'client_id' and 'client_secret' keys.
     """
     def __init__(

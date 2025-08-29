@@ -8,7 +8,7 @@ from .config import ApiClientOptions
 from .errors import (
     ApiError,
     BaseAuthError,
-    GetTokenForConnectionError,
+    GetAccessTokenForConnectionError,
     InvalidAuthSchemeError,
     InvalidDpopProofError,
     MissingAuthorizationError,
@@ -554,7 +554,7 @@ class ApiClient:
             ("WWW-Authenticate", f'DPoP algs="{algs}"'),
         ]
 
-    async def get_token_for_connection(self, options: dict[str, Any]) -> dict[str, Any]:
+    async def get_access_token_for_connection(self, options: dict[str, Any]) -> dict[str, Any]:
         """
         Retrieves a token for a connection.
 
@@ -564,7 +564,7 @@ class ApiClient:
                 May optionally include 'login_hint'.
 
         Raises:
-            GetTokenForConnectionError: If there was an issue requesting the access token.
+            GetAccessTokenForConnectionError: If there was an issue requesting the access token.
             ApiError: If the token exchange endpoint returns an error.
 
         Returns:
@@ -585,13 +585,13 @@ class ApiClient:
 
         associated_client = self.options.associated_client
         if not associated_client:
-            raise GetTokenForConnectionError("You must configure the SDK with an associated_client to use get_token_for_connection.")
+            raise GetAccessTokenForConnectionError("You must configure the SDK with an associated_client to use get_access_token_for_connection.")
 
         metadata = await self._discover()
 
         token_endpoint = metadata.get("token_endpoint")
         if not token_endpoint:
-            raise GetTokenForConnectionError("Token endpoint missing in OIDC metadata")
+            raise GetAccessTokenForConnectionError("Token endpoint missing in OIDC metadata")
 
         # Prepare parameters
         params = {
@@ -604,7 +604,7 @@ class ApiClient:
         }
 
         # Add login_hint if provided
-        if "login_hint" in associated_client and associated_client["login_hint"]:
+        if "login_hint" in options and options["login_hint"]:
             params["login_hint"] = options["login_hint"]
 
         async with httpx.AsyncClient() as client:

@@ -96,9 +96,9 @@ class MissingAuthorizationError(BaseAuthError):
         return "invalid_request"
 
 
-class GetTokenForConnectionError(Exception):
+class GetAccessTokenForConnectionError(Exception):
     """Error raised when getting a token for a connection fails."""
-    code = "get_token_for_connection_error"
+    code = "get_access_token_for_connection_error"
 
     def __init__(self, message: str):
         super().__init__(message)

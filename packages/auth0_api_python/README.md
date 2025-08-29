@@ -87,7 +87,7 @@ In this example, the returned dictionary contains the decoded claims (like `sub`
 
 ### 4. Get an access token for a connection
 
-If you need to get an access token for an upstream idp via a connection, you can use the `get_token_for_connection` method:
+If you need to get an access token for an upstream idp via a connection, you can use the `get_access_token_for_connection` method:
 
 ```python
 import asyncio
@@ -106,7 +106,7 @@ async def main():
     connection = "my-connection" # The Auth0 connection to the upstream idp
     access_token = "..." # The Auth0 access token to exchange
 
-    connection_access_token = await api_client.get_token_for_connection({"connection": connection, "access_token": access_token})
+    connection_access_token = await api_client.get_access_token_for_connection({"connection": connection, "access_token": access_token})
     # The returned token is the access token for the upstream idp
     print(connection_access_token)
 
