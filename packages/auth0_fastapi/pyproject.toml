@@ -12,7 +12,7 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.9"
-auth0-server-python = ">=1.0.0b1"  
+auth0-server-python = { git = "https://github.com/auth0/auth0-server-python.git", branch = "ciba-updates", subdirectory = "packages/auth0_server_python" }
 fastapi = "^0.115.11"
 itsdangerous = "^2.2.0"
 
