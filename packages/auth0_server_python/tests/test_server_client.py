@@ -897,7 +897,7 @@ async def test_backchannel_auth_token_exchange_failed(mocker):
     assert mock_post.await_count == 2
 
 @pytest.mark.asyncio
-async def test_start_backchannel_authentication_success(mocker):
+async def test_initiate_backchannel_authentication_success(mocker):
     client = ServerClient(
         domain="auth0.local",
         client_id="client_id",
@@ -930,13 +930,13 @@ async def test_start_backchannel_authentication_success(mocker):
         "login_hint": {"sub": "user123"},
         "binding_message": "Test message"
     }
-    result = await client.start_backchannel_authentication(options)
+    result = await client.initiate_backchannel_authentication(options)
     assert result["auth_req_id"] == "auth_req_123"
     assert result["expires_in"] == 60
     assert result["interval"] == 2
 
 @pytest.mark.asyncio
-async def test_start_backchannel_authentication_missing_sub():
+async def test_initiate_backchannel_authentication_missing_sub():
     client = ServerClient(
         domain="auth0.local",
         client_id="client_id",
@@ -944,10 +944,10 @@ async def test_start_backchannel_authentication_missing_sub():
         secret="some-secret"
     )
     with pytest.raises(MissingRequiredArgumentError):
-        await client.start_backchannel_authentication({"login_hint": {}})
+        await client.initiate_backchannel_authentication({"login_hint": {}})
 
 @pytest.mark.asyncio
-async def test_start_backchannel_authentication_error_response(mocker):
+async def test_initiate_backchannel_authentication_error_response(mocker):
     client = ServerClient(
         domain="auth0.local",
         client_id="client_id",
@@ -972,11 +972,11 @@ async def test_start_backchannel_authentication_error_response(mocker):
     mock_post.return_value = mock_response
 
     with pytest.raises(ApiError) as exc:
-        await client.start_backchannel_authentication({"login_hint": {"sub": "user123"}})
+        await client.initiate_backchannel_authentication({"login_hint": {"sub": "user123"}})
     assert "Bad request" in str(exc.value)
 
 @pytest.mark.asyncio
-async def test_get_token_by_auth_req_id_success(mocker):
+async def test_backchannel_authentication_grant_success(mocker):
     client = ServerClient(
         domain="auth0.local",
         client_id="client_id",
@@ -995,12 +995,12 @@ async def test_get_token_by_auth_req_id_success(mocker):
     })
     mock_post.return_value = mock_response
 
-    result = await client.get_token_by_auth_req_id("auth_req_123")
+    result = await client.backchannel_authentication_grant("auth_req_123")
     assert result["access_token"] == "token_abc"
     assert result["expires_in"] == 3600
 
 @pytest.mark.asyncio
-async def test_get_token_by_auth_req_id_missing_auth_req_id():
+async def test_backchannel_authentication_grant_missing_auth_req_id():
     client = ServerClient(
         domain="auth0.local",
         client_id="client_id",
@@ -1008,10 +1008,10 @@ async def test_get_token_by_auth_req_id_missing_auth_req_id():
         secret="some-secret"
     )
     with pytest.raises(MissingRequiredArgumentError):
-        await client.get_token_by_auth_req_id("")
+        await client.backchannel_authentication_grant("")
 
 @pytest.mark.asyncio
-async def test_get_token_by_auth_req_id_error_response(mocker):
+async def test_backchannel_authentication_grant_error_response(mocker):
     client = ServerClient(
         domain="auth0.local",
         client_id="client_id",
@@ -1032,7 +1032,7 @@ async def test_get_token_by_auth_req_id_error_response(mocker):
     mock_post.return_value = mock_response
 
     with pytest.raises(PollingApiError) as exc:
-        await client.get_token_by_auth_req_id("bad_auth_req_id")
+        await client.backchannel_authentication_grant("bad_auth_req_id")
     assert "Invalid auth_req_id" in str(exc.value)
     assert 2 == exc.value.interval
     assert "invalid_grant" in str(exc.value.code)

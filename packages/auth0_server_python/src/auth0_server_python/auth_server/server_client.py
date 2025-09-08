@@ -865,7 +865,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             ApiError: If the backchannel authentication fails
         """
-        backchannel_data = await self.start_backchannel_authentication(options)
+        backchannel_data = await self.initiate_backchannel_authentication(options)
         auth_req_id = backchannel_data.get("auth_req_id")
         expires_in = backchannel_data.get(
             "expires_in", 120)  # Default to 2 minutes
@@ -879,7 +879,7 @@ class ServerClient(Generic[TStoreOptions]):
         while time.time() < end_time:
             # Make token request
             try:
-                token_response = await self.get_token_by_auth_req_id(auth_req_id)
+                token_response = await self.backchannel_authentication_grant(auth_req_id)
                 return token_response
 
             except Exception as e:
@@ -902,7 +902,7 @@ class ServerClient(Generic[TStoreOptions]):
         raise ApiError(
             "timeout", "Backchannel authentication timed out")
 
-    async def start_backchannel_authentication(
+    async def initiate_backchannel_authentication(
             self,
             options: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -1019,7 +1019,7 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
-    async def get_token_by_auth_req_id(self, auth_req_id: str) -> Dict[str, Any]:
+    async def backchannel_authentication_grant(self, auth_req_id: str) -> Dict[str, Any]:
         """
         Retrieves a token by exchanging an auth_req_id.
 
