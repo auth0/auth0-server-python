@@ -1730,3 +1730,4 @@ async def test_get_access_token_for_connection_token_endpoint_error(httpx_mock: 
             "access_token": "user-token"
         })
     assert err.value.code == "invalid_request"
+    assert err.value.status_code == 400

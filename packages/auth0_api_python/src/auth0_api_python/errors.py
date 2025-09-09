@@ -96,30 +96,37 @@ class MissingAuthorizationError(BaseAuthError):
         return "invalid_request"
 
 
-class GetAccessTokenForConnectionError(Exception):
+class GetAccessTokenForConnectionError(BaseAuthError):
     """Error raised when getting a token for a connection fails."""
-    code = "get_access_token_for_connection_error"
 
-    def __init__(self, message: str):
-        super().__init__(message)
-        self.name = self.__class__.__name__
+    def get_status_code(self) -> int:
+        return 400
+
+    def get_error_code(self) -> str:
+        return "get_access_token_for_connection_error"
 
 
-class ApiError(Exception):
+class ApiError(BaseAuthError):
     """
     Error raised when an API request to Auth0 fails.
     Contains details about the original error from Auth0.
     """
 
-    def __init__(self, code: str, message: str, cause=None):
+    def __init__(self, code: str, message: str, status_code=500, cause=None):
         super().__init__(message)
         self.code = code
+        self.status_code = status_code
         self.cause = cause
 
-        # Extract additional error details if available
         if cause:
             self.error = getattr(cause, "error", None)
             self.error_description = getattr(cause, "error_description", None)
         else:
             self.error = None
             self.error_description = None
+
+    def get_status_code(self) -> int:
+        return self.status_code
+
+    def get_error_code(self) -> str:
+        return self.code

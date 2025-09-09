@@ -460,7 +460,8 @@ class ApiClient:
                 raise ApiError(
                     error_data.get("error", "connection_token_error"),
                     error_data.get(
-                        "error_description", f"Failed to get token for connection: {response.status_code}")
+                        "error_description", f"Failed to get token for connection: {response.status_code}"),
+                    response.status_code
                 )
 
             token_endpoint_response = response.json()

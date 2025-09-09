@@ -126,7 +126,7 @@ decoded_and_verified_token = await api_client.verify_access_token(
 
 If the token lacks `my_custom_claim` or fails any standard check (issuer mismatch, expired token, invalid signature), the method raises a `VerifyAccessTokenError`.
 
-### 4. DPoP Authentication
+### 5. DPoP Authentication
 
 > [!NOTE]  
 > This feature is currently available in [Early Access](https://auth0.com/docs/troubleshoot/product-lifecycle/product-release-stages#early-access). Please reach out to Auth0 support to get it enabled for your tenant.
