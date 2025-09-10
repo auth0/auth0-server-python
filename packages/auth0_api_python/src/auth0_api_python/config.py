@@ -17,6 +17,8 @@ class ApiClientOptions:
         dpop_required: Whether DPoP is required (default: False, allows both Bearer and DPoP).
         dpop_iat_leeway: Leeway in seconds for DPoP proof iat claim (default: 30).
         dpop_iat_offset: Maximum age in seconds for DPoP proof iat claim (default: 300).
+        client_id: Optional required if you want to use get_access_token_for_connection.
+        client_secret: Optional required if you want to use get_access_token_for_connection.
     """
     def __init__(
         self,
@@ -27,6 +29,8 @@ class ApiClientOptions:
         dpop_required: bool = False,
         dpop_iat_leeway: int = 30,
         dpop_iat_offset: int = 300,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
     ):
         self.domain = domain
         self.audience = audience
@@ -35,3 +39,5 @@ class ApiClientOptions:
         self.dpop_required = dpop_required
         self.dpop_iat_leeway = dpop_iat_leeway
         self.dpop_iat_offset = dpop_iat_offset
+        self.client_id = client_id
+        self.client_secret = client_secret

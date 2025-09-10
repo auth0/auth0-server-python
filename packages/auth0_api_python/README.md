@@ -85,6 +85,34 @@ asyncio.run(main())
 
 In this example, the returned dictionary contains the decoded claims (like `sub`, `scope`, etc.) from the verified token.
 
+### 4. Get an access token for a connection
+
+If you need to get an access token for an upstream idp via a connection, you can use the `get_access_token_for_connection` method:
+
+```python
+import asyncio
+
+from auth0_api_python import ApiClient, ApiClientOptions
+
+async def main():
+    api_client = ApiClient(ApiClientOptions(
+        domain="<AUTH0_DOMAIN>",
+        audience="<AUTH0_AUDIENCE>",
+        client_id="<AUTH0_CLIENT_ID>",
+        client_secret="<AUTH0_CLIENT_SECRET>",
+    ))
+    connection = "my-connection" # The Auth0 connection to the upstream idp
+    access_token = "..." # The Auth0 access token to exchange
+
+    connection_access_token = await api_client.get_access_token_for_connection({"connection": connection, "access_token": access_token})
+    # The returned token is the access token for the upstream idp
+    print(connection_access_token)
+
+asyncio.run(main())
+```
+
+More info https://auth0.com/docs/secure/tokens/token-vault
+
 #### Requiring Additional Claims
 
 If your application demands extra claims, specify them with `required_claims`:
@@ -98,7 +126,7 @@ decoded_and_verified_token = await api_client.verify_access_token(
 
 If the token lacks `my_custom_claim` or fails any standard check (issuer mismatch, expired token, invalid signature), the method raises a `VerifyAccessTokenError`.
 
-### 4. DPoP Authentication
+### 5. DPoP Authentication
 
 > [!NOTE]  
 > This feature is currently available in [Early Access](https://auth0.com/docs/troubleshoot/product-lifecycle/product-release-stages#early-access). Please reach out to Auth0 support to get it enabled for your tenant.
