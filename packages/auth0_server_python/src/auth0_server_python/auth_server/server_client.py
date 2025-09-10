@@ -1072,7 +1072,13 @@ class ServerClient(Generic[TStoreOptions]):
                         interval
                     )
 
-                token_response = response.json()
+                try:
+                    token_response = response.json()
+                except json.JSONDecodeError:
+                    raise ApiError(
+                        "invalid_response",
+                        "Failed to parse token response as JSON"
+                    )
 
                 # Add required fields if they are missing
                 if "expires_in" in token_response and "expires_at" not in token_response:

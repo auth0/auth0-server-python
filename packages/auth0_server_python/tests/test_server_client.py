@@ -1,3 +1,4 @@
+import json
 import pytest
 import time
 
@@ -1036,6 +1037,29 @@ async def test_backchannel_authentication_grant_error_response(mocker):
     assert "Invalid auth_req_id" in str(exc.value)
     assert 2 == exc.value.interval
     assert "invalid_grant" in str(exc.value.code)
+
+@pytest.mark.asyncio
+async def test_backchannel_authentication_grant_json_decode_error(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    client._oauth.metadata = {"token_endpoint": "https://auth0.local/token"}
+
+    # Mock httpx.AsyncClient.post to return a response whose .json() raises JSONDecodeError
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(side_effect=json.JSONDecodeError("Expecting value", "not json", 0))
+    mock_post.return_value = mock_response
+
+    with pytest.raises(ApiError) as exc:
+        await client.backchannel_authentication_grant("auth_req_123")
+
+    assert exc.value.code == "invalid_response"
+    assert "Failed to parse token response as JSON" in str(exc.value)
 
 @pytest.mark.asyncio
 async def test_get_token_for_connection_success(mocker):
