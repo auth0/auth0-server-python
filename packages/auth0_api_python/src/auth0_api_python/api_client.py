@@ -456,8 +456,8 @@ class ApiClient:
                 )
 
                 if response.status_code != 200:
-                    error_data = response.json() if response.headers.get(
-                        "content-type") == "application/json" else {}
+                    error_data = response.json() if "json" in response.headers.get(
+                        "content-type", "").lower() else {}
                     raise ApiError(
                         error_data.get("error", "connection_token_error"),
                         error_data.get(

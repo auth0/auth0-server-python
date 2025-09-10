@@ -1790,3 +1790,33 @@ async def test_get_access_token_for_connection_network_error(httpx_mock: HTTPXMo
         })
     assert err.value.code == "network_error"
     assert "network error" in str(err.value).lower()
+
+@pytest.mark.asyncio
+async def test_get_access_token_for_connection_error_text_json_content_type(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url="https://auth0.local/.well-known/openid-configuration",
+        json={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://auth0.local/oauth/token",
+        status_code=400,
+        content=json.dumps({"error": "invalid_request", "error_description": "Bad request"}),
+        headers={"Content-Type": "text/json"}
+    )
+    options = ApiClientOptions(
+        domain="auth0.local",
+        audience="my-audience",
+        client_id="cid",
+        client_secret="csecret",
+    )
+    api_client = ApiClient(options)
+    with pytest.raises(ApiError) as err:
+        await api_client.get_access_token_for_connection({
+            "connection": "test-conn",
+            "access_token": "user-token"
+        })
+    assert err.value.code == "invalid_request"
+    assert err.value.status_code == 400
+    assert "bad request" in str(err.value).lower()
