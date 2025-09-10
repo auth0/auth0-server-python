@@ -1,11 +1,14 @@
 import time
 from typing import Any, Optional
 
+import httpx
 from authlib.jose import JsonWebKey, JsonWebToken
 
 from .config import ApiClientOptions
 from .errors import (
+    ApiError,
     BaseAuthError,
+    GetAccessTokenForConnectionError,
     InvalidAuthSchemeError,
     InvalidDpopProofError,
     MissingAuthorizationError,
@@ -389,6 +392,114 @@ class ApiClient:
             raise InvalidDpopProofError("DPoP Proof ath mismatch")
 
         return claims
+
+    async def get_access_token_for_connection(self, options: dict[str, Any]) -> dict[str, Any]:
+        """
+        Retrieves a token for a connection.
+
+        Args:
+            options: Options for retrieving an access token for a connection.
+                Must include 'connection' and 'access_token' keys.
+                May optionally include 'login_hint'.
+
+        Raises:
+            GetAccessTokenForConnectionError: If there was an issue requesting the access token.
+            ApiError: If the token exchange endpoint returns an error.
+
+        Returns:
+            Dictionary containing the token response with access_token, expires_in, and scope.
+        """
+        # Constants
+        SUBJECT_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token"  # noqa S105
+        REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "http://auth0.com/oauth/token-type/federated-connection-access-token"  # noqa S105
+        GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"  # noqa S105
+        connection = options.get("connection")
+        access_token = options.get("access_token")
+
+        if not connection:
+            raise MissingRequiredArgumentError("connection")
+
+        if not access_token:
+            raise MissingRequiredArgumentError("access_token")
+
+        client_id = self.options.client_id
+        client_secret = self.options.client_secret
+        if not client_id or not client_secret:
+            raise GetAccessTokenForConnectionError("You must configure the SDK with a client_id and client_secret to use get_access_token_for_connection.")
+
+        metadata = await self._discover()
+
+        token_endpoint = metadata.get("token_endpoint")
+        if not token_endpoint:
+            raise GetAccessTokenForConnectionError("Token endpoint missing in OIDC metadata")
+
+        # Prepare parameters
+        params = {
+            "connection": connection,
+            "requested_token_type": REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN,
+            "grant_type": GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN,
+            "client_id": client_id,
+            "subject_token": access_token,
+            "subject_token_type": SUBJECT_TYPE_ACCESS_TOKEN,
+        }
+
+        # Add login_hint if provided
+        if "login_hint" in options and options["login_hint"]:
+            params["login_hint"] = options["login_hint"]
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    token_endpoint,
+                    data=params,
+                    auth=(client_id, client_secret)
+                )
+
+                if response.status_code != 200:
+                    error_data = response.json() if "json" in response.headers.get(
+                        "content-type", "").lower() else {}
+                    raise ApiError(
+                        error_data.get("error", "connection_token_error"),
+                        error_data.get(
+                            "error_description", f"Failed to get token for connection: {response.status_code}"),
+                        response.status_code
+                    )
+
+                try:
+                    token_endpoint_response = response.json()
+                except Exception:
+                    raise ApiError("invalid_json", "Token endpoint returned invalid JSON.")
+
+                access_token = token_endpoint_response.get("access_token")
+                if not isinstance(access_token, str) or not access_token:
+                    raise ApiError("invalid_response", "Missing or invalid access_token in response.", 502)
+
+                expires_in_raw = token_endpoint_response.get("expires_in", 3600)
+                try:
+                    expires_in = int(expires_in_raw)
+                except (TypeError, ValueError):
+                    raise ApiError("invalid_response", "expires_in is not an integer.", 502)
+
+                return {
+                    "access_token": access_token,
+                    "expires_at": int(time.time()) + expires_in,
+                    "scope": token_endpoint_response.get("scope", "")
+                }
+
+        except httpx.TimeoutException as exc:
+            raise ApiError(
+                "timeout_error",
+                f"Request to token endpoint timed out: {str(exc)}",
+                504,
+                exc
+            )
+        except httpx.HTTPError as exc:
+            raise ApiError(
+                "network_error",
+                f"Network error occurred: {str(exc)}",
+                502,
+                exc
+            )
 
     # ===== Private Methods =====
 
