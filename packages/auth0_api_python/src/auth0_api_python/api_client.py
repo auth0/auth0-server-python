@@ -465,11 +465,24 @@ class ApiClient:
                         response.status_code
                     )
 
-                token_endpoint_response = response.json()
+                try:
+                    token_endpoint_response = response.json()
+                except Exception:
+                    raise ApiError("invalid_json", "Token endpoint returned invalid JSON.")
+
+                access_token = token_endpoint_response.get("access_token")
+                if not isinstance(access_token, str) or not access_token:
+                    raise ApiError("invalid_response", "Missing or invalid access_token in response.", 502)
+
+                expires_in_raw = token_endpoint_response.get("expires_in", 3600)
+                try:
+                    expires_in = int(expires_in_raw)
+                except (TypeError, ValueError):
+                    raise ApiError("invalid_response", "expires_in is not an integer.", 502)
 
                 return {
-                    "access_token": token_endpoint_response.get("access_token"),
-                    "expires_at": int(time.time()) + int(token_endpoint_response.get("expires_in", 3600)),
+                    "access_token": access_token,
+                    "expires_at": int(time.time()) + expires_in,
                     "scope": token_endpoint_response.get("scope", "")
                 }
 
