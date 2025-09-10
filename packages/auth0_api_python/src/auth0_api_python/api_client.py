@@ -447,30 +447,46 @@ class ApiClient:
         if "login_hint" in options and options["login_hint"]:
             params["login_hint"] = options["login_hint"]
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                token_endpoint,
-                data=params,
-                auth=(client_id, client_secret)
-            )
-
-            if response.status_code != 200:
-                error_data = response.json() if response.headers.get(
-                    "content-type") == "application/json" else {}
-                raise ApiError(
-                    error_data.get("error", "connection_token_error"),
-                    error_data.get(
-                        "error_description", f"Failed to get token for connection: {response.status_code}"),
-                    response.status_code
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    token_endpoint,
+                    data=params,
+                    auth=(client_id, client_secret)
                 )
 
-            token_endpoint_response = response.json()
+                if response.status_code != 200:
+                    error_data = response.json() if response.headers.get(
+                        "content-type") == "application/json" else {}
+                    raise ApiError(
+                        error_data.get("error", "connection_token_error"),
+                        error_data.get(
+                            "error_description", f"Failed to get token for connection: {response.status_code}"),
+                        response.status_code
+                    )
 
-            return {
-                "access_token": token_endpoint_response.get("access_token"),
-                "expires_at": int(time.time()) + int(token_endpoint_response.get("expires_in", 3600)),
-                "scope": token_endpoint_response.get("scope", "")
-            }
+                token_endpoint_response = response.json()
+
+                return {
+                    "access_token": token_endpoint_response.get("access_token"),
+                    "expires_at": int(time.time()) + int(token_endpoint_response.get("expires_in", 3600)),
+                    "scope": token_endpoint_response.get("scope", "")
+                }
+
+        except httpx.TimeoutException as exc:
+            raise ApiError(
+                "timeout_error",
+                f"Request to token endpoint timed out: {str(exc)}",
+                504,
+                exc
+            )
+        except httpx.HTTPError as exc:
+            raise ApiError(
+                "network_error",
+                f"Network error occurred: {str(exc)}",
+                502,
+                exc
+            )
 
     # ===== Private Methods =====
 

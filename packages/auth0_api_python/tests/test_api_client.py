@@ -3,6 +3,7 @@ import json
 import time
 import urllib
 
+import httpx
 import pytest
 from auth0_api_python.api_client import ApiClient
 from auth0_api_python.config import ApiClientOptions
@@ -1731,3 +1732,61 @@ async def test_get_access_token_for_connection_token_endpoint_error(httpx_mock: 
         })
     assert err.value.code == "invalid_request"
     assert err.value.status_code == 400
+
+@pytest.mark.asyncio
+async def test_get_access_token_for_connection_timeout_error(httpx_mock: HTTPXMock):
+    # Mock OIDC discovery
+    httpx_mock.add_response(
+        method="GET",
+        url="https://auth0.local/.well-known/openid-configuration",
+        json={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+    # Simulate timeout on POST
+    httpx_mock.add_exception(
+        method="POST",
+        url="https://auth0.local/oauth/token",
+        exception=httpx.TimeoutException("Request timed out")
+    )
+    options = ApiClientOptions(
+        domain="auth0.local",
+        audience="my-audience",
+        client_id="cid",
+        client_secret="csecret",
+    )
+    api_client = ApiClient(options)
+    with pytest.raises(ApiError) as err:
+        await api_client.get_access_token_for_connection({
+            "connection": "test-conn",
+            "access_token": "user-token"
+        })
+    assert err.value.code == "timeout_error"
+    assert "timed out" in str(err.value)
+
+@pytest.mark.asyncio
+async def test_get_access_token_for_connection_network_error(httpx_mock: HTTPXMock):
+    # Mock OIDC discovery
+    httpx_mock.add_response(
+        method="GET",
+        url="https://auth0.local/.well-known/openid-configuration",
+        json={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+    # Simulate HTTPError on POST
+    httpx_mock.add_exception(
+        method="POST",
+        url="https://auth0.local/oauth/token",
+        exception=httpx.RequestError("Network unreachable", request=httpx.Request("POST", "https://auth0.local/oauth/token"))
+    )
+    options = ApiClientOptions(
+        domain="auth0.local",
+        audience="my-audience",
+        client_id="cid",
+        client_secret="csecret",
+    )
+    api_client = ApiClient(options)
+    with pytest.raises(ApiError) as err:
+        await api_client.get_access_token_for_connection({
+            "connection": "test-conn",
+            "access_token": "user-token"
+        })
+    assert err.value.code == "network_error"
+    assert "network error" in str(err.value).lower()
