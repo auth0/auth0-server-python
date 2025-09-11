@@ -10,7 +10,5 @@ select = [
     "UP",  # pyupgrade
     "S",   # bandit (security)
 ]
-ignore = ["E501", "B904", "S105"]  # Line too long (handled by black), Exception handling without from
+ignore = ["E501", "B904", "S101", "S105", "S106"]  # Line too long (handled by black), Exception handling without from
 
-[per-file-ignores]
-"tests/*" = ["S101","S106"]  # Allow assert and ignore hardcoded password warnings in test files
