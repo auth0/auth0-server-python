@@ -1,5 +1,4 @@
 import json
-import pytest
 import time
 from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import parse_qs, urlparse

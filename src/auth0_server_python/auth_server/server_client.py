@@ -900,8 +900,8 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def initiate_backchannel_authentication(
             self,
-            options: Dict[str, Any]
-    ) -> Dict[str, Any]:
+            options: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Start backchannel authentication with Auth0.
 
@@ -1015,7 +1015,7 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
-    async def backchannel_authentication_grant(self, auth_req_id: str) -> Dict[str, Any]:
+    async def backchannel_authentication_grant(self, auth_req_id: str) -> dict[str, Any]:
         """
         Retrieves a token by exchanging an auth_req_id.
 

@@ -57,7 +57,7 @@ class PollingApiError(ApiError):
 
 class AccessTokenError(Auth0Error):
     """Error raised when there's an issue with access tokens."""
-    
+
     def __init__(self, code: str, message: str, cause=None):
         super().__init__(message)
         self.code = code
