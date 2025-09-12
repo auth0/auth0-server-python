@@ -2,6 +2,8 @@
 Error classes for the auth0-server-python SDK.
 These exceptions provide specific error types for different failure scenarios.
 """
+from typing import Optional
+
 
 class Auth0Error(Exception):
     """Base class for all Auth0 SDK errors."""
@@ -50,7 +52,7 @@ class PollingApiError(ApiError):
     Contains details about the original error from Auth0 and the requested polling interval.
     """
 
-    def __init__(self, code: str, message: str, interval: int | None, cause=None):
+    def __init__(self, code: str, message: str, interval: Optional[int], cause=None):
         super().__init__(code, message, cause)
         self.interval = interval
 
