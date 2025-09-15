@@ -936,6 +936,22 @@ class ServerClient(Generic[TStoreOptions]):
                 "login_hint.sub"
             )
 
+        authorization_params = options.get('authorization_params')
+        if authorization_params is not None and not isinstance(authorization_params, dict):
+            raise ApiError(
+                "invalid_argument",
+                "authorization_params must be a dict"
+            )
+
+        if authorization_params:
+            requested_expiry = authorization_params.get("requested_expiry")
+            if requested_expiry is not None:
+                if not isinstance(requested_expiry, int) or requested_expiry <= 0:
+                    raise ApiError(
+                        "invalid_argument",
+                        "authorization_params.requested_expiry must be a positive integer"
+                    )
+
         try:
             # Fetch OpenID Connect metadata if not already fetched
             if not hasattr(self, '_oauth_metadata'):
@@ -976,8 +992,8 @@ class ServerClient(Generic[TStoreOptions]):
             if self._default_authorization_params:
                 params.update(self._default_authorization_params)
 
-            if options.get('authorization_params'):
-                params.update(options.get('authorization_params'))
+            if authorization_params:
+                params.update(authorization_params)
 
             # Make the backchannel authentication request
             async with httpx.AsyncClient() as client:

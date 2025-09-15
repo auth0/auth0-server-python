@@ -983,6 +983,26 @@ async def test_initiate_backchannel_authentication_error_response(mocker):
     assert "Bad request" in str(exc.value)
 
 @pytest.mark.asyncio
+async def test_authorization_params_not_dict_raises():
+    client = ServerClient("domain", "client_id", "client_secret", secret="s")
+    with pytest.raises(ApiError) as exc:
+        await client.initiate_backchannel_authentication({
+            "login_hint": {"sub": "user_id"},
+            "authorization_params": "not_a_dict"
+        })
+    assert "authorization_params must be a dict" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_requested_expiry_not_positive_int_raises():
+    client = ServerClient("domain", "client_id", "client_secret", secret="s")
+    with pytest.raises(ApiError) as exc:
+        await client.initiate_backchannel_authentication({
+            "login_hint": {"sub": "user_id"},
+            "authorization_params": {"requested_expiry": -10}
+        })
+    assert "requested_expiry must be a positive integer" in str(exc.value)
+
+@pytest.mark.asyncio
 async def test_backchannel_authentication_grant_success(mocker):
     client = ServerClient(
         domain="auth0.local",
