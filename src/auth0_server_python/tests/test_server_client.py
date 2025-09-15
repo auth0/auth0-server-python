@@ -1,3 +1,4 @@
+import json
 import time
 from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import parse_qs, urlparse
@@ -11,6 +12,7 @@ from auth0_server_python.error import (
     BackchannelLogoutError,
     MissingRequiredArgumentError,
     MissingTransactionError,
+    PollingApiError,
     StartLinkUserError,
 )
 
@@ -883,6 +885,7 @@ async def test_backchannel_auth_token_exchange_failed(mocker):
 
     second_response = AsyncMock()
     second_response.status_code = 400
+    second_response.headers = {}
     second_response.json = MagicMock(return_value={
         "error": "<error_code>",
         "error_description": "<error_description>"
@@ -899,6 +902,190 @@ async def test_backchannel_auth_token_exchange_failed(mocker):
     assert "Backchannel authentication failed: <error_description>" in str(exc.value)
 
     assert mock_post.await_count == 2
+
+@pytest.mark.asyncio
+async def test_initiate_backchannel_authentication_success(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "backchannel_authentication_endpoint": "https://auth0.local/backchannel"
+        }
+    )
+
+    # Mock httpx.AsyncClient.post
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "auth_req_id": "auth_req_123",
+        "expires_in": 60,
+        "interval": 2
+    })
+    mock_post.return_value = mock_response
+
+    options = {
+        "login_hint": {"sub": "user123"},
+        "binding_message": "Test message"
+    }
+    result = await client.initiate_backchannel_authentication(options)
+    assert result["auth_req_id"] == "auth_req_123"
+    assert result["expires_in"] == 60
+    assert result["interval"] == 2
+
+@pytest.mark.asyncio
+async def test_initiate_backchannel_authentication_missing_sub():
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    with pytest.raises(MissingRequiredArgumentError):
+        await client.initiate_backchannel_authentication({"login_hint": {}})
+
+@pytest.mark.asyncio
+async def test_initiate_backchannel_authentication_error_response(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "backchannel_authentication_endpoint": "https://auth0.local/backchannel"
+        }
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 400
+    mock_response.json = MagicMock(return_value={
+        "error": "invalid_request",
+        "error_description": "Bad request"
+    })
+    mock_post.return_value = mock_response
+
+    with pytest.raises(ApiError) as exc:
+        await client.initiate_backchannel_authentication({"login_hint": {"sub": "user123"}})
+    assert "Bad request" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_authorization_params_not_dict_raises():
+    client = ServerClient("domain", "client_id", "client_secret", secret="s")
+    with pytest.raises(ApiError) as exc:
+        await client.initiate_backchannel_authentication({
+            "login_hint": {"sub": "user_id"},
+            "authorization_params": "not_a_dict"
+        })
+    assert "authorization_params must be a dict" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_requested_expiry_not_positive_int_raises():
+    client = ServerClient("domain", "client_id", "client_secret", secret="s")
+    with pytest.raises(ApiError) as exc:
+        await client.initiate_backchannel_authentication({
+            "login_hint": {"sub": "user_id"},
+            "authorization_params": {"requested_expiry": -10}
+        })
+    assert "requested_expiry must be a positive integer" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_backchannel_authentication_grant_success(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    # Mock OIDC metadata
+    client._oauth.metadata = {"token_endpoint": "https://auth0.local/token"}
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "access_token": "token_abc",
+        "expires_in": 3600
+    })
+    mock_post.return_value = mock_response
+
+    result = await client.backchannel_authentication_grant("auth_req_123")
+    assert result["access_token"] == "token_abc"
+    assert result["expires_in"] == 3600
+
+@pytest.mark.asyncio
+async def test_backchannel_authentication_grant_missing_auth_req_id():
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    with pytest.raises(MissingRequiredArgumentError):
+        await client.backchannel_authentication_grant("")
+
+@pytest.mark.asyncio
+async def test_backchannel_authentication_grant_error_response(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    client._oauth.metadata = {"token_endpoint": "https://auth0.local/token"}
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 400
+    mock_response.json = MagicMock(return_value={
+        "error": "invalid_grant",
+        "error_description": "Invalid auth_req_id",
+        "interval": 2
+    })
+    mock_response.headers = {"Retry-After": "2"}
+    mock_post.return_value = mock_response
+
+    with pytest.raises(PollingApiError) as exc:
+        await client.backchannel_authentication_grant("bad_auth_req_id")
+    assert "Invalid auth_req_id" in str(exc.value)
+    assert 2 == exc.value.interval
+    assert "invalid_grant" in str(exc.value.code)
+
+@pytest.mark.asyncio
+async def test_backchannel_authentication_grant_json_decode_error(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    client._oauth.metadata = {"token_endpoint": "https://auth0.local/token"}
+
+    # Mock httpx.AsyncClient.post to return a response whose .json() raises JSONDecodeError
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(side_effect=json.JSONDecodeError("Expecting value", "not json", 0))
+    mock_post.return_value = mock_response
+
+    with pytest.raises(ApiError) as exc:
+        await client.backchannel_authentication_grant("auth_req_123")
+
+    assert exc.value.code == "invalid_response"
+    assert "Failed to parse token response as JSON" in str(exc.value)
 
 @pytest.mark.asyncio
 async def test_get_token_for_connection_success(mocker):
@@ -924,6 +1111,7 @@ async def test_get_token_for_connection_success(mocker):
         "expires_in": 3600,
         "scope": "openid profile"
     })
+    success_response.headers = {}
     mock_post.return_value = success_response
 
 

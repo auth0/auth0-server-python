@@ -2,6 +2,8 @@
 Error classes for the auth0-server-python SDK.
 These exceptions provide specific error types for different failure scenarios.
 """
+from typing import Optional
+
 
 class Auth0Error(Exception):
     """Base class for all Auth0 SDK errors."""
@@ -44,13 +46,25 @@ class ApiError(Auth0Error):
             self.error_description = None
 
 
+class PollingApiError(ApiError):
+    """
+    Error raised when a polling API request to Auth0 fails.
+    Contains details about the original error from Auth0 and the requested polling interval.
+    """
+
+    def __init__(self, code: str, message: str, interval: Optional[int], cause=None):
+        super().__init__(code, message, cause)
+        self.interval = interval
+
+
 class AccessTokenError(Auth0Error):
     """Error raised when there's an issue with access tokens."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, cause=None):
         super().__init__(message)
         self.code = code
         self.name = "AccessTokenError"
+        self.cause = cause
 
 
 class MissingRequiredArgumentError(Auth0Error):
@@ -109,6 +123,7 @@ class AccessTokenErrorCode:
     FAILED_TO_REFRESH_TOKEN = "failed_to_refresh_token"
     FAILED_TO_REQUEST_TOKEN = "failed_to_request_token"
     REFRESH_TOKEN_ERROR = "refresh_token_error"
+    AUTH_REQ_ID_ERROR = "auth_req_id_error"
 
 
 class AccessTokenForConnectionErrorCode:

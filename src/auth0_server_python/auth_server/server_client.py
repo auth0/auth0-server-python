@@ -29,6 +29,7 @@ from auth0_server_python.error import (
     BackchannelLogoutError,
     MissingRequiredArgumentError,
     MissingTransactionError,
+    PollingApiError,
     StartLinkUserError,
 )
 from auth0_server_python.utils import PKCE, URL, State
@@ -838,14 +839,21 @@ class ServerClient(Generic[TStoreOptions]):
         options: dict[str, Any]
     ) -> dict[str, Any]:
         """
-        Initiates backchannel authentication with Auth0.
+        Performs backchannel authentication with Auth0.
 
         This method starts a Client-Initiated Backchannel Authentication (CIBA) flow,
         which allows an application to request authentication from a user via a separate
         device or channel.
 
+        Then polls the token endpoint until the user has authenticated or the request times out.
+
         Args:
-            options: Configuration options for backchannel authentication
+            options (dict): Configuration options for backchannel authentication
+                - login_hint (dict): Must contain a 'sub' field (e.g., {'sub': 'user_id'}).
+                - binding_message (str, optional): Message to display to the user.
+                - authorization_params (dict, optional): Additional authorization parameters.
+                    - requested_expiry (int, optional): Requested expiry time in seconds, default is 30 secs.
+                    - authorization_details (str, optional): JSON string for RAR.
 
         Returns:
             Token response data from the backchannel authentication
@@ -853,6 +861,97 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             ApiError: If the backchannel authentication fails
         """
+        backchannel_data = await self.initiate_backchannel_authentication(options)
+        auth_req_id = backchannel_data.get("auth_req_id")
+        expires_in = backchannel_data.get(
+            "expires_in", 120)  # Default to 2 minutes
+        interval = backchannel_data.get(
+            "interval", 5)  # Default to 5 seconds
+
+        # Calculate when to stop polling
+        end_time = time.time() + expires_in
+
+        # Poll until we get a response or timeout
+        while time.time() < end_time:
+            # Make token request
+            try:
+                token_response = await self.backchannel_authentication_grant(auth_req_id)
+                return token_response
+
+            except Exception as e:
+                if isinstance(e, PollingApiError):
+                    if e.code == "authorization_pending":
+                        # Wait for the specified interval before polling again
+                        await asyncio.sleep(interval)
+                        continue
+                    if e.code == "slow_down":
+                        # Wait for the specified interval before polling again
+                        await asyncio.sleep(e.interval or interval)
+                        continue
+                raise ApiError(
+                    "backchannel_error",
+                    f"Backchannel authentication failed: {str(e) or 'Unknown error'}",
+                    e
+                )
+
+        # If we get here, we've timed out
+        raise ApiError(
+            "timeout", "Backchannel authentication timed out")
+
+    async def initiate_backchannel_authentication(
+            self,
+            options: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Start backchannel authentication with Auth0.
+
+        This method starts a Client-Initiated Backchannel Authentication (CIBA) flow,
+        which allows an application to request authentication from a user via a separate
+        device or channel.
+
+        Args:
+            options (dict): Configuration options for backchannel authentication
+                - login_hint (dict): Must contain a 'sub' field (e.g., {'sub': 'user_id'}).
+                - binding_message (str, optional): Message to display to the user.
+                - authorization_params (dict, optional): Additional authorization parameters.
+                    - requested_expiry (int, optional): Requested expiry time in seconds, default is 30 secs.
+                    - authorization_details (str, optional): JSON string for RAR.
+
+        Returns:
+            dict: Response data from the bc-authorize backchannel authentication
+                - auth_req_id (str): The authentication request ID.
+                - expires_in (int): Time in seconds until the request expires.
+                - interval (int, optional): Polling interval in seconds.
+
+        Raises:
+            ApiError: If the backchannel authentication fails
+
+        See:
+            https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow
+        """
+
+        sub = options.get('login_hint', {}).get("sub")
+        if not sub:
+            raise MissingRequiredArgumentError(
+                "login_hint.sub"
+            )
+
+        authorization_params = options.get('authorization_params')
+        if authorization_params is not None and not isinstance(authorization_params, dict):
+            raise ApiError(
+                "invalid_argument",
+                "authorization_params must be a dict"
+            )
+
+        if authorization_params:
+            requested_expiry = authorization_params.get("requested_expiry")
+            if requested_expiry is not None:
+                if not isinstance(requested_expiry, int) or requested_expiry <= 0:
+                    raise ApiError(
+                        "invalid_argument",
+                        "authorization_params.requested_expiry must be a positive integer"
+                    )
+
         try:
             # Fetch OpenID Connect metadata if not already fetched
             if not hasattr(self, '_oauth_metadata'):
@@ -869,21 +968,6 @@ class ServerClient(Generic[TStoreOptions]):
                 raise ApiError(
                     "configuration_error",
                     "Backchannel authentication is not supported by the authorization server"
-                )
-
-            # Get token endpoint
-            token_endpoint = self._oauth_metadata.get("token_endpoint")
-            if not token_endpoint:
-                raise ApiError(
-                    "configuration_error",
-                    "Token endpoint is missing in OIDC metadata"
-                )
-
-            sub = sub = options.get('login_hint', {}).get("sub")
-            if not sub:
-                raise ApiError(
-                    "invalid_parameter",
-                    "login_hint must contain a 'sub' field"
                 )
 
             # Prepare login hint in the required format
@@ -908,8 +992,8 @@ class ServerClient(Generic[TStoreOptions]):
             if self._default_authorization_params:
                 params.update(self._default_authorization_params)
 
-            if options.get('authorization_params'):
-                params.update(options.get('authorization_params'))
+            if authorization_params:
+                params.update(authorization_params)
 
             # Make the backchannel authentication request
             async with httpx.AsyncClient() as client:
@@ -929,10 +1013,6 @@ class ServerClient(Generic[TStoreOptions]):
 
                 backchannel_data = backchannel_response.json()
                 auth_req_id = backchannel_data.get("auth_req_id")
-                expires_in = backchannel_data.get(
-                    "expires_in", 120)  # Default to 2 minutes
-                interval = backchannel_data.get(
-                    "interval", 5)  # Default to 5 seconds
 
                 if not auth_req_id:
                     raise ApiError(
@@ -940,60 +1020,91 @@ class ServerClient(Generic[TStoreOptions]):
                         "Missing auth_req_id in backchannel authentication response"
                     )
 
-                # Poll for token using the auth_req_id
-                token_params = {
-                    "grant_type": "urn:openid:params:grant-type:ciba",
-                    "auth_req_id": auth_req_id,
-                    "client_id": self._client_id,
-                    "client_secret": self._client_secret
-                }
-
-                # Calculate when to stop polling
-                end_time = time.time() + expires_in
-
-                # Poll until we get a response or timeout
-                while time.time() < end_time:
-                    # Make token request
-                    token_response = await client.post(token_endpoint, data=token_params)
-
-                    # Check for success (200 OK)
-                    if token_response.status_code == 200:
-                        # Success! Parse and return the token response
-                        return token_response.json()
-
-                    # Check for specific error that indicates we should continue polling
-                    if token_response.status_code == 400:
-                        error_data = token_response.json()
-                        error = error_data.get("error")
-
-                        # authorization_pending means we should keep polling
-                        if error == "authorization_pending":
-                            # Wait for the specified interval before polling again
-                            await asyncio.sleep(interval)
-                            continue
-
-                        # Other errors should be raised
-                        raise ApiError(
-                            error,
-                            error_data.get("error_description",
-                                           "Token request failed")
-                        )
-
-                    # Any other status code is an error
-                    raise ApiError(
-                        "token_error",
-                        f"Unexpected status code: {token_response.status_code}"
-                    )
-
-                # If we get here, we've timed out
-                raise ApiError(
-                    "timeout", "Backchannel authentication timed out")
+                return backchannel_data
 
         except Exception as e:
-            print("Caught exception:", type(e), e.args, repr(e))
+            if isinstance(e, ApiError):
+                raise
             raise ApiError(
                 "backchannel_error",
                 f"Backchannel authentication failed: {str(e) or 'Unknown error'}",
+                e
+            )
+
+    async def backchannel_authentication_grant(self, auth_req_id: str) -> dict[str, Any]:
+        """
+        Retrieves a token by exchanging an auth_req_id.
+
+        Args:
+            auth_req_id (str): The authentication request ID obtained from bc-authorize
+
+        Raises:
+            AccessTokenError: If there was an issue requesting the access token.
+
+        Returns:
+            A dictionary containing the token response from Auth0.
+        """
+        if not auth_req_id:
+            raise MissingRequiredArgumentError("auth_req_id")
+
+        try:
+            # Ensure we have the OIDC metadata
+            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
+                self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+
+            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            if not token_endpoint:
+                raise ApiError("configuration_error",
+                               "Token endpoint missing in OIDC metadata")
+
+            # Prepare the token request parameters
+            token_params = {
+                "grant_type": "urn:openid:params:grant-type:ciba",
+                "auth_req_id": auth_req_id,
+                "client_id": self._client_id,
+                "client_secret": self._client_secret
+            }
+
+            # Exchange the auth_req_id for an access token
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    token_endpoint,
+                    data=token_params,
+                    auth=(self._client_id, self._client_secret)
+                )
+
+                if response.status_code != 200:
+                    error_data = response.json()
+                    retry_after = response.headers.get("Retry-After")
+                    interval = int(retry_after) if retry_after is not None else None
+                    raise PollingApiError(
+                        error_data.get("error", "auth_req_id_error"),
+                        error_data.get("error_description",
+                                       "Failed to exchange auth_req_id"),
+                        interval
+                    )
+
+                try:
+                    token_response = response.json()
+                except json.JSONDecodeError:
+                    raise ApiError(
+                        "invalid_response",
+                        "Failed to parse token response as JSON"
+                    )
+
+                # Add required fields if they are missing
+                if "expires_in" in token_response and "expires_at" not in token_response:
+                    token_response["expires_at"] = int(
+                        time.time()) + token_response["expires_in"]
+
+                return token_response
+
+        except Exception as e:
+            if isinstance(e, (ApiError, PollingApiError)):
+                raise
+            raise AccessTokenError(
+                AccessTokenErrorCode.AUTH_REQ_ID_ERROR,
+                "There was an error while trying to exchange the auth_req_id for an access token.",
                 e
             )
 
