@@ -1,0 +1,64 @@
+name: Test RL Integration
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test-rl-scanner:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Configure Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Configure dependencies
+        run: |
+          pip install --user --upgrade pip
+          pip install --user pipx
+          pipx ensurepath
+          pipx install poetry==1.4.2
+          poetry config virtualenvs.in-project true
+          poetry install --with dev
+          poetry self add "poetry-dynamic-versioning[plugin]==1.1.1"
+
+      - name: Build release
+        run: |
+          poetry build
+
+      - name: Create tgz build artifact
+        run: |
+          tar -czvf auth0-server-python.tgz *
+
+      - name: Get Artifact Version
+        id: get_version
+        uses: ./.github/actions/get-version
+
+      - name: Test RL Scanner Action
+        id: rl-scan-test
+        uses: ./.github/actions/rl-scanner
+        continue-on-error: true
+        with:
+          artifact-path: "$(pwd)/auth0-server-python.tgz"
+          version: "${{ steps.get_version.outputs.version }}"
+        env:
+          RLSECURE_LICENSE: ${{ secrets.RLSECURE_LICENSE }}
+          RLSECURE_SITE_KEY: ${{ secrets.RLSECURE_SITE_KEY }}
+          SIGNAL_HANDLER_TOKEN: ${{ secrets.SIGNAL_HANDLER_TOKEN }}
+          PRODSEC_TOOLS_USER: ${{ secrets.PRODSEC_TOOLS_USER }}
+          PRODSEC_TOOLS_TOKEN: ${{ secrets.PRODSEC_TOOLS_TOKEN }}
+          PRODSEC_TOOLS_ARN: ${{ secrets.PRODSEC_TOOLS_ARN }}
+
+      - name: Output test result
+        run: |
+          echo "RL Scanner test completed"
+          echo "Status: ${{ steps.rl-scan-test.outcome }}"
+          echo "Ready for production use in publish workflow"
