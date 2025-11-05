@@ -9,6 +9,7 @@ import time
 from typing import Any, Generic, Optional, TypeVar
 from urllib.parse import parse_qs, urlparse
 
+from auth0_server_python.auth_server.my_account_client import MyAccountClient
 import httpx
 import jwt
 from auth0_server_python.auth_types import (
@@ -19,6 +20,10 @@ from auth0_server_python.auth_types import (
     TokenSet,
     TransactionData,
     UserClaims,
+    ConnectAccountOptions,
+    ConnectAccountRequest,
+    CompleteConnectAccountRequest,
+    CompleteConnectAccountResponse
 )
 from auth0_server_python.error import (
     AccessTokenError,
@@ -100,6 +105,8 @@ class ServerClient(Generic[TStoreOptions]):
             client_id=client_id,
             client_secret=client_secret,
         )
+        
+        self._my_account_client = MyAccountClient(domain=domain)
 
     async def _fetch_oidc_metadata(self, domain: str) -> dict:
         metadata_url = f"https://{domain}/.well-known/openid-configuration"
@@ -1260,3 +1267,97 @@ class ServerClient(Generic[TStoreOptions]):
                 "There was an error while trying to retrieve an access token for a connection.",
                 e
             )
+
+    async def start_connect_account(
+        self,
+        options: ConnectAccountOptions,
+        store_options: dict = None
+    ) -> str:
+        
+        # Get effective authorization params (merge defaults with provided ones)
+        auth_params = dict(self._default_authorization_params)
+        if options.authorization_params:
+            auth_params.update(
+                {k: v for k, v in options.authorization_params.items(
+                ) if k not in INTERNAL_AUTHORIZE_PARAMS}
+            )
+
+        # Ensure we have a redirect_uri
+        if "redirect_uri" not in auth_params and not self._redirect_uri:
+            raise MissingRequiredArgumentError("redirect_uri")
+
+        # Use the default redirect_uri if none is specified
+        if "redirect_uri" not in auth_params and self._redirect_uri:
+            auth_params["redirect_uri"] = self._redirect_uri
+
+        # Generate PKCE code verifier and challenge
+        code_verifier = PKCE.generate_code_verifier()
+        code_challenge = PKCE.generate_code_challenge(code_verifier)
+
+        # State parameter to prevent CSRF
+        state = PKCE.generate_random_string(32)
+        
+        connect_request = ConnectAccountRequest(
+            connection=options.connection,
+            redirect_uri = options.redirect_uri or auth_params["redirect_uri"],
+            code_challenge=code_challenge,
+            code_challenge_method="S256",
+            state=state,
+            authorization_params=options.authorization_params
+        )
+        access_token = await self._get_token()
+        connect_response = await self._my_account_client.connect_account(
+            access_token=access_token,
+            request=connect_request
+        )
+
+        # Build the transaction data to store
+        transaction_data = TransactionData(
+            code_verifier=code_verifier,
+            app_state=state,
+            auth_session = connect_response.auth_session
+        )
+
+        # Store the transaction data
+        await self._transaction_store.set(
+            f"{self._transaction_identifier}:{state}",
+            transaction_data,
+            options=store_options
+        )
+
+        return f"{connect_response.connect_uri}?ticket={connect_response.connect_params.ticket}"
+
+
+    async def complete_connect_account(
+        self,
+        connect_code: str,
+        state: str,
+        store_options: dict = None
+    ) -> CompleteConnectAccountResponse:
+        # Retrieve the transaction data using the state
+        transaction_identifier = f"{self._transaction_identifier}:{state}"
+        transaction_data = await self._transaction_store.get(transaction_identifier, options=store_options)
+
+        if not transaction_data:
+            raise MissingTransactionError()
+        
+        # TODO //do I need to check error in redirect??
+        # TODO //handle no redirect uri??
+        access_token = await self._get_token()
+        request = CompleteConnectAccountRequest(
+            auth_session=transaction_data.auth_session,
+            connect_code=connect_code,
+            redirect_uri=self._redirect_uri,
+            code_verifier=transaction_data.code_verifier
+        )
+
+        return await self._my_account_client.complete_connect_account(
+            access_token=access_token,
+            request=request
+        )
+
+    async def _get_token(
+        self,
+    ) -> str:
+        # TODO need to implement MRRT, for now can just copy a valid token with the correct aud/scopes
+        return "" 

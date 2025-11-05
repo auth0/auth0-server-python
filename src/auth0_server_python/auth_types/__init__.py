@@ -87,6 +87,7 @@ class TransactionData(BaseModel):
     audience: Optional[str] = None
     code_verifier: str
     app_state: Optional[Any] = None
+    auth_session: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
@@ -210,3 +211,39 @@ class StartLinkUserOptions(BaseModel):
     connection_scope: Optional[str] = None
     authorization_params: Optional[dict[str, Any]] = None
     app_state: Optional[Any] = None
+
+class ConnectParams(BaseModel):
+    ticket: str
+
+class ConnectAccountOptions(BaseModel):
+    connection: str
+    redirect_uri: Optional[str] = None
+    authorization_params: Optional[dict[str, Any]] = None
+
+class ConnectAccountRequest(BaseModel):
+    connection: str
+    redirect_uri: Optional[str] = None
+    state: Optional[str] = None
+    code_challenge: Optional[str] = None
+    code_challenge_method: Optional[str] = 'S256'
+    authorization_params: Optional[dict[str, Any]] = None
+
+class ConnectAccountResponse(BaseModel):
+    auth_session: str
+    connect_uri: str
+    connect_params: ConnectParams
+    expires_in: int
+
+class CompleteConnectAccountRequest(BaseModel):
+    auth_session: str
+    connect_code: str
+    redirect_uri: str
+    code_verifier: Optional[str] = None
+
+class CompleteConnectAccountResponse(BaseModel):
+    id: str
+    connection: str
+    access_type: str
+    scopes: list[str]
+    created_at: str
+    expires_at:  Optional[str] = None

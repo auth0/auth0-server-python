@@ -4,8 +4,17 @@ from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.server_client import ServerClient
-from auth0_server_python.auth_types import LogoutOptions, TransactionData
+from unittest.mock import ANY
+from auth0_server_python.auth_types import (
+    LogoutOptions,
+    TransactionData,
+    ConnectAccountOptions,
+    ConnectAccountResponse,
+    CompleteConnectAccountRequest,
+    ConnectParams,
+)
 from auth0_server_python.error import (
     AccessTokenForConnectionError,
     ApiError,
@@ -15,6 +24,7 @@ from auth0_server_python.error import (
     PollingApiError,
     StartLinkUserError,
 )
+from auth0_server_python.utils import PKCE
 
 
 @pytest.mark.asyncio
@@ -80,7 +90,6 @@ async def test_start_interactive_login_builds_auth_url(mocker):
     assert url == "https://auth0.local/authorize?client_id=<client_id>&redirect_uri=/test_redirect_uri"
     mock_transaction_store.set.assert_awaited()
     mock_oauth.assert_called_once()
-
 
 @pytest.mark.asyncio
 async def test_complete_interactive_login_no_transaction():
@@ -1252,3 +1261,125 @@ async def test_get_token_by_refresh_token_exchange_failed(mocker):
     args, kwargs = mock_post.call_args
     assert kwargs["data"]["refresh_token"] == "<refresh_token_should_fail>"
 
+@pytest.mark.asyncio
+async def test_start_connect_account_calls_connect_and_builds_url(mocker):
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret",
+        redirect_uri="/test_redirect_uri"
+    )
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+    mock_my_account_client.connect_account.return_value = ConnectAccountResponse(
+        auth_session="<auth_session>",
+        connect_uri="http://auth0.local/connected_accounts/connect",
+        connect_params=ConnectParams(
+            ticket="ticket123",
+        ),
+        expires_in=300
+    )
+
+    mocker.patch.object(PKCE, "generate_random_string", return_value="<state>")
+    mocker.patch.object(PKCE, "generate_code_verifier", return_value="<code_verifier>")
+
+    # Act
+    url = await client.start_connect_account(
+        options=ConnectAccountOptions(
+            connection="<connection>"
+        ),
+    )
+
+    # Assert
+    assert url == "http://auth0.local/connected_accounts/connect?ticket=ticket123"
+    mock_transaction_store.set.assert_awaited_with(
+        "_a0_tx:<state>", 
+        TransactionData(
+            code_verifier="<code_verifier>",
+            app_state="<state>",
+            auth_session="<auth_session>",
+        ),
+        options=ANY
+    )
+
+@pytest.mark.asyncio
+async def test_complete_connect_account_calls_complete(mocker):
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret",
+        redirect_uri="/test_redirect_uri"
+    )
+
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+
+    mock_transaction_store.get.return_value = TransactionData(
+        code_verifier="<code_verifier>",
+        app_state="<state>",
+        auth_session="<auth_session>",
+    )
+
+    # Act
+    await client.complete_connect_account(
+        connect_code="<connect_code>",
+        state="<state>"
+    )
+
+    # Assert
+    mock_my_account_client.complete_connect_account.assert_awaited_with(
+        access_token=ANY,
+        request=CompleteConnectAccountRequest(
+            auth_session="<auth_session>",
+            connect_code="<connect_code>",
+            redirect_uri="/test_redirect_uri",
+            code_verifier="<code_verifier>"
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_connect_account_no_transactions(mocker):
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret",
+        redirect_uri="/test_redirect_uri"
+    )
+
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+
+    mock_transaction_store.get.return_value = None  # no transaction
+
+    # Act
+    with pytest.raises(MissingTransactionError) as exc:
+        await client.complete_connect_account(
+            connect_code="<connect_code>",
+            state="<state>"
+        )
+
+    # Assert
+    assert "transaction" in str(exc.value)
+    mock_my_account_client.complete_connect_account.assert_not_awaited()
