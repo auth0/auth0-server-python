@@ -88,6 +88,7 @@ class TransactionData(BaseModel):
     code_verifier: str
     app_state: Optional[Any] = None
     auth_session: Optional[str] = None
+    redirect_uri: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model

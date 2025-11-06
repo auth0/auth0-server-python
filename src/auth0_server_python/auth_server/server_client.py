@@ -1289,7 +1289,6 @@ class ServerClient(Generic[TStoreOptions]):
         options: ConnectAccountOptions,
         store_options: dict = None
     ) -> str:
-        
         # Get effective authorization params (merge defaults with provided ones)
         auth_params = dict(self._default_authorization_params)
         if options.authorization_params:
@@ -1298,13 +1297,11 @@ class ServerClient(Generic[TStoreOptions]):
                 ) if k not in INTERNAL_AUTHORIZE_PARAMS}
             )
 
-        # Ensure we have a redirect_uri
-        if "redirect_uri" not in auth_params and not self._redirect_uri:
-            raise MissingRequiredArgumentError("redirect_uri")
-
         # Use the default redirect_uri if none is specified
-        if "redirect_uri" not in auth_params and self._redirect_uri:
-            auth_params["redirect_uri"] = self._redirect_uri
+        redirect_uri = options.redirect_uri or self._redirect_uri 
+        # Ensure we have a redirect_uri
+        if not redirect_uri:
+            raise MissingRequiredArgumentError("redirect_uri")
 
         # Generate PKCE code verifier and challenge
         code_verifier = PKCE.generate_code_verifier()
@@ -1312,10 +1309,10 @@ class ServerClient(Generic[TStoreOptions]):
 
         # State parameter to prevent CSRF
         state = PKCE.generate_random_string(32)
-        
+
         connect_request = ConnectAccountRequest(
             connection=options.connection,
-            redirect_uri = options.redirect_uri or auth_params["redirect_uri"],
+            redirect_uri = redirect_uri,
             code_challenge=code_challenge,
             code_challenge_method="S256",
             state=state,
@@ -1335,7 +1332,8 @@ class ServerClient(Generic[TStoreOptions]):
         transaction_data = TransactionData(
             code_verifier=code_verifier,
             app_state=state,
-            auth_session = connect_response.auth_session
+            auth_session=connect_response.auth_session,
+            redirect_uri=redirect_uri
         )
 
         # Store the transaction data
@@ -1359,18 +1357,17 @@ class ServerClient(Generic[TStoreOptions]):
 
         if not transaction_data:
             raise MissingTransactionError()
-        
-        # TODO //do I need to check error in redirect??
-        # TODO //handle no redirect uri??
+
         access_token = await self.get_access_token(
             audience=self._my_account_client.audienceIdentifier,
             scope="create:me:connected_accounts",
             store_options=store_options
         )
+
         request = CompleteConnectAccountRequest(
             auth_session=transaction_data.auth_session,
             connect_code=connect_code,
-            redirect_uri=self._redirect_uri,
+            redirect_uri=transaction_data.redirect_uri,
             code_verifier=transaction_data.code_verifier
         )
 
