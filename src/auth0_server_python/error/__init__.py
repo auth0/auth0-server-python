@@ -144,6 +144,7 @@ class AccessTokenErrorCode:
     FAILED_TO_REQUEST_TOKEN = "failed_to_request_token"
     REFRESH_TOKEN_ERROR = "refresh_token_error"
     AUTH_REQ_ID_ERROR = "auth_req_id_error"
+    INCORRECT_AUDIENCE = "incorrect_audience"
 
 
 class AccessTokenForConnectionErrorCode:

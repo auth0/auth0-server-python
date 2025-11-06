@@ -26,6 +26,7 @@ from auth0_server_python.auth_types import (
     CompleteConnectAccountResponse
 )
 from auth0_server_python.error import (
+    Auth0Error,
     AccessTokenError,
     AccessTokenErrorCode,
     AccessTokenForConnectionError,
@@ -66,7 +67,8 @@ class ServerClient(Generic[TStoreOptions]):
         transaction_identifier: str = "_a0_tx",
         state_identifier: str = "_a0_session",
         authorization_params: Optional[dict[str, Any]] = None,
-        pushed_authorization_requests: bool = False
+        pushed_authorization_requests: bool = False,
+        use_mrrt: bool = False,
     ):
         """
         Initialize the Auth0 server client.
@@ -82,6 +84,8 @@ class ServerClient(Generic[TStoreOptions]):
             transaction_identifier: Identifier for transaction data
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
+            pushed_authorization_requests: Whether to use PAR for authorization requests
+            use_mrrt: Whether to allow use of Multi-Resource Refresh Tokens
         """
         if not secret:
             raise MissingRequiredArgumentError("secret")
@@ -93,6 +97,7 @@ class ServerClient(Generic[TStoreOptions]):
         self._redirect_uri = redirect_uri
         self._default_authorization_params = authorization_params or {}
         self._pushed_authorization_requests = pushed_authorization_requests  # store the flag
+        self._use_mrrt = use_mrrt
 
         # Initialize stores
         self._transaction_store = transaction_store
@@ -294,10 +299,10 @@ class ServerClient(Generic[TStoreOptions]):
                 claims = jwt.decode(id_token, options={
                                     "verify_signature": False})
                 user_claims = UserClaims.parse_obj(claims)
-
+        
         # Build a token set using the token response data
         token_set = TokenSet(
-            audience=token_response.get("audience", "default"),
+            audience=self._default_authorization_params.get("audience", "default"),
             access_token=token_response.get("access_token", ""),
             scope=token_response.get("scope", ""),
             expires_at=int(time.time()) +
@@ -610,6 +615,13 @@ class ServerClient(Generic[TStoreOptions]):
                 if ts.get("audience") == audience and (not scope or ts.get("scope") == scope):
                     token_set = ts
                     break
+                elif ts.get("audience") != audience and not self._use_mrrt:
+                    # We have a token but for a different audience but for a different audience
+                    # since MRRT is disabled, we cannot use the RT to get a new AT for this audience
+                    raise AccessTokenError(
+                        AccessTokenErrorCode.INCORRECT_AUDIENCE,
+                        "The access token for the requested audience is not available and Multi-Resource Refresh Tokens are disabled."
+                    )
 
         # If token is valid, return it
         if token_set and token_set.get("expires_at", 0) > time.time():
@@ -1302,6 +1314,9 @@ class ServerClient(Generic[TStoreOptions]):
         Returns:
             The a connect URL containing a ticket to redirect the user to.
         """
+        if not self._use_mrrt:
+            raise Auth0Error("Multi-Resource Refresh Tokens (MRRT) is required to use Connected Accounts functionality.")
+        
         # Get effective authorization params (merge defaults with provided ones)
         auth_params = dict(self._default_authorization_params)
         if options.authorization_params:
@@ -1378,6 +1393,9 @@ class ServerClient(Generic[TStoreOptions]):
         Returns:
             A response from the connect account flow.
         """
+        if not self._use_mrrt:
+            raise Auth0Error("Multi-Resource Refresh Tokens (MRRT) is required to use Connected Accounts functionality.")
+        
         # Retrieve the transaction data using the state
         transaction_identifier = f"{self._transaction_identifier}:{state}"
         transaction_data = await self._transaction_store.get(transaction_identifier, options=store_options)
