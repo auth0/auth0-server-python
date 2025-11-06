@@ -1285,7 +1285,7 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
         auth_session="<auth_session>",
         connect_uri="http://auth0.local/connected_accounts/connect",
         connect_params=ConnectParams(
-            ticket="ticket123",
+            ticket="ticket123"
         ),
         expires_in=300
     )
@@ -1298,6 +1298,7 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
     url = await client.start_connect_account(
         options=ConnectAccountOptions(
             connection="<connection>",
+            app_state="<app_state>",
             redirect_uri="/test_redirect_uri"
         )
     )
@@ -1318,7 +1319,7 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
         "_a0_tx:<state>",
         TransactionData(
             code_verifier="<code_verifier>",
-            app_state="<state>",
+            app_state="<app_state>",
             auth_session="<auth_session>",
             redirect_uri="/test_redirect_uri"
         ),
@@ -1361,7 +1362,8 @@ async def test_start_connect_account_default_redirect_uri(mocker):
     # Act
     url = await client.start_connect_account(
         options=ConnectAccountOptions(
-            connection="<connection>"
+            connection="<connection>",
+            app_state="<app_state>"
         )
     )
 
@@ -1381,7 +1383,7 @@ async def test_start_connect_account_default_redirect_uri(mocker):
         "_a0_tx:<state>",
         TransactionData(
             code_verifier="<code_verifier>",
-            app_state="<state>",
+            app_state="<app_state>",
             auth_session="<auth_session>",
             redirect_uri="/default_redirect_uri"
         ),
@@ -1472,8 +1474,7 @@ async def test_complete_connect_account_calls_complete(mocker):
 
     # Act
     await client.complete_connect_account(
-        connect_code="<connect_code>",
-        state="<state>"
+        url="/test_redirect_uri?connect_code=<connect_code>&state=<state>"
     )
 
     # Assert
@@ -1486,6 +1487,70 @@ async def test_complete_connect_account_calls_complete(mocker):
             code_verifier="<code_verifier>"
         )
     )
+
+@pytest.mark.asyncio
+async def test_complete_connect_account_no_connect_code(mocker):
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret",
+        redirect_uri="/test_redirect_uri",
+        use_mrrt=True
+    )
+
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+
+    mock_transaction_store.get.return_value = None  # no transaction
+
+    # Act
+    with pytest.raises(MissingRequiredArgumentError) as exc:
+        await client.complete_connect_account(
+            url="/test_redirect_uri?state=<state>"
+        )
+
+    # Assert
+    assert "connect_code" in str(exc.value)
+    mock_my_account_client.complete_connect_account.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_complete_connect_account_no_state(mocker):
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret",
+        redirect_uri="/test_redirect_uri",
+        use_mrrt=True
+    )
+
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+
+    mock_transaction_store.get.return_value = None  # no transaction
+
+    # Act
+    with pytest.raises(MissingRequiredArgumentError) as exc:
+        await client.complete_connect_account(
+            url="/test_redirect_uri?connect_code=<connect_code>"
+        )
+
+    # Assert
+    assert "state" in str(exc.value)
+    mock_my_account_client.complete_connect_account.assert_not_awaited()
 
 @pytest.mark.asyncio
 async def test_complete_connect_account_no_transactions(mocker):
@@ -1512,14 +1577,12 @@ async def test_complete_connect_account_no_transactions(mocker):
     # Act
     with pytest.raises(MissingTransactionError) as exc:
         await client.complete_connect_account(
-            connect_code="<connect_code>",
-            state="<state>"
+            url="/test_redirect_uri?connect_code=<connect_code>&state=<state>"
         )
 
     # Assert
     assert "transaction" in str(exc.value)
     mock_my_account_client.complete_connect_account.assert_not_awaited()
-
 
 @pytest.mark.asyncio
 async def test_complete_connect_account_mrrt_disabled(mocker):
@@ -1541,8 +1604,7 @@ async def test_complete_connect_account_mrrt_disabled(mocker):
     # Act
     with pytest.raises(Auth0Error) as exc:
         await client.complete_connect_account(
-            connect_code="<connect_code>",
-            state="<state>"
+            url="/test_redirect_uri?connect_code=<connect_code>&state=<state>"
         )
 
     # Assert

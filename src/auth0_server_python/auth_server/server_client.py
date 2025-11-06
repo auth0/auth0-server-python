@@ -1358,7 +1358,7 @@ class ServerClient(Generic[TStoreOptions]):
         # Build the transaction data to store
         transaction_data = TransactionData(
             code_verifier=code_verifier,
-            app_state=state,
+            app_state=options.app_state,
             auth_session=connect_response.auth_session,
             redirect_uri=redirect_uri
         )
@@ -1374,8 +1374,7 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def complete_connect_account(
         self,
-        connect_code: str,
-        state: str,
+        url: str,
         store_options: dict = None
     ) -> CompleteConnectAccountResponse:
         """
@@ -1386,8 +1385,7 @@ class ServerClient(Generic[TStoreOptions]):
         with the My Account API rather than the `code` with the Authorization Server.
 
         Args:
-            connect_code: The connect code returned from the redirect.
-            state: The state parameter persisted from the initial connect account request.
+            url: The full callback URL including query parameters
             store_options: Optional options used to pass to the Transaction and State Store.
 
         Returns:
@@ -1395,6 +1393,20 @@ class ServerClient(Generic[TStoreOptions]):
         """
         if not self._use_mrrt:
             raise Auth0Error("Multi-Resource Refresh Tokens (MRRT) is required to use Connected Accounts functionality.")
+
+        # Parse the URL to get query parameters
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+
+        # Get state parameter from the URL
+        state = query_params.get("state", [""])[0]
+        if not state:
+            raise MissingRequiredArgumentError("state")
+
+        # Get the authorization code from the URL
+        connect_code = query_params.get("connect_code", [""])[0]
+        if not connect_code:
+            raise MissingRequiredArgumentError("connect_code")
 
         # Retrieve the transaction data using the state
         transaction_identifier = f"{self._transaction_identifier}:{state}"
@@ -1416,7 +1428,12 @@ class ServerClient(Generic[TStoreOptions]):
             code_verifier=transaction_data.code_verifier
         )
 
-        return await self._my_account_client.complete_connect_account(
+        response = await self._my_account_client.complete_connect_account(
             access_token=access_token,
             request=request
         )
+
+        if transaction_data.app_state is not None:
+            response.app_state = transaction_data.app_state
+
+        return response
