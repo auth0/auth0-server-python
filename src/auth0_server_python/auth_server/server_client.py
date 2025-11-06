@@ -1436,4 +1436,7 @@ class ServerClient(Generic[TStoreOptions]):
         if transaction_data.app_state is not None:
             response.app_state = transaction_data.app_state
 
+        # Clean up transaction data after successful login
+        await self._transaction_store.delete(transaction_identifier, options=store_options)
+
         return response
