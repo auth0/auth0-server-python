@@ -616,8 +616,8 @@ class ServerClient(Generic[TStoreOptions]):
                     token_set = ts
                     break
                 elif ts.get("audience") != audience and not self._use_mrrt:
-                    # We have a token but for a different audience but for a different audience
-                    # since MRRT is disabled, we cannot use the RT to get a new AT for this audience
+                    # We have a token but for a different audience but since MRRT is disabled,
+                    # we cannot use the RT to get a new AT for this audience
                     raise AccessTokenError(
                         AccessTokenErrorCode.INCORRECT_AUDIENCE,
                         "The access token for the requested audience is not available and Multi-Resource Refresh Tokens are disabled."
