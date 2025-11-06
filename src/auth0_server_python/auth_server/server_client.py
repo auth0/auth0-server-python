@@ -1289,6 +1289,19 @@ class ServerClient(Generic[TStoreOptions]):
         options: ConnectAccountOptions,
         store_options: dict = None
     ) -> str:
+        """
+        Initiates the connect account flow for linking a third-party account to the user's profile.
+
+        This method generates PKCE parameters, creates a transaction and calls the My Account API
+        to create a connect account request, returning /connect url containing a ticket.
+
+        Args:
+            options: Options for retrieving an access token for a connection.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            The a connect URL containing a ticket to redirect the user to.
+        """
         # Get effective authorization params (merge defaults with provided ones)
         auth_params = dict(self._default_authorization_params)
         if options.authorization_params:
@@ -1307,7 +1320,6 @@ class ServerClient(Generic[TStoreOptions]):
         code_verifier = PKCE.generate_code_verifier()
         code_challenge = PKCE.generate_code_challenge(code_verifier)
 
-        # State parameter to prevent CSRF
         state = PKCE.generate_random_string(32)
 
         connect_request = ConnectAccountRequest(
@@ -1351,6 +1363,21 @@ class ServerClient(Generic[TStoreOptions]):
         state: str,
         store_options: dict = None
     ) -> CompleteConnectAccountResponse:
+        """
+        Handles the redirect callback to complete the connect account flow for linking a third-party 
+        account to the user's profile.
+
+        This works similiar to the redirect from the login flow except it verifies the `connect_code`
+        with the My Account API rather than the `code` with the Authorization Server.
+
+        Args:
+            connect_code: The connect code returned from the redirect.
+            state: The state parameter persisted from the initial connect account request.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            A response from the connect account flow.
+        """
         # Retrieve the transaction data using the state
         transaction_identifier = f"{self._transaction_identifier}:{state}"
         transaction_data = await self._transaction_store.get(transaction_identifier, options=store_options)
