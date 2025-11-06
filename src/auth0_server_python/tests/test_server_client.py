@@ -18,6 +18,7 @@ from auth0_server_python.auth_types import (
 from auth0_server_python.error import (
     AccessTokenForConnectionError,
     ApiError,
+    Auth0Error,
     BackchannelLogoutError,
     MissingRequiredArgumentError,
     MissingTransactionError,
@@ -1273,7 +1274,8 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
         client_secret="<client_secret>",
         state_store=mock_state_store,
         transaction_store=mock_transaction_store,
-        secret="some-secret"
+        secret="some-secret",
+        use_mrrt=True
     )
 
     mocker.patch.object(client, "get_access_token", AsyncMock(return_value="<access_token>"))
@@ -1336,7 +1338,8 @@ async def test_start_connect_account_default_redirect_uri(mocker):
         state_store=mock_state_store,
         transaction_store=mock_transaction_store,
         secret="some-secret",
-        redirect_uri="/default_redirect_uri"
+        redirect_uri="/default_redirect_uri",
+        use_mrrt=True
     )
 
     mocker.patch.object(client, "get_access_token", AsyncMock(return_value="<access_token>"))
@@ -1397,7 +1400,8 @@ async def test_start_connect_account_no_redirect_uri(mocker):
         client_secret="<client_secret>",
         state_store=mock_state_store,
         transaction_store=mock_transaction_store,
-        secret="some-secret"
+        secret="some-secret",
+        use_mrrt=True
     )
 
     # Act
@@ -1412,6 +1416,33 @@ async def test_start_connect_account_no_redirect_uri(mocker):
     assert "redirect_uri" in str(exc.value)
 
 @pytest.mark.asyncio
+async def test_start_connect_account_mrrt_disabled(mocker):
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret",
+        use_mrrt=False
+    )
+
+    # Act
+    with pytest.raises(Auth0Error) as exc:
+        await client.start_connect_account(
+            options=ConnectAccountOptions(
+                connection="<connection>"
+            )
+        )
+
+    # Assert
+    assert "MRRT" in str(exc.value)
+
+@pytest.mark.asyncio
 async def test_complete_connect_account_calls_complete(mocker):
     # Setup
     mock_transaction_store = AsyncMock()
@@ -1424,7 +1455,8 @@ async def test_complete_connect_account_calls_complete(mocker):
         state_store=mock_state_store,
         transaction_store=mock_transaction_store,
         secret="some-secret",
-        redirect_uri="/test_redirect_uri"
+        redirect_uri="/test_redirect_uri",
+        use_mrrt=True
     )
 
     mocker.patch.object(client, "get_access_token", AsyncMock(return_value="<access_token>"))
@@ -1468,7 +1500,8 @@ async def test_complete_connect_account_no_transactions(mocker):
         state_store=mock_state_store,
         transaction_store=mock_transaction_store,
         secret="some-secret",
-        redirect_uri="/test_redirect_uri"
+        redirect_uri="/test_redirect_uri",
+        use_mrrt=True
     )
 
     mock_my_account_client = AsyncMock(MyAccountClient)
@@ -1486,3 +1519,31 @@ async def test_complete_connect_account_no_transactions(mocker):
     # Assert
     assert "transaction" in str(exc.value)
     mock_my_account_client.complete_connect_account.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_complete_connect_account_mrrt_disabled(mocker):
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret",
+        redirect_uri="/test_redirect_uri",
+        use_mrrt=False
+    )
+
+    # Act
+    with pytest.raises(Auth0Error) as exc:
+        await client.complete_connect_account(
+            connect_code="<connect_code>",
+            state="<state>"
+        )
+
+    # Assert
+    assert "MRRT" in str(exc.value)
