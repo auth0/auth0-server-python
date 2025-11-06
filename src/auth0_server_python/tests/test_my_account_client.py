@@ -1,18 +1,16 @@
+from unittest.mock import ANY, AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
-from unittest.mock import ANY
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_types import (
-    ConnectAccountRequest,
-    ConnectAccountResponse,
     CompleteConnectAccountRequest,
     CompleteConnectAccountResponse,
-    ConnectParams
+    ConnectAccountRequest,
+    ConnectAccountResponse,
+    ConnectParams,
 )
-from auth0_server_python.error import (
-    MyAccountApiError,
-    ApiError
-)
+from auth0_server_python.error import MyAccountApiError
+
 
 @pytest.mark.asyncio
 async def test_connect_account_success(mocker):
@@ -26,7 +24,7 @@ async def test_connect_account_success(mocker):
         "connect_params": {"ticket": "<auth_ticket>"},
         "expires_in": 3600
     })
-    
+
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
     request = ConnectAccountRequest(
         connection="<connection>",
@@ -35,10 +33,10 @@ async def test_connect_account_success(mocker):
         code_challenge="<code_challenge>",
         code_challenge_method="S256"
     )
-    
+
     # Act
     result = await client.connect_account(access_token="<access_token>", request=request)
-    
+
     # Assert
     mock_post.assert_awaited_with(
         url="https://auth0.local/me/v1/connected-accounts/connect",
@@ -70,7 +68,7 @@ async def test_connect_account_api_response_failure(mocker):
         "detail": "Invalid Token",
         "status": 401
     })
-    
+
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
     request = ConnectAccountRequest(
         connection="<connection>",
@@ -79,12 +77,12 @@ async def test_connect_account_api_response_failure(mocker):
         code_challenge="<code_challenge>",
         code_challenge_method="S256"
     )
-    
+
     # Act
 
     with pytest.raises(MyAccountApiError) as exc:
         await client.connect_account(access_token="<access_token>", request=request)
-    
+
     # Assert
     mock_post.assert_awaited_once()
     assert "Invalid Token" in str(exc.value)
@@ -103,17 +101,17 @@ async def test_complete_connect_account_success(mocker):
         "scopes": ["<some_scope>"],
         "created_at": "<created_at>",
     })
-    
+
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
     request = CompleteConnectAccountRequest(
         auth_session="<auth_session>",
         connect_code="<connect_code>",
         redirect_uri="<redirect_uri>",
     )
-    
+
     # Act
     result = await client.complete_connect_account(access_token="<access_token>", request=request)
-    
+
     # Assert
     mock_post.assert_awaited_with(
         url="https://auth0.local/me/v1/connected-accounts/complete",
@@ -144,19 +142,19 @@ async def test_complete_connect_account_api_response_failure(mocker):
         "detail": "Invalid Token",
         "status": 401
     })
-    
+
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
     request = CompleteConnectAccountRequest(
         auth_session="<auth_session>",
         connect_code="<connect_code>",
         redirect_uri="<redirect_uri>",
     )
-    
+
     # Act
 
     with pytest.raises(MyAccountApiError) as exc:
         await client.complete_connect_account(access_token="<access_token>", request=request)
-    
+
     # Assert
     mock_post.assert_awaited_once()
     assert "Invalid Token" in str(exc.value)

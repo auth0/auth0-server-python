@@ -2,26 +2,26 @@
 import httpx
 from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
 from auth0_server_python.auth_types import (
+    CompleteConnectAccountRequest,
+    CompleteConnectAccountResponse,
     ConnectAccountRequest,
     ConnectAccountResponse,
     ConnectParams,
-    CompleteConnectAccountRequest,
-    CompleteConnectAccountResponse,
 )
-
 from auth0_server_python.error import (
     ApiError,
     MyAccountApiError,
 )
 
+
 class MyAccountClient:
     def __init__(self, domain: str):
         self._domain = domain
-    
+
     @property
     def audienceIdentifier(self):
         return f"https://{self._domain}/me/"
-    
+
     async def connect_account(
         self,
         access_token: str,

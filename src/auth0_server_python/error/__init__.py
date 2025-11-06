@@ -63,8 +63,8 @@ class MyAccountApiError(Auth0Error):
     """
 
     def __init__(
-            self, 
-            title: str, 
+            self,
+            title: str,
             type: str,
             detail: str,
             status: int,

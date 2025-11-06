@@ -9,10 +9,14 @@ import time
 from typing import Any, Generic, Optional, TypeVar
 from urllib.parse import parse_qs, urlparse
 
-from auth0_server_python.auth_server.my_account_client import MyAccountClient
 import httpx
 import jwt
+from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_types import (
+    CompleteConnectAccountRequest,
+    CompleteConnectAccountResponse,
+    ConnectAccountOptions,
+    ConnectAccountRequest,
     LogoutOptions,
     LogoutTokenClaims,
     StartInteractiveLoginOptions,
@@ -20,18 +24,14 @@ from auth0_server_python.auth_types import (
     TokenSet,
     TransactionData,
     UserClaims,
-    ConnectAccountOptions,
-    ConnectAccountRequest,
-    CompleteConnectAccountRequest,
-    CompleteConnectAccountResponse
 )
 from auth0_server_python.error import (
-    Auth0Error,
     AccessTokenError,
     AccessTokenErrorCode,
     AccessTokenForConnectionError,
     AccessTokenForConnectionErrorCode,
     ApiError,
+    Auth0Error,
     BackchannelLogoutError,
     MissingRequiredArgumentError,
     MissingTransactionError,
@@ -110,7 +110,7 @@ class ServerClient(Generic[TStoreOptions]):
             client_id=client_id,
             client_secret=client_secret,
         )
-        
+
         self._my_account_client = MyAccountClient(domain=domain)
 
     async def _fetch_oidc_metadata(self, domain: str) -> dict:
@@ -299,7 +299,7 @@ class ServerClient(Generic[TStoreOptions]):
                 claims = jwt.decode(id_token, options={
                                     "verify_signature": False})
                 user_claims = UserClaims.parse_obj(claims)
-        
+
         # Build a token set using the token response data
         token_set = TokenSet(
             audience=self._default_authorization_params.get("audience", "default"),
@@ -1170,7 +1170,7 @@ class ServerClient(Generic[TStoreOptions]):
                 "refresh_token": refresh_token,
                 "client_id": self._client_id,
             }
-            
+
             audience = options.get("audience")
             if audience:
                 token_params["audience"] = audience
@@ -1316,7 +1316,7 @@ class ServerClient(Generic[TStoreOptions]):
         """
         if not self._use_mrrt:
             raise Auth0Error("Multi-Resource Refresh Tokens (MRRT) is required to use Connected Accounts functionality.")
-        
+
         # Get effective authorization params (merge defaults with provided ones)
         auth_params = dict(self._default_authorization_params)
         if options.authorization_params:
@@ -1326,7 +1326,7 @@ class ServerClient(Generic[TStoreOptions]):
             )
 
         # Use the default redirect_uri if none is specified
-        redirect_uri = options.redirect_uri or self._redirect_uri 
+        redirect_uri = options.redirect_uri or self._redirect_uri
         # Ensure we have a redirect_uri
         if not redirect_uri:
             raise MissingRequiredArgumentError("redirect_uri")
@@ -1379,7 +1379,7 @@ class ServerClient(Generic[TStoreOptions]):
         store_options: dict = None
     ) -> CompleteConnectAccountResponse:
         """
-        Handles the redirect callback to complete the connect account flow for linking a third-party 
+        Handles the redirect callback to complete the connect account flow for linking a third-party
         account to the user's profile.
 
         This works similiar to the redirect from the login flow except it verifies the `connect_code`
@@ -1395,7 +1395,7 @@ class ServerClient(Generic[TStoreOptions]):
         """
         if not self._use_mrrt:
             raise Auth0Error("Multi-Resource Refresh Tokens (MRRT) is required to use Connected Accounts functionality.")
-        
+
         # Retrieve the transaction data using the state
         transaction_identifier = f"{self._transaction_identifier}:{state}"
         transaction_data = await self._transaction_store.get(transaction_identifier, options=store_options)

@@ -1,20 +1,19 @@
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.server_client import ServerClient
-from unittest.mock import ANY
 from auth0_server_python.auth_types import (
-    LogoutOptions,
-    TransactionData,
+    CompleteConnectAccountRequest,
     ConnectAccountOptions,
     ConnectAccountRequest,
     ConnectAccountResponse,
-    CompleteConnectAccountRequest,
     ConnectParams,
+    LogoutOptions,
+    TransactionData,
 )
 from auth0_server_python.error import (
     AccessTokenForConnectionError,
@@ -1276,7 +1275,7 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
         transaction_store=mock_transaction_store,
         secret="some-secret"
     )
-    
+
     mocker.patch.object(client, "get_access_token", AsyncMock(return_value="<access_token>"))
     mock_my_account_client = AsyncMock(MyAccountClient)
     mocker.patch.object(client, "_my_account_client", mock_my_account_client)
@@ -1314,7 +1313,7 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
         )
     )
     mock_transaction_store.set.assert_awaited_with(
-        "_a0_tx:<state>", 
+        "_a0_tx:<state>",
         TransactionData(
             code_verifier="<code_verifier>",
             app_state="<state>",
@@ -1339,7 +1338,7 @@ async def test_start_connect_account_default_redirect_uri(mocker):
         secret="some-secret",
         redirect_uri="/default_redirect_uri"
     )
-    
+
     mocker.patch.object(client, "get_access_token", AsyncMock(return_value="<access_token>"))
     mock_my_account_client = AsyncMock(MyAccountClient)
     mocker.patch.object(client, "_my_account_client", mock_my_account_client)
@@ -1376,7 +1375,7 @@ async def test_start_connect_account_default_redirect_uri(mocker):
         )
     )
     mock_transaction_store.set.assert_awaited_with(
-        "_a0_tx:<state>", 
+        "_a0_tx:<state>",
         TransactionData(
             code_verifier="<code_verifier>",
             app_state="<state>",

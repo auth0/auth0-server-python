@@ -1,5 +1,6 @@
 import httpx
 
+
 class BearerAuth(httpx.Auth):
     def __init__(self, token: str):
         self.token = token
