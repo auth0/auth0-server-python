@@ -1,6 +1,6 @@
 
 import httpx
-
+from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
 from auth0_server_python.auth_types import (
     ConnectAccountRequest,
     ConnectAccountResponse,
@@ -101,11 +101,3 @@ class MyAccountClient:
                 f"Connected Accounts complete request failed: {str(e) or 'Unknown error'}",
                 e
             )
-
-class BearerAuth(httpx.Auth):
-    def __init__(self, token: str):
-        self.token = token
-
-    def auth_flow(self, request):
-        request.headers['Authorization'] = f"Bearer {self.token}"
-        yield request
