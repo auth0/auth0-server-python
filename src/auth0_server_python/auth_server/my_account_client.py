@@ -16,8 +16,11 @@ from auth0_server_python.error import (
 class MyAccountClient:
     def __init__(self, domain: str):
         self._domain = domain
-        self._base_url = f"https://{domain}/me/v1/"
-
+    
+    @property
+    def audienceIdentifier(self):
+        return f"https://{self._domain}/me/"
+    
     async def connect_account(
         self,
         access_token: str,
@@ -26,7 +29,7 @@ class MyAccountClient:
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    url=f"{self._base_url}connected-accounts/connect",
+                    url=f"{self.audienceIdentifier}v1/connected-accounts/connect",
                     data=request.model_dump_json(exclude_none=True),
                     auth=BearerAuth(access_token)
                 )
@@ -67,7 +70,7 @@ class MyAccountClient:
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    url=f"{self._base_url}connected-accounts/complete",
+                    url=f"{self.audienceIdentifier}v1/connected-accounts/complete",
                     data=request.model_dump_json(exclude_none=True),
                     auth=BearerAuth(access_token)
                 )

@@ -569,7 +569,12 @@ class ServerClient(Generic[TStoreOptions]):
             return session_data
         return None
 
-    async def get_access_token(self, store_options: Optional[dict[str, Any]] = None) -> str:
+    async def get_access_token(
+        self,
+        audience = None,
+        scope = None,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> str:
         """
         Retrieves the access token from the store, or calls Auth0 when the access token
         is expired and a refresh token is available in the store.
@@ -588,8 +593,10 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Get audience and scope from options or use defaults
         auth_params = self._default_authorization_params or {}
-        audience = auth_params.get("audience", "default")
-        scope = auth_params.get("scope")
+        if not audience:
+            audience = auth_params.get("audience", "default")
+        if not scope:
+            scope = auth_params.get("scope")
 
         if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
             state_data_dict = state_data.dict()
@@ -618,7 +625,9 @@ class ServerClient(Generic[TStoreOptions]):
         # Get new token with refresh token
         try:
             token_endpoint_response = await self.get_token_by_refresh_token({
-                "refresh_token": state_data_dict["refresh_token"]
+                "refresh_token": state_data_dict["refresh_token"],
+                "audience": audience,
+                "scope": scope
             })
 
             # Update state data with new token
@@ -1149,9 +1158,16 @@ class ServerClient(Generic[TStoreOptions]):
                 "refresh_token": refresh_token,
                 "client_id": self._client_id,
             }
+            
+            audience = options.get("audience")
+            if audience:
+                token_params["audience"] = audience
 
-            # Add scope if present in the original authorization params
-            if "scope" in self._default_authorization_params:
+            # Add scope if present in options or the original authorization params
+            scope = options.get("scope")
+            if scope:
+                token_params["scope"] = scope
+            elif "scope" in self._default_authorization_params:
                 token_params["scope"] = self._default_authorization_params["scope"]
 
             # Exchange the refresh token for an access token
@@ -1305,7 +1321,11 @@ class ServerClient(Generic[TStoreOptions]):
             state=state,
             authorization_params=options.authorization_params
         )
-        access_token = await self._get_token()
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audienceIdentifier,
+            scope="create:me:connected_accounts",
+            store_options=store_options
+        )
         connect_response = await self._my_account_client.connect_account(
             access_token=access_token,
             request=connect_request
@@ -1327,7 +1347,6 @@ class ServerClient(Generic[TStoreOptions]):
 
         return f"{connect_response.connect_uri}?ticket={connect_response.connect_params.ticket}"
 
-
     async def complete_connect_account(
         self,
         connect_code: str,
@@ -1343,7 +1362,11 @@ class ServerClient(Generic[TStoreOptions]):
         
         # TODO //do I need to check error in redirect??
         # TODO //handle no redirect uri??
-        access_token = await self._get_token()
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audienceIdentifier,
+            scope="create:me:connected_accounts",
+            store_options=store_options
+        )
         request = CompleteConnectAccountRequest(
             auth_session=transaction_data.auth_session,
             connect_code=connect_code,
@@ -1355,9 +1378,3 @@ class ServerClient(Generic[TStoreOptions]):
             access_token=access_token,
             request=request
         )
-
-    async def _get_token(
-        self,
-    ) -> str:
-        # TODO need to implement MRRT, for now can just copy a valid token with the correct aud/scopes
-        return "" 

@@ -11,6 +11,7 @@ from auth0_server_python.auth_types import (
     LogoutOptions,
     TransactionData,
     ConnectAccountOptions,
+    ConnectAccountRequest,
     ConnectAccountResponse,
     CompleteConnectAccountRequest,
     ConnectParams,
@@ -1276,6 +1277,8 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
         secret="some-secret",
         redirect_uri="/test_redirect_uri"
     )
+    
+    mocker.patch.object(client, "get_access_token", AsyncMock(return_value="<access_token>"))
     mock_my_account_client = AsyncMock(MyAccountClient)
     mocker.patch.object(client, "_my_account_client", mock_my_account_client)
     mock_my_account_client.connect_account.return_value = ConnectAccountResponse(
@@ -1289,6 +1292,7 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
 
     mocker.patch.object(PKCE, "generate_random_string", return_value="<state>")
     mocker.patch.object(PKCE, "generate_code_verifier", return_value="<code_verifier>")
+    mocker.patch.object(PKCE, "generate_code_challenge", return_value="<code_challenge>")
 
     # Act
     url = await client.start_connect_account(
@@ -1299,6 +1303,16 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
 
     # Assert
     assert url == "http://auth0.local/connected_accounts/connect?ticket=ticket123"
+    mock_my_account_client.connect_account.assert_awaited_with(
+        access_token="<access_token>",
+        request=ConnectAccountRequest(
+            connection="<connection>",
+            redirect_uri="/test_redirect_uri",
+            code_challenge_method="S256",
+            code_challenge="<code_challenge>",
+            state= "<state>"
+        )
+    )
     mock_transaction_store.set.assert_awaited_with(
         "_a0_tx:<state>", 
         TransactionData(
@@ -1325,6 +1339,7 @@ async def test_complete_connect_account_calls_complete(mocker):
         redirect_uri="/test_redirect_uri"
     )
 
+    mocker.patch.object(client, "get_access_token", AsyncMock(return_value="<access_token>"))
     mock_my_account_client = AsyncMock(MyAccountClient)
     mocker.patch.object(client, "_my_account_client", mock_my_account_client)
 
@@ -1342,7 +1357,7 @@ async def test_complete_connect_account_calls_complete(mocker):
 
     # Assert
     mock_my_account_client.complete_connect_account.assert_awaited_with(
-        access_token=ANY,
+        access_token="<access_token>",
         request=CompleteConnectAccountRequest(
             auth_session="<auth_session>",
             connect_code="<connect_code>",
