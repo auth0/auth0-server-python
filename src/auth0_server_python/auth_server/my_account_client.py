@@ -11,6 +11,7 @@ from auth0_server_python.auth_types import (
 
 from auth0_server_python.error import (
     ApiError,
+    MyAccountApiError,
 )
 
 class MyAccountClient:
@@ -30,16 +31,18 @@ class MyAccountClient:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     url=f"{self.audienceIdentifier}v1/connected-accounts/connect",
-                    data=request.model_dump_json(exclude_none=True),
+                    json=request.model_dump(exclude_none=True),
                     auth=BearerAuth(access_token)
                 )
 
                 if response.status_code != 201:
                     error_data = response.json()
-                    raise ApiError(
-                        error_data.get("error", "connect_account_error"),
-                        error_data.get(
-                            "error_description", "Connected Accounts connect request failed")
+                    raise MyAccountApiError(
+                        title=error_data.get("title"),
+                        type=error_data.get("type"),
+                        detail=error_data.get("detail"),
+                        status=error_data.get("status"),
+                        validation_errors=error_data.get("validation_errors", None)
                     )
 
                 data = response.json()
@@ -54,7 +57,7 @@ class MyAccountClient:
                 )
 
         except Exception as e:
-            if isinstance(e, ApiError):
+            if isinstance(e, MyAccountApiError):
                 raise
             raise ApiError(
                 "connect_account_error",
@@ -71,16 +74,18 @@ class MyAccountClient:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     url=f"{self.audienceIdentifier}v1/connected-accounts/complete",
-                    data=request.model_dump_json(exclude_none=True),
+                    json=request.model_dump(exclude_none=True),
                     auth=BearerAuth(access_token)
                 )
 
                 if response.status_code != 201:
                     error_data = response.json()
-                    raise ApiError(
-                        error_data.get("error", "connect_account_error"),
-                        error_data.get(
-                            "error_description", "Connected Accounts complete request failed")
+                    raise MyAccountApiError(
+                        title=error_data.get("title"),
+                        type=error_data.get("type"),
+                        detail=error_data.get("detail"),
+                        status=error_data.get("status"),
+                        validation_errors=error_data.get("validation_errors")
                     )
 
                 data = response.json()
@@ -94,7 +99,7 @@ class MyAccountClient:
                 )
 
         except Exception as e:
-            if isinstance(e, ApiError):
+            if isinstance(e, MyAccountApiError):
                 raise
             raise ApiError(
                 "connect_account_error",

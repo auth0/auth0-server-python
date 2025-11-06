@@ -1404,10 +1404,10 @@ async def test_start_connect_account_no_redirect_uri(mocker):
     # Act
     with pytest.raises(MissingRequiredArgumentError) as exc:
         await client.start_connect_account(
-        options=ConnectAccountOptions(
-            connection="<connection>"
+            options=ConnectAccountOptions(
+                connection="<connection>"
+            )
         )
-    )
 
     # Assert
     assert "redirect_uri" in str(exc.value)
