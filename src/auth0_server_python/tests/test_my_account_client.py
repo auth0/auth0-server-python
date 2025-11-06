@@ -1,5 +1,4 @@
 import pytest
-import json
 from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import ANY
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
