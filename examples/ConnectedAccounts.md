@@ -56,7 +56,7 @@ result = await server_client.complete_interactive_login(
 
 ## Connect to a third party account
 
-Start the flow using the `connectAccountWithRedirect` method to redirect the user to the third party Identity Provider to connect their account.
+Start the flow using the `start_connect_account` method to redirect the user to the third party Identity Provider to connect their account.
 
 The `authorization_params` is used to pass additional parameters required by the third party IdP
 The `app_state` parameter allows you to pass custom state (for example, a return URL) that is later available when the connect process completes.
