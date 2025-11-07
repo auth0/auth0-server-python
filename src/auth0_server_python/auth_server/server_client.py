@@ -167,7 +167,8 @@ class ServerClient(Generic[TStoreOptions]):
         # Build the transaction data to store
         transaction_data = TransactionData(
             code_verifier=code_verifier,
-            app_state=options.app_state
+            app_state=options.app_state,
+            audience=auth_params.get("audience", None),
         )
 
         # Store the transaction data
@@ -302,7 +303,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Build a token set using the token response data
         token_set = TokenSet(
-            audience=self._default_authorization_params.get("audience", "default"),
+            audience=transaction_data.audience or "default",
             access_token=token_response.get("access_token", ""),
             scope=token_response.get("scope", ""),
             expires_at=int(time.time()) +
