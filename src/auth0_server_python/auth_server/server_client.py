@@ -1428,16 +1428,13 @@ class ServerClient(Generic[TStoreOptions]):
             redirect_uri=transaction_data.redirect_uri,
             code_verifier=transaction_data.code_verifier
         )
-
-        response = await self._my_account_client.complete_connect_account(
-            access_token=access_token,
-            request=request
-        )
-
-        if transaction_data.app_state is not None:
-            response.app_state = transaction_data.app_state
-
-        # Clean up transaction data after successful account connection
-        await self._transaction_store.delete(transaction_identifier, options=store_options)
+        try:
+            response = await self._my_account_client.complete_connect_account(
+                access_token=access_token, request=request)
+            if transaction_data.app_state is not None:
+                response.app_state = transaction_data.app_state
+        finally:
+            # Clean up transaction data
+            await self._transaction_store.delete(transaction_identifier, options=store_options)
 
         return response
