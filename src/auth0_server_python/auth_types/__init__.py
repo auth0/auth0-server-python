@@ -248,5 +248,5 @@ class CompleteConnectAccountResponse(BaseModel):
     access_type: str
     scopes: list[str]
     created_at: str
-    expires_at:  Optional[str] = None
+    expires_at: Optional[str] = None
     app_state: Optional[Any] = None

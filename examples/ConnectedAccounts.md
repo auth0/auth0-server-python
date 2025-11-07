@@ -22,7 +22,7 @@ server_client = ServerClient(
     secret="YOUR_SECRET",
     use_mrrt=True,
     authorization_params={
-        "redirect_uri"=:"YOUR_CALLBACK_URL",
+        "redirect_uri":"YOUR_CALLBACK_URL",
     }
 )
 ```

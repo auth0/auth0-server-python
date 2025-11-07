@@ -576,8 +576,8 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def get_access_token(
         self,
-        audience = None,
-        scope = None,
+        audience: Optional[str] = None,
+        scope: Optional[str] = None,
         store_options: Optional[dict[str, Any]] = None
     ) -> str:
         """
@@ -618,7 +618,7 @@ class ServerClient(Generic[TStoreOptions]):
                 if ts.get("audience") == audience and (not scope or ts.get("scope") == scope):
                     token_set = ts
                     break
-        
+
         # After loop: if no matching token found and MRRT disabled, check if we need to error
         if not token_set and not self._use_mrrt and state_data_dict.get("token_sets"):
             # We have tokens but none match, and we can't use RT to get a new one
@@ -1347,10 +1347,10 @@ class ServerClient(Generic[TStoreOptions]):
             code_challenge=code_challenge,
             code_challenge_method="S256",
             state=state,
-            authorization_params=options.authorization_params
+            authorization_params=auth_params or None
         )
         access_token = await self.get_access_token(
-            audience=self._my_account_client.audienceIdentifier,
+            audience=self._my_account_client.audience_identifier,
             scope="create:me:connected_accounts",
             store_options=store_options
         )
@@ -1385,7 +1385,7 @@ class ServerClient(Generic[TStoreOptions]):
         Handles the redirect callback to complete the connect account flow for linking a third-party
         account to the user's profile.
 
-        This works similiar to the redirect from the login flow except it verifies the `connect_code`
+        This works similar to the redirect from the login flow except it verifies the `connect_code`
         with the My Account API rather than the `code` with the Authorization Server.
 
         Args:
@@ -1420,7 +1420,7 @@ class ServerClient(Generic[TStoreOptions]):
             raise MissingTransactionError()
 
         access_token = await self.get_access_token(
-            audience=self._my_account_client.audienceIdentifier,
+            audience=self._my_account_client.audience_identifier,
             scope="create:me:connected_accounts",
             store_options=store_options
         )
@@ -1440,7 +1440,7 @@ class ServerClient(Generic[TStoreOptions]):
         if transaction_data.app_state is not None:
             response.app_state = transaction_data.app_state
 
-        # Clean up transaction data after successful login
+        # Clean up transaction data after successful account connection
         await self._transaction_store.delete(transaction_identifier, options=store_options)
 
         return response
