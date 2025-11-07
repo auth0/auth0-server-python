@@ -22,7 +22,7 @@ server_client = ServerClient(
     secret="YOUR_SECRET",
     use_mrrt=True,
     authorization_params={
-        "redirect_uri"="YOUR_CALLBACK_URL",
+        "redirect_uri"=:"YOUR_CALLBACK_URL",
     }
 )
 ```
@@ -32,7 +32,7 @@ server_client = ServerClient(
 Use the login methods to authenticate to the application and get a refresh and access token for the API.
 
 ```python
-// Login specifying any scopes for the Auth0 API
+# Login specifying any scopes for the Auth0 API
 
 authorization_url = await server_client.start_interactive_login(
     {
@@ -65,7 +65,7 @@ The `app_state` parameter allows you to pass custom state (for example, a return
 
 connect_url = await self.client.start_connect_account(
     ConnectAccountOptions(
-        connection="CONNETION", # e.g. google-oauth2
+        connection="CONNECTION", # e.g. google-oauth2
         redirect_uri="YOUR_CALLBACK_URL"
         app_state = { 
             "returnUrl":"SOME_URL"
@@ -87,7 +87,7 @@ Using the url returned, redirect the user to the third party Identity Provider t
 Call the `complete_connect_account` method using the full callback url returned from the third party IdP to complete the connected account flow. This method extracts the connect_code from the URL, completes the connection, and returns the response data (including any `app_state` you passed originally).
 
 ```python
-complete_response await self.client.complete_connect_account(
+complete_response = await self.client.complete_connect_account(
     url= callback_url, 
     store_options=store_options
 )
