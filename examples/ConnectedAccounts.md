@@ -96,4 +96,4 @@ complete_response = await self.client.complete_connect_account(
 >[!NOTE]
 >The `callback_url` must include the necessary parameters (`state` and `connect_code`) that Auth0 sends upon successful authentication.
 
-You can now [call the API](https://github.com/auth0/auth0-spa-js/blob/main/EXAMPLES.md#calling-an-api) with your access token and the API can use [Access Token Exchange with Token Vault](https://auth0.com/docs/secure/tokens/token-vault/access-token-exchange-with-token-vault) to get tokens from the Token Vault to access third party APIs on behalf of the user.
+You can now call the API with your access token and the API can use [Access Token Exchange with Token Vault](https://auth0.com/docs/secure/tokens/token-vault/access-token-exchange-with-token-vault) to get tokens from the Token Vault to access third party APIs on behalf of the user.

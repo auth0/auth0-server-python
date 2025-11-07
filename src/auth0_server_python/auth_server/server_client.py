@@ -615,9 +615,6 @@ class ServerClient(Generic[TStoreOptions]):
                 if ts.get("audience") == audience and (not scope or ts.get("scope") == scope):
                     token_set = ts
                     break
-                if ts.get("audience") == audience and (not scope or ts.get("scope") == scope):
-                    token_set = ts
-                    break
 
         # After loop: if no matching token found and MRRT disabled, check if we need to error
         if not token_set and not self._use_mrrt and state_data_dict.get("token_sets"):
