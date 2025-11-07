@@ -64,10 +64,10 @@ class MyAccountApiError(Auth0Error):
 
     def __init__(
             self,
-            title: str,
-            type: str,
-            detail: str,
-            status: int,
+            title: Optional[str],
+            type: Optional[str],
+            detail: Optional[str],
+            status: Optional[int],
             validation_errors: Optional[list[dict[str, str]]] = None
         ):
         super().__init__(detail)

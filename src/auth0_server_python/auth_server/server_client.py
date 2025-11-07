@@ -1339,7 +1339,7 @@ class ServerClient(Generic[TStoreOptions]):
         code_verifier = PKCE.generate_code_verifier()
         code_challenge = PKCE.generate_code_challenge(code_verifier)
 
-        state = PKCE.generate_random_string(32)
+        state= PKCE.generate_random_string(32)
 
         connect_request = ConnectAccountRequest(
             connection=options.connection,

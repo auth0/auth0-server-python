@@ -6,7 +6,6 @@ from auth0_server_python.auth_types import (
     CompleteConnectAccountResponse,
     ConnectAccountRequest,
     ConnectAccountResponse,
-    ConnectParams,
 )
 from auth0_server_python.error import (
     ApiError,
@@ -38,23 +37,16 @@ class MyAccountClient:
                 if response.status_code != 201:
                     error_data = response.json()
                     raise MyAccountApiError(
-                        title=error_data.get("title"),
-                        type=error_data.get("type"),
-                        detail=error_data.get("detail"),
-                        status=error_data.get("status"),
+                        title=error_data.get("title", None),
+                        type=error_data.get("type", None),
+                        detail=error_data.get("detail", None),
+                        status=error_data.get("status", None),
                         validation_errors=error_data.get("validation_errors", None)
                     )
 
                 data = response.json()
 
-                return ConnectAccountResponse(
-                    auth_session=data["auth_session"],
-                    connect_uri=data["connect_uri"],
-                    connect_params=ConnectParams(
-                        ticket=data["connect_params"]["ticket"]
-                    ),
-                    expires_in=data["expires_in"]
-                )
+                return ConnectAccountResponse.model_validate(data)
 
         except Exception as e:
             if isinstance(e, MyAccountApiError):
@@ -81,22 +73,16 @@ class MyAccountClient:
                 if response.status_code != 201:
                     error_data = response.json()
                     raise MyAccountApiError(
-                        title=error_data.get("title"),
-                        type=error_data.get("type"),
-                        detail=error_data.get("detail"),
-                        status=error_data.get("status"),
-                        validation_errors=error_data.get("validation_errors")
+                        title=error_data.get("title", None),
+                        type=error_data.get("type", None),
+                        detail=error_data.get("detail", None),
+                        status=error_data.get("status", None),
+                        validation_errors=error_data.get("validation_errors", None)
                     )
 
                 data = response.json()
 
-                return CompleteConnectAccountResponse(
-                    id=data["id"],
-                    connection=data["connection"],
-                    access_type=data["access_type"],
-                    scopes=data["scopes"],
-                    created_at=data["created_at"]
-                )
+                return CompleteConnectAccountResponse.model_validate(data)
 
         except Exception as e:
             if isinstance(e, MyAccountApiError):
