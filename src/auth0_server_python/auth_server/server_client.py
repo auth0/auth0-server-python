@@ -615,13 +615,17 @@ class ServerClient(Generic[TStoreOptions]):
                 if ts.get("audience") == audience and (not scope or ts.get("scope") == scope):
                     token_set = ts
                     break
-                elif ts.get("audience") != audience and not self._use_mrrt:
-                    # We have a token but for a different audience but since MRRT is disabled,
-                    # we cannot use the RT to get a new AT for this audience
-                    raise AccessTokenError(
-                        AccessTokenErrorCode.INCORRECT_AUDIENCE,
-                        "The access token for the requested audience is not available and Multi-Resource Refresh Tokens are disabled."
-                    )
+                if ts.get("audience") == audience and (not scope or ts.get("scope") == scope):
+                    token_set = ts
+                    break
+        
+        # After loop: if no matching token found and MRRT disabled, check if we need to error
+        if not token_set and not self._use_mrrt and state_data_dict.get("token_sets"):
+            # We have tokens but none match, and we can't use RT to get a new one
+            raise AccessTokenError(
+                AccessTokenErrorCode.INCORRECT_AUDIENCE,
+                "The access token for the requested audience is not available and Multi-Resource Refresh Tokens are disabled."
+            )
 
         # If token is valid, return it
         if token_set and token_set.get("expires_at", 0) > time.time():
