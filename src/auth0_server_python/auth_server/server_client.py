@@ -7,7 +7,7 @@ import asyncio
 import json
 import time
 from typing import Any, Generic, Optional, TypeVar
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 import jwt
@@ -1364,7 +1364,9 @@ class ServerClient(Generic[TStoreOptions]):
             options=store_options
         )
 
-        return f"{connect_response.connect_uri}?ticket={connect_response.connect_params.ticket}"
+        parsedUrl = urlparse(connect_response.connect_uri)
+        query = urlencode({"ticket": connect_response.connect_params.ticket})
+        return urlunparse((parsedUrl.scheme, parsedUrl.netloc, parsedUrl.path, parsedUrl.params, query, parsedUrl.fragment))
 
     async def complete_connect_account(
         self,
