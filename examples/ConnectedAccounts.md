@@ -45,7 +45,7 @@ authorization_url = await server_client.start_interactive_login(
     store_options={"request": request, "response": response}
 )
 
-// redirect user
+# redirect user
 
 // handle redirect
 result = await server_client.complete_interactive_login(
