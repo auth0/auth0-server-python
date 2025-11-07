@@ -1319,14 +1319,6 @@ class ServerClient(Generic[TStoreOptions]):
         if not self._use_mrrt:
             raise Auth0Error("Multi-Resource Refresh Tokens (MRRT) is required to use Connected Accounts functionality.")
 
-        # Get effective authorization params (merge defaults with provided ones)
-        auth_params = dict(self._default_authorization_params)
-        if options.authorization_params:
-            auth_params.update(
-                {k: v for k, v in options.authorization_params.items(
-                ) if k not in INTERNAL_AUTHORIZE_PARAMS}
-            )
-
         # Use the default redirect_uri if none is specified
         redirect_uri = options.redirect_uri or self._redirect_uri
         # Ensure we have a redirect_uri
@@ -1345,7 +1337,7 @@ class ServerClient(Generic[TStoreOptions]):
             code_challenge=code_challenge,
             code_challenge_method="S256",
             state=state,
-            authorization_params=auth_params or None
+            authorization_params=options.authorization_params
         )
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience_identifier,
