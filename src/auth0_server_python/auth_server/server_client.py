@@ -31,7 +31,6 @@ from auth0_server_python.error import (
     AccessTokenForConnectionError,
     AccessTokenForConnectionErrorCode,
     ApiError,
-    Auth0Error,
     BackchannelLogoutError,
     MissingRequiredArgumentError,
     MissingTransactionError,
@@ -68,7 +67,6 @@ class ServerClient(Generic[TStoreOptions]):
         state_identifier: str = "_a0_session",
         authorization_params: Optional[dict[str, Any]] = None,
         pushed_authorization_requests: bool = False,
-        use_mrrt: bool = False,
     ):
         """
         Initialize the Auth0 server client.
@@ -85,7 +83,6 @@ class ServerClient(Generic[TStoreOptions]):
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
             pushed_authorization_requests: Whether to use PAR for authorization requests
-            use_mrrt: Whether to allow use of Multi-Resource Refresh Tokens
         """
         if not secret:
             raise MissingRequiredArgumentError("secret")
@@ -97,7 +94,6 @@ class ServerClient(Generic[TStoreOptions]):
         self._redirect_uri = redirect_uri
         self._default_authorization_params = authorization_params or {}
         self._pushed_authorization_requests = pushed_authorization_requests  # store the flag
-        self._use_mrrt = use_mrrt
 
         # Initialize stores
         self._transaction_store = transaction_store
@@ -616,14 +612,6 @@ class ServerClient(Generic[TStoreOptions]):
                 if ts.get("audience") == audience and (not scope or ts.get("scope") == scope):
                     token_set = ts
                     break
-
-        # After loop: if no matching token found and MRRT disabled, check if we need to error
-        if not token_set and not self._use_mrrt and state_data_dict.get("token_sets"):
-            # We have tokens but none match, and we can't use RT to get a new one
-            raise AccessTokenError(
-                AccessTokenErrorCode.INCORRECT_AUDIENCE,
-                "The access token for the requested audience is not available and Multi-Resource Refresh Tokens are disabled."
-            )
 
         # If token is valid, return it
         if token_set and token_set.get("expires_at", 0) > time.time():
@@ -1316,9 +1304,6 @@ class ServerClient(Generic[TStoreOptions]):
         Returns:
             The a connect URL containing a ticket to redirect the user to.
         """
-        if not self._use_mrrt:
-            raise Auth0Error("Multi-Resource Refresh Tokens (MRRT) is required to use Connected Accounts functionality.")
-
         # Use the default redirect_uri if none is specified
         redirect_uri = options.redirect_uri or self._redirect_uri
         # Ensure we have a redirect_uri
@@ -1387,9 +1372,6 @@ class ServerClient(Generic[TStoreOptions]):
         Returns:
             A response from the connect account flow.
         """
-        if not self._use_mrrt:
-            raise Auth0Error("Multi-Resource Refresh Tokens (MRRT) is required to use Connected Accounts functionality.")
-
         # Parse the URL to get query parameters
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)

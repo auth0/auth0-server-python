@@ -12,7 +12,7 @@ This is particularly useful for applications that require access to different re
 
 The SDK must be configured with an audience (an API Identifier) - this will be the resource server that uses the tokens from the Token Vault.
 
-The SDK must also be configured to use refresh tokens and MRRT (Multiple Resource Refresh Tokens) since we will use the refresh token grant to get Access Tokens for the My Account API in addition to the API we are calling.
+The Auth0 client Application must be configured to use refresh tokens and MRRT (Multiple Resource Refresh Tokens) since we will use the refresh token grant to get Access Tokens for the My Account API in addition to the API we are calling.
 
 ```python
 server_client = ServerClient(
@@ -20,7 +20,6 @@ server_client = ServerClient(
     client_id="YOUR_CLIENT_ID",
     client_secret="YOUR_CLIENT_SECRET",
     secret="YOUR_SECRET",
-    use_mrrt=True,
     authorization_params={
         "redirect_uri":"YOUR_CALLBACK_URL",
     }
