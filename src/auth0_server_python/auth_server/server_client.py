@@ -593,11 +593,7 @@ class ServerClient(Generic[TStoreOptions]):
         if not audience:
             audience = auth_params.get("audience", None)
 
-        merged_scope = self._get_scope_to_request(
-            scope,
-            auth_params.get("scope", None),
-            audience or self.DEFAULT_AUDIENCE_STATE_KEY
-        )
+        merged_scope = self._merge_scope_with_defaults(scope, audience)
 
         if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
             state_data_dict = state_data.dict()
@@ -623,14 +619,14 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Get new token with refresh token
         try:
-            request_body = {"refresh_token": state_data_dict["refresh_token"]}
+            get_refresh_token_options = {"refresh_token": state_data_dict["refresh_token"]}
             if audience:
-                request_body["audience"] = audience
+                get_refresh_token_options["audience"] = audience
 
             if merged_scope:
-                request_body["scope"] = merged_scope
+                get_refresh_token_options["scope"] = merged_scope
 
-            token_endpoint_response = await self.get_token_by_refresh_token(request_body)
+            token_endpoint_response = await self.get_token_by_refresh_token(get_refresh_token_options)
 
             # Update state data with new token
             existing_state_data = await self._state_store.get(self._state_identifier, store_options)
@@ -649,19 +645,24 @@ class ServerClient(Generic[TStoreOptions]):
                 f"Failed to get token with refresh token: {str(e)}"
             )
 
-    def _get_scope_to_request(
+    def _merge_scope_with_defaults(
         self,
-        request_scopes: Optional[str],
-        default_scopes: Optional[str] | Optional[dict[str, str]],
+        request_scope: Optional[str],
         audience: Optional[str]
     ) -> Optional[str]:
-        # For backwards compatibility, allow scope to be a single string
-        # or dictionary by audience for MRRT
-        if isinstance(default_scopes, dict) and audience in default_scopes:
-            default_scopes = default_scopes[audience]
+        audience = audience or self.DEFAULT_AUDIENCE_STATE_KEY
+        default_scopes = ""
+        if self._default_authorization_params and "scope" in self._default_authorization_params:
+            auth_param_scope = self._default_authorization_params.get("scope")
+            # For backwards compatibility, allow scope to be a single string
+            # or dictionary by audience for MRRT
+            if isinstance(auth_param_scope, dict) and audience in auth_param_scope:
+                default_scopes = auth_param_scope[audience]
+            else:            
+                default_scopes = auth_param_scope
 
         default_scopes_list = (default_scopes or "").split()
-        request_scopes_list = (request_scopes or "").split()
+        request_scopes_list = (request_scope or "").split()
 
         merged_scopes = default_scopes_list + [x for x in request_scopes_list if x not in default_scopes_list]
         return " ".join(merged_scopes) if merged_scopes else None
@@ -1196,12 +1197,14 @@ class ServerClient(Generic[TStoreOptions]):
             if audience:
                 token_params["audience"] = audience
 
-            # Add scope if present in options or the original authorization params
-            scope = options.get("scope")
-            if scope:
-                token_params["scope"] = scope
-            elif "scope" in self._default_authorization_params:
-                token_params["scope"] = self._default_authorization_params["scope"]
+            # Merge scope if present in options with any in the original authorization params
+            merged_scope = self._merge_scope_with_defaults(
+                request_scope=options.get("scope"),
+                audience=audience
+            )
+
+            if merged_scope:
+                token_params["scope"] = self.merged_scope
 
             # Exchange the refresh token for an access token
             async with httpx.AsyncClient() as client:
