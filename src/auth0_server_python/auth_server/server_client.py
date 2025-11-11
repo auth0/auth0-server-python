@@ -566,9 +566,9 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def get_access_token(
         self,
+        store_options: Optional[dict[str, Any]] = None,
         audience: Optional[str] = None,
         scope: Optional[str] = None,
-        store_options: Optional[dict[str, Any]] = None
     ) -> str:
         """
         Retrieves the access token from the store, or calls Auth0 when the access token
