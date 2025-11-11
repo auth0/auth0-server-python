@@ -1364,7 +1364,7 @@ async def test_start_connect_account_with_scope(mocker):
     mock_my_account_client.connect_account.assert_awaited()
     request = mock_my_account_client.connect_account.mock_calls[0].kwargs["request"]
     assert request.scope == "scope1 scope2 scope3"
-    
+
 @pytest.mark.asyncio
 async def test_start_connect_account_default_redirect_uri(mocker):
     # Setup

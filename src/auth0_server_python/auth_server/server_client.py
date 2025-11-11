@@ -1327,7 +1327,7 @@ class ServerClient(Generic[TStoreOptions]):
         )
 
         access_token = await self.get_access_token(
-            audience=self._my_account_client.audience_identifier,
+            audience=self._my_account_client.audience,
             scope="create:me:connected_accounts",
             store_options=store_options
         )
@@ -1396,7 +1396,7 @@ class ServerClient(Generic[TStoreOptions]):
             raise MissingTransactionError()
 
         access_token = await self.get_access_token(
-            audience=self._my_account_client.audience_identifier,
+            audience=self._my_account_client.audience,
             scope="create:me:connected_accounts",
             store_options=store_options
         )

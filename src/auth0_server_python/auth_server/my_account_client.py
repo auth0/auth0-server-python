@@ -18,7 +18,7 @@ class MyAccountClient:
         self._domain = domain
 
     @property
-    def audience_identifier(self):
+    def audience(self):
         return f"https://{self._domain}/me/"
 
     async def connect_account(
@@ -29,7 +29,7 @@ class MyAccountClient:
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    url=f"{self.audience_identifier}v1/connected-accounts/connect",
+                    url=f"{self.audience}v1/connected-accounts/connect",
                     json=request.model_dump(exclude_none=True),
                     auth=BearerAuth(access_token)
                 )
@@ -65,7 +65,7 @@ class MyAccountClient:
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    url=f"{self.audience_identifier}v1/connected-accounts/complete",
+                    url=f"{self.audience}v1/connected-accounts/complete",
                     json=request.model_dump(exclude_none=True),
                     auth=BearerAuth(access_token)
                 )
