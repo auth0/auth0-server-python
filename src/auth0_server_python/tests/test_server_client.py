@@ -619,7 +619,7 @@ async def test_get_access_token_mrrt_with_auth_params_scope(mocker):
     })
 
 @pytest.mark.asyncio
-async def test_get_access_token_from_store_with_multilpe_audiences(mocker):
+async def test_get_access_token_from_store_with_multiple_audiences(mocker):
     mock_state_store = AsyncMock()
     mock_state_store.get.return_value = {
         "refresh_token": None,

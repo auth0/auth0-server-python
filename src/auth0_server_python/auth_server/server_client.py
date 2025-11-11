@@ -657,10 +657,10 @@ class ServerClient(Generic[TStoreOptions]):
             # or dictionary by audience for MRRT
             if isinstance(auth_param_scope, dict) and audience in auth_param_scope:
                 default_scopes = auth_param_scope[audience]
-            else:            
+            elif isinstance(auth_param_scope, str):
                 default_scopes = auth_param_scope
 
-        default_scopes_list = (default_scopes or "").split()
+        default_scopes_list = default_scopes.split()
         request_scopes_list = (request_scope or "").split()
 
         merged_scopes = default_scopes_list + [x for x in request_scopes_list if x not in default_scopes_list]
@@ -674,14 +674,16 @@ class ServerClient(Generic[TStoreOptions]):
         scope: Optional[str]
     ) -> Optional[dict[str, Any]]:
         audience = audience or self.DEFAULT_AUDIENCE_STATE_KEY
+        match = None
         for token_set in token_sets:
             token_set_audience = token_set.get("audience")
             matches_audience = token_set_audience == audience
             matches_scope = not scope or token_set.get("scope", None) == scope
             if matches_audience and matches_scope:
-                return token_set
-        
-        return None
+                match = token_set
+                break
+
+        return match
 
     async def get_access_token_for_connection(
         self,
