@@ -128,7 +128,7 @@ default_token = await server_client.get_access_token()
 # returns token for https://api.example.com with openid, email, and profile scopes
 
  # Get token for different audience
-data_token = await server_client.get_access_token(audience="https://data-api.example.com")
+data_token = await server_client.get_access_token(audience="https://analytics.example.com")
 # returns token for https://analytics.example.com with read:analytics and write:analytics scopes
 
 # Get token with additional scopes
