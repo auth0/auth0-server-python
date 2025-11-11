@@ -603,8 +603,7 @@ class ServerClient(Generic[TStoreOptions]):
         # Find matching token set
         token_set = None
         if state_data_dict and "token_sets" in state_data_dict:
-            token_set = self._find_matching_token_set(
-                state_data_dict["token_sets"], audience or self.DEFAULT_AUDIENCE_STATE_KEY, merged_scope)
+            token_set = self._find_matching_token_set(state_data_dict["token_sets"], audience, merged_scope)
 
         # If token is valid, return it
         if token_set and token_set.get("expires_at", 0) > time.time():
@@ -674,6 +673,7 @@ class ServerClient(Generic[TStoreOptions]):
         audience: Optional[str],
         scope: Optional[str]
     ) -> Optional[dict[str, Any]]:
+        audience = audience or self.DEFAULT_AUDIENCE_STATE_KEY
         for token_set in token_sets:
             token_set_audience = token_set.get("audience")
             matches_audience = token_set_audience == audience
