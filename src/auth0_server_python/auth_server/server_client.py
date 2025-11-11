@@ -1206,7 +1206,7 @@ class ServerClient(Generic[TStoreOptions]):
             )
 
             if merged_scope:
-                token_params["scope"] = self.merged_scope
+                token_params["scope"] = merged_scope
 
             # Exchange the refresh token for an access token
             async with httpx.AsyncClient() as client:
