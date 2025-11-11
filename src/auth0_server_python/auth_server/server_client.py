@@ -48,6 +48,7 @@ class ServerClient(Generic[TStoreOptions]):
     Main client for Auth0 server SDK. Handles authentication flows, session management,
     and token operations using Authlib for OIDC functionality.
     """
+    DEFAULT_AUDIENCE_STATE_KEY = "default"
 
     def __init__(
         self,
@@ -292,7 +293,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Build a token set using the token response data
         token_set = TokenSet(
-            audience=transaction_data.audience or "default",
+            audience=transaction_data.audience or self.DEFAULT_AUDIENCE_STATE_KEY,
             access_token=token_response.get("access_token", ""),
             scope=token_response.get("scope", ""),
             expires_at=int(time.time()) +
@@ -511,7 +512,7 @@ class ServerClient(Generic[TStoreOptions]):
         existing_state_data = await self._state_store.get(self._state_identifier, store_options)
 
         audience = self._default_authorization_params.get(
-            "audience", "default")
+            "audience", self.DEFAULT_AUDIENCE_STATE_KEY)
 
         state_data = State.update_state_data(
             audience,
@@ -586,12 +587,17 @@ class ServerClient(Generic[TStoreOptions]):
         """
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
-        # Get audience and scope from options or use defaults
         auth_params = self._default_authorization_params or {}
+
+        # Get audience options or use defaults
         if not audience:
-            audience = auth_params.get("audience", "default")
-        if not scope:
-            scope = auth_params.get("scope")
+            audience = auth_params.get("audience", None)
+
+        merged_scope = self._get_scope_to_request(
+            scope,
+            auth_params.get("scope", None),
+            audience or self.DEFAULT_AUDIENCE_STATE_KEY
+        )
 
         if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
             state_data_dict = state_data.dict()
@@ -601,10 +607,8 @@ class ServerClient(Generic[TStoreOptions]):
         # Find matching token set
         token_set = None
         if state_data_dict and "token_sets" in state_data_dict:
-            for ts in state_data_dict["token_sets"]:
-                if ts.get("audience") == audience and (not scope or ts.get("scope") == scope):
-                    token_set = ts
-                    break
+            token_set = self._find_matching_token_set(
+                state_data_dict["token_sets"], audience or self.DEFAULT_AUDIENCE_STATE_KEY, merged_scope)
 
         # If token is valid, return it
         if token_set and token_set.get("expires_at", 0) > time.time():
@@ -619,11 +623,14 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Get new token with refresh token
         try:
-            token_endpoint_response = await self.get_token_by_refresh_token({
-                "refresh_token": state_data_dict["refresh_token"],
-                "audience": audience,
-                "scope": scope
-            })
+            request_body = {"refresh_token": state_data_dict["refresh_token"]}
+            if audience:
+                request_body["audience"] = audience
+
+            if merged_scope:
+                request_body["scope"] = merged_scope
+
+            token_endpoint_response = await self.get_token_by_refresh_token(request_body)
 
             # Update state data with new token
             existing_state_data = await self._state_store.get(self._state_identifier, store_options)
@@ -641,6 +648,37 @@ class ServerClient(Generic[TStoreOptions]):
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
                 f"Failed to get token with refresh token: {str(e)}"
             )
+
+    def _get_scope_to_request(
+        self,
+        request_scopes: Optional[str],
+        default_scopes: Optional[str] | Optional[dict[str, str]],
+        audience: Optional[str]
+    ) -> Optional[str]:
+        # For backwards compatibility, allow scope to be a single string
+        # or dictionary by audience for MRRT
+        if isinstance(default_scopes, dict) and audience in default_scopes:
+            default_scopes = default_scopes[audience]
+
+        default_scopes_list = (default_scopes or "").split()
+        request_scopes_list = (request_scopes or "").split()
+
+        merged_scopes = default_scopes_list + [x for x in request_scopes_list if x not in default_scopes_list]
+        return " ".join(merged_scopes) if merged_scopes else None
+
+
+    def _find_matching_token_set(
+        self,
+        token_sets: list[dict[str, Any]],
+        audience: Optional[str],
+        scope: Optional[str]
+    ) -> Optional[dict[str, Any]]:
+        for token_set in token_sets:
+            token_set_audience = token_set.get("audience")
+            matches_audience = token_set_audience == audience
+            matches_scope = not scope or token_set.get("scope", None) == scope
+            if matches_audience and matches_scope:
+                return token_set
 
     async def get_access_token_for_connection(
         self,
