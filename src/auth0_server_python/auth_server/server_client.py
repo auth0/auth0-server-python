@@ -66,7 +66,7 @@ class ServerClient(Generic[TStoreOptions]):
         transaction_identifier: str = "_a0_tx",
         state_identifier: str = "_a0_session",
         authorization_params: Optional[dict[str, Any]] = None,
-        pushed_authorization_requests: bool = False,
+        pushed_authorization_requests: bool = False
     ):
         """
         Initialize the Auth0 server client.
@@ -82,7 +82,6 @@ class ServerClient(Generic[TStoreOptions]):
             transaction_identifier: Identifier for transaction data
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
-            pushed_authorization_requests: Whether to use PAR for authorization requests
         """
         if not secret:
             raise MissingRequiredArgumentError("secret")
@@ -163,8 +162,7 @@ class ServerClient(Generic[TStoreOptions]):
         # Build the transaction data to store
         transaction_data = TransactionData(
             code_verifier=code_verifier,
-            app_state=options.app_state,
-            audience=auth_params.get("audience", None),
+            app_state=options.app_state
         )
 
         # Store the transaction data
@@ -299,7 +297,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Build a token set using the token response data
         token_set = TokenSet(
-            audience=transaction_data.audience or "default",
+            audience=token_response.get("audience", "default"),
             access_token=token_response.get("access_token", ""),
             scope=token_response.get("scope", ""),
             expires_at=int(time.time()) +
@@ -571,12 +569,7 @@ class ServerClient(Generic[TStoreOptions]):
             return session_data
         return None
 
-    async def get_access_token(
-        self,
-        audience: Optional[str] = None,
-        scope: Optional[str] = None,
-        store_options: Optional[dict[str, Any]] = None
-    ) -> str:
+    async def get_access_token(self, store_options: Optional[dict[str, Any]] = None) -> str:
         """
         Retrieves the access token from the store, or calls Auth0 when the access token
         is expired and a refresh token is available in the store.
@@ -595,10 +588,8 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Get audience and scope from options or use defaults
         auth_params = self._default_authorization_params or {}
-        if not audience:
-            audience = auth_params.get("audience", "default")
-        if not scope:
-            scope = auth_params.get("scope")
+        audience = auth_params.get("audience", "default")
+        scope = auth_params.get("scope")
 
         if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
             state_data_dict = state_data.dict()
@@ -627,9 +618,7 @@ class ServerClient(Generic[TStoreOptions]):
         # Get new token with refresh token
         try:
             token_endpoint_response = await self.get_token_by_refresh_token({
-                "refresh_token": state_data_dict["refresh_token"],
-                "audience": audience,
-                "scope": scope
+                "refresh_token": state_data_dict["refresh_token"]
             })
 
             # Update state data with new token
@@ -1161,15 +1150,8 @@ class ServerClient(Generic[TStoreOptions]):
                 "client_id": self._client_id,
             }
 
-            audience = options.get("audience")
-            if audience:
-                token_params["audience"] = audience
-
-            # Add scope if present in options or the original authorization params
-            scope = options.get("scope")
-            if scope:
-                token_params["scope"] = scope
-            elif "scope" in self._default_authorization_params:
+            # Add scope if present in the original authorization params
+            if "scope" in self._default_authorization_params:
                 token_params["scope"] = self._default_authorization_params["scope"]
 
             # Exchange the refresh token for an access token
