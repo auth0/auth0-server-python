@@ -91,7 +91,7 @@ server_client = ServerClient(
     ...
     authorization_params={
         "audience": "https://api.example.com", # Default audience
-        scope: {
+        "scope": {
             "https://api.example.com": "openid profile email offline_access read:products read:orders",
             "https://analytics.example.com": "openid profile email offline_access read:analytics write:analytics",
             "https://admin.example.com": "openid profile email offline_access read:admin write:admin delete:admin"
