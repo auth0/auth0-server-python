@@ -87,7 +87,6 @@ class TransactionData(BaseModel):
     audience: Optional[str] = None
     code_verifier: str
     app_state: Optional[Any] = None
-    auth_session: Optional[str] = None
     redirect_uri: Optional[str] = None
 
     class Config:
