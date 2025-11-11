@@ -1318,12 +1318,14 @@ class ServerClient(Generic[TStoreOptions]):
 
         connect_request = ConnectAccountRequest(
             connection=options.connection,
+            scope=" ".join(options.scope) if options.scope else None,
             redirect_uri = redirect_uri,
             code_challenge=code_challenge,
             code_challenge_method="S256",
             state=state,
             authorization_params=options.authorization_params
         )
+
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience_identifier,
             scope="create:me:connected_accounts",

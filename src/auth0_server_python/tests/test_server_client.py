@@ -1325,6 +1325,47 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
     )
 
 @pytest.mark.asyncio
+async def test_start_connect_account_with_scope(mocker):
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(client, "get_access_token", AsyncMock(return_value="<access_token>"))
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+    mock_my_account_client.connect_account.return_value = ConnectAccountResponse(
+        auth_session="<auth_session>",
+        connect_uri="http://auth0.local/connected_accounts/connect",
+        connect_params=ConnectParams(
+            ticket="ticket123"
+        ),
+        expires_in=300
+    )
+
+    # Act
+    await client.start_connect_account(
+        options=ConnectAccountOptions(
+            connection="<connection>",
+            scope=["scope1", "scope2", "scope3"],
+            redirect_uri="/test_redirect_uri"
+        )
+    )
+
+    # Assert
+    mock_my_account_client.connect_account.assert_awaited()
+    request = mock_my_account_client.connect_account.mock_calls[0].kwargs["request"]
+    assert request.scope == "scope1 scope2 scope3"
+    
+@pytest.mark.asyncio
 async def test_start_connect_account_default_redirect_uri(mocker):
     # Setup
     mock_transaction_store = AsyncMock()
