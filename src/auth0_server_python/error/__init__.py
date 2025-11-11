@@ -56,6 +56,7 @@ class PollingApiError(ApiError):
         super().__init__(code, message, cause)
         self.interval = interval
 
+
 class AccessTokenError(Auth0Error):
     """Error raised when there's an issue with access tokens."""
 
