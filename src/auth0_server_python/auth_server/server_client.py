@@ -62,7 +62,7 @@ class ServerClient(Generic[TStoreOptions]):
         transaction_identifier: str = "_a0_tx",
         state_identifier: str = "_a0_session",
         authorization_params: Optional[dict[str, Any]] = None,
-        pushed_authorization_requests: bool = False,
+        pushed_authorization_requests: bool = False
     ):
         """
         Initialize the Auth0 server client.
@@ -589,7 +589,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         auth_params = self._default_authorization_params or {}
 
-        # Get audience options or use defaults
+        # Get audience passed in on options or use defaults
         if not audience:
             audience = auth_params.get("audience", None)
 
@@ -680,6 +680,8 @@ class ServerClient(Generic[TStoreOptions]):
             matches_scope = not scope or token_set.get("scope", None) == scope
             if matches_audience and matches_scope:
                 return token_set
+        
+        return None
 
     async def get_access_token_for_connection(
         self,
