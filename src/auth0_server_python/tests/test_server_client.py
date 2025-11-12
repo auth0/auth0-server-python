@@ -1325,7 +1325,7 @@ async def test_start_connect_account_calls_connect_and_builds_url(mocker):
     )
 
 @pytest.mark.asyncio
-async def test_start_connect_account_with_scope(mocker):
+async def test_start_connect_account_with_scopes(mocker):
     # Setup
     mock_transaction_store = AsyncMock()
     mock_state_store = AsyncMock()
@@ -1355,7 +1355,7 @@ async def test_start_connect_account_with_scope(mocker):
     await client.start_connect_account(
         options=ConnectAccountOptions(
             connection="<connection>",
-            scope=["scope1", "scope2", "scope3"],
+            scopes=["scope1", "scope2", "scope3"],
             redirect_uri="/test_redirect_uri"
         )
     )
@@ -1363,7 +1363,7 @@ async def test_start_connect_account_with_scope(mocker):
     # Assert
     mock_my_account_client.connect_account.assert_awaited()
     request = mock_my_account_client.connect_account.mock_calls[0].kwargs["request"]
-    assert request.scope == "scope1 scope2 scope3"
+    assert request.scopes == ["scope1", "scope2", "scope3"]
 
 @pytest.mark.asyncio
 async def test_start_connect_account_default_redirect_uri(mocker):
