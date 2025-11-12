@@ -48,6 +48,7 @@ class ServerClient(Generic[TStoreOptions]):
     Main client for Auth0 server SDK. Handles authentication flows, session management,
     and token operations using Authlib for OIDC functionality.
     """
+    DEFAULT_AUDIENCE_STATE_KEY = "default"
 
     def __init__(
         self,
@@ -77,6 +78,7 @@ class ServerClient(Generic[TStoreOptions]):
             transaction_identifier: Identifier for transaction data
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
+            pushed_authorization_requests: Whether to use PAR for authorization requests
         """
         if not secret:
             raise MissingRequiredArgumentError("secret")
@@ -155,7 +157,8 @@ class ServerClient(Generic[TStoreOptions]):
         # Build the transaction data to store
         transaction_data = TransactionData(
             code_verifier=code_verifier,
-            app_state=options.app_state
+            app_state=options.app_state,
+            audience=auth_params.get("audience", None),
         )
 
         # Store the transaction data
@@ -290,7 +293,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Build a token set using the token response data
         token_set = TokenSet(
-            audience=token_response.get("audience", "default"),
+            audience=transaction_data.audience or self.DEFAULT_AUDIENCE_STATE_KEY,
             access_token=token_response.get("access_token", ""),
             scope=token_response.get("scope", ""),
             expires_at=int(time.time()) +
@@ -509,7 +512,7 @@ class ServerClient(Generic[TStoreOptions]):
         existing_state_data = await self._state_store.get(self._state_identifier, store_options)
 
         audience = self._default_authorization_params.get(
-            "audience", "default")
+            "audience", self.DEFAULT_AUDIENCE_STATE_KEY)
 
         state_data = State.update_state_data(
             audience,
@@ -562,7 +565,12 @@ class ServerClient(Generic[TStoreOptions]):
             return session_data
         return None
 
-    async def get_access_token(self, store_options: Optional[dict[str, Any]] = None) -> str:
+    async def get_access_token(
+        self,
+        store_options: Optional[dict[str, Any]] = None,
+        audience: Optional[str] = None,
+        scope: Optional[str] = None,
+    ) -> str:
         """
         Retrieves the access token from the store, or calls Auth0 when the access token
         is expired and a refresh token is available in the store.
@@ -579,10 +587,13 @@ class ServerClient(Generic[TStoreOptions]):
         """
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
-        # Get audience and scope from options or use defaults
         auth_params = self._default_authorization_params or {}
-        audience = auth_params.get("audience", "default")
-        scope = auth_params.get("scope")
+
+        # Get audience passed in on options or use defaults
+        if not audience:
+            audience = auth_params.get("audience", None)
+
+        merged_scope = self._merge_scope_with_defaults(scope, audience)
 
         if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
             state_data_dict = state_data.dict()
@@ -592,10 +603,7 @@ class ServerClient(Generic[TStoreOptions]):
         # Find matching token set
         token_set = None
         if state_data_dict and "token_sets" in state_data_dict:
-            for ts in state_data_dict["token_sets"]:
-                if ts.get("audience") == audience and (not scope or ts.get("scope") == scope):
-                    token_set = ts
-                    break
+            token_set = self._find_matching_token_set(state_data_dict["token_sets"], audience, merged_scope)
 
         # If token is valid, return it
         if token_set and token_set.get("expires_at", 0) > time.time():
@@ -610,9 +618,14 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Get new token with refresh token
         try:
-            token_endpoint_response = await self.get_token_by_refresh_token({
-                "refresh_token": state_data_dict["refresh_token"]
-            })
+            get_refresh_token_options = {"refresh_token": state_data_dict["refresh_token"]}
+            if audience:
+                get_refresh_token_options["audience"] = audience
+
+            if merged_scope:
+                get_refresh_token_options["scope"] = merged_scope
+
+            token_endpoint_response = await self.get_token_by_refresh_token(get_refresh_token_options)
 
             # Update state data with new token
             existing_state_data = await self._state_store.get(self._state_identifier, store_options)
@@ -630,6 +643,51 @@ class ServerClient(Generic[TStoreOptions]):
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
                 f"Failed to get token with refresh token: {str(e)}"
             )
+
+    def _merge_scope_with_defaults(
+        self,
+        request_scope: Optional[str],
+        audience: Optional[str]
+    ) -> Optional[str]:
+        audience = audience or self.DEFAULT_AUDIENCE_STATE_KEY
+        default_scopes = ""
+        if self._default_authorization_params and "scope" in self._default_authorization_params:
+            auth_param_scope = self._default_authorization_params.get("scope")
+            # For backwards compatibility, allow scope to be a single string
+            # or dictionary by audience for MRRT
+            if isinstance(auth_param_scope, dict) and audience in auth_param_scope:
+                default_scopes = auth_param_scope[audience]
+            elif isinstance(auth_param_scope, str):
+                default_scopes = auth_param_scope
+
+        default_scopes_list = default_scopes.split()
+        request_scopes_list = (request_scope or "").split()
+
+        merged_scopes = list(dict.fromkeys(default_scopes_list + request_scopes_list))
+        return " ".join(merged_scopes) if merged_scopes else None
+
+
+    def _find_matching_token_set(
+        self,
+        token_sets: list[dict[str, Any]],
+        audience: Optional[str],
+        scope: Optional[str]
+    ) -> Optional[dict[str, Any]]:
+        audience = audience or self.DEFAULT_AUDIENCE_STATE_KEY
+        requested_scopes = set(scope.split()) if scope else set()
+        matches: list[tuple[int, dict]] = []
+        for token_set in token_sets:
+            token_set_audience = token_set.get("audience")
+            token_set_scopes = set(token_set.get("scope", "").split())
+            if token_set_audience == audience and token_set_scopes == requested_scopes:
+                # short-circuit if exact match
+                return token_set
+            if token_set_audience == audience and token_set_scopes.issuperset(requested_scopes):
+                # consider stored tokens with more scopes than requested by number of scopes
+                matches.append((len(token_set_scopes), token_set))
+
+        # Return the token set with the smallest superset of scopes that matches the requested audience and scopes
+        return min(matches, key=lambda t: t[0])[1] if matches else None
 
     async def get_access_token_for_connection(
         self,
@@ -1143,9 +1201,18 @@ class ServerClient(Generic[TStoreOptions]):
                 "client_id": self._client_id,
             }
 
-            # Add scope if present in the original authorization params
-            if "scope" in self._default_authorization_params:
-                token_params["scope"] = self._default_authorization_params["scope"]
+            audience = options.get("audience")
+            if audience:
+                token_params["audience"] = audience
+
+            # Merge scope if present in options with any in the original authorization params
+            merged_scope = self._merge_scope_with_defaults(
+                request_scope=options.get("scope"),
+                audience=audience
+            )
+
+            if merged_scope:
+                token_params["scope"] = merged_scope
 
             # Exchange the refresh token for an access token
             async with httpx.AsyncClient() as client:
