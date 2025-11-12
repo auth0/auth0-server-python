@@ -663,7 +663,7 @@ class ServerClient(Generic[TStoreOptions]):
         default_scopes_list = default_scopes.split()
         request_scopes_list = (request_scope or "").split()
 
-        merged_scopes = default_scopes_list + [x for x in request_scopes_list if x not in default_scopes_list]
+        merged_scopes = list(dict.fromkeys(default_scopes_list + request_scopes_list))
         return " ".join(merged_scopes) if merged_scopes else None
 
 
@@ -674,16 +674,20 @@ class ServerClient(Generic[TStoreOptions]):
         scope: Optional[str]
     ) -> Optional[dict[str, Any]]:
         audience = audience or self.DEFAULT_AUDIENCE_STATE_KEY
-        match = None
+        requested_scopes = set(scope.split()) if scope else set()
+        matches: list[tuple[int, dict]] = []
         for token_set in token_sets:
             token_set_audience = token_set.get("audience")
             token_set_scopes = set(token_set.get("scope", "").split())
-            requested_scopes = set(scope.split()) if scope else set()
+            if token_set_audience == audience and token_set_scopes == requested_scopes:
+                # short-circuit if exact match
+                return token_set
             if token_set_audience == audience and token_set_scopes.issuperset(requested_scopes):
-                match = token_set
-                break
+                # consider stored tokens with more scopes than requested by number of scopes
+                matches.append((len(token_set_scopes), token_set))
 
-        return match
+        # Return the token set with the smallest superset of scopes that matches the requested audience and scopes
+        return min(matches, key=lambda t: t[0])[1] if matches else None
 
     async def get_access_token_for_connection(
         self,
