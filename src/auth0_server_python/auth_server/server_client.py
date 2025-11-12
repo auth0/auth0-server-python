@@ -1300,7 +1300,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         connect_request = ConnectAccountRequest(
             connection=options.connection,
-            scope=" ".join(options.scope) if options.scope else None,
+            scopes=options.scopes,
             redirect_uri = redirect_uri,
             code_challenge=code_challenge,
             code_challenge_method="S256",

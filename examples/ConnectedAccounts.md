@@ -1,6 +1,10 @@
 # Connect Accounts for using Token Vault
 
-The Connect Accounts feature uses the Auth0 My Account API to allow users to link multiple third party accounts to a single Auth0 user profile.
+The Connect Accounts feature uses the Auth0 My Account API to allow users to link multiple third party accounts to a single Auth0 user profile. In order to use this feature, [My Account API](https://auth0.com/docs/manage-users/my-account-api) must be activated on your Auth0 tenant. 
+
+>[!NOTE]
+>DPoP sender token constraining is not yet supported in this SDK. My Account API can be configured to support it (default behaviour) but must not be configured to require it.
+
 
 When using Connected Accounts, Auth0 acquires tokens from upstream Identity Providers (like Google) and stores them in a secure [Token Vault](https://auth0.com/docs/secure/tokens/token-vault). These tokens can then be used to access third-party APIs (like Google Calendar) on behalf of the user.
 
@@ -66,13 +70,20 @@ connect_url = await self.client.start_connect_account(
     ConnectAccountOptions(
         connection="CONNECTION", # e.g. google-oauth2
         redirect_uri="YOUR_CALLBACK_URL"
-        app_state = { 
+        app_state= { 
             "returnUrl":"SOME_URL"
         }
+        scopes= [ 
+            # scopes to passed to the third-party IdP
+            "openid",
+            "email",
+            "profile"
+            "offline_access"
+        ]
         authorization_params= {
             # additional auth parameters to be sent to the third-party IdP e.g.
-            "prompt": "consent",
-            "access_type": "offline"
+            "login_hint": "user123",
+            "resource": "some_resource"
         }
     ), 
     store_options={"request": request, "response": response}

@@ -219,13 +219,13 @@ class ConnectParams(BaseModel):
 class ConnectAccountOptions(BaseModel):
     connection: str
     redirect_uri: Optional[str] = None
-    scope: Optional[list[str]] = None
+    scopes: Optional[list[str]] = None
     app_state: Optional[Any] = None
     authorization_params: Optional[dict[str, Any]] = None
 
 class ConnectAccountRequest(BaseModel):
     connection: str
-    scope: Optional[str] = None
+    scopes: Optional[list[str]] = None
     redirect_uri: Optional[str] = None
     state: Optional[str] = None
     code_challenge: Optional[str] = None
