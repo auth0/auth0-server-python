@@ -7,11 +7,16 @@ import asyncio
 import json
 import time
 from typing import Any, Generic, Optional, TypeVar
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 import jwt
+from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_types import (
+    CompleteConnectAccountRequest,
+    CompleteConnectAccountResponse,
+    ConnectAccountOptions,
+    ConnectAccountRequest,
     LogoutOptions,
     LogoutTokenClaims,
     StartInteractiveLoginOptions,
@@ -102,6 +107,8 @@ class ServerClient(Generic[TStoreOptions]):
             client_id=client_id,
             client_secret=client_secret,
         )
+
+        self._my_account_client = MyAccountClient(domain=domain)
 
     async def _fetch_oidc_metadata(self, domain: str) -> dict:
         metadata_url = f"https://{domain}/.well-known/openid-configuration"
@@ -1327,3 +1334,135 @@ class ServerClient(Generic[TStoreOptions]):
                 "There was an error while trying to retrieve an access token for a connection.",
                 e
             )
+
+    async def start_connect_account(
+        self,
+        options: ConnectAccountOptions,
+        store_options: dict = None
+    ) -> str:
+        """
+        Initiates the connect account flow for linking a third-party account to the user's profile.
+
+        This method generates PKCE parameters, creates a transaction and calls the My Account API
+        to create a connect account request, returning /connect url containing a ticket.
+
+        Args:
+            options: Options for retrieving an access token for a connection.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            The a connect URL containing a ticket to redirect the user to.
+        """
+        # Use the default redirect_uri if none is specified
+        redirect_uri = options.redirect_uri or self._redirect_uri
+        # Ensure we have a redirect_uri
+        if not redirect_uri:
+            raise MissingRequiredArgumentError("redirect_uri")
+
+        # Generate PKCE code verifier and challenge
+        code_verifier = PKCE.generate_code_verifier()
+        code_challenge = PKCE.generate_code_challenge(code_verifier)
+
+        state= PKCE.generate_random_string(32)
+
+        connect_request = ConnectAccountRequest(
+            connection=options.connection,
+            scopes=options.scopes,
+            redirect_uri = redirect_uri,
+            code_challenge=code_challenge,
+            code_challenge_method="S256",
+            state=state,
+            authorization_params=options.authorization_params
+        )
+
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="create:me:connected_accounts",
+            store_options=store_options
+        )
+        connect_response = await self._my_account_client.connect_account(
+            access_token=access_token,
+            request=connect_request
+        )
+
+        # Build the transaction data to store
+        transaction_data = TransactionData(
+            code_verifier=code_verifier,
+            app_state=options.app_state,
+            auth_session=connect_response.auth_session,
+            redirect_uri=redirect_uri
+        )
+
+        # Store the transaction data
+        await self._transaction_store.set(
+            f"{self._transaction_identifier}:{state}",
+            transaction_data,
+            options=store_options
+        )
+
+        parsedUrl = urlparse(connect_response.connect_uri)
+        query = urlencode({"ticket": connect_response.connect_params.ticket})
+        return urlunparse((parsedUrl.scheme, parsedUrl.netloc, parsedUrl.path, parsedUrl.params, query, parsedUrl.fragment))
+
+    async def complete_connect_account(
+        self,
+        url: str,
+        store_options: dict = None
+    ) -> CompleteConnectAccountResponse:
+        """
+        Handles the redirect callback to complete the connect account flow for linking a third-party
+        account to the user's profile.
+
+        This works similar to the redirect from the login flow except it verifies the `connect_code`
+        with the My Account API rather than the `code` with the Authorization Server.
+
+        Args:
+            url: The full callback URL including query parameters
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            A response from the connect account flow.
+        """
+        # Parse the URL to get query parameters
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+
+        # Get state parameter from the URL
+        state = query_params.get("state", [""])[0]
+        if not state:
+            raise MissingRequiredArgumentError("state")
+
+        # Get the authorization code from the URL
+        connect_code = query_params.get("connect_code", [""])[0]
+        if not connect_code:
+            raise MissingRequiredArgumentError("connect_code")
+
+        # Retrieve the transaction data using the state
+        transaction_identifier = f"{self._transaction_identifier}:{state}"
+        transaction_data = await self._transaction_store.get(transaction_identifier, options=store_options)
+
+        if not transaction_data:
+            raise MissingTransactionError()
+
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="create:me:connected_accounts",
+            store_options=store_options
+        )
+
+        request = CompleteConnectAccountRequest(
+            auth_session=transaction_data.auth_session,
+            connect_code=connect_code,
+            redirect_uri=transaction_data.redirect_uri,
+            code_verifier=transaction_data.code_verifier
+        )
+        try:
+            response = await self._my_account_client.complete_connect_account(
+                access_token=access_token, request=request)
+            if transaction_data.app_state is not None:
+                response.app_state = transaction_data.app_state
+        finally:
+            # Clean up transaction data
+            await self._transaction_store.delete(transaction_identifier, options=store_options)
+
+        return response
