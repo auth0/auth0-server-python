@@ -677,10 +677,9 @@ class ServerClient(Generic[TStoreOptions]):
         match = None
         for token_set in token_sets:
             token_set_audience = token_set.get("audience")
-            matches_audience = token_set_audience == audience
             token_set_scopes = set(token_set.get("scope", "").split())
-            matches_scope = not scope or token_set_scopes == set(scope.split())
-            if matches_audience and matches_scope:
+            requested_scopes = set(scope.split()) if scope else set()
+            if token_set_audience == audience and token_set_scopes.issuperset(requested_scopes):
                 match = token_set
                 break
 

@@ -658,6 +658,45 @@ async def test_get_access_token_from_store_with_multiple_audiences(mocker):
     get_refresh_token_mock.assert_not_awaited()
 
 @pytest.mark.asyncio
+async def test_get_access_token_from_store_with_a_superset_of_requested_scopes(mocker):
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "refresh_token": None,
+        "token_sets": [
+            {
+                "audience": "default",
+                "access_token": "token_from_store",
+                "expires_at": int(time.time()) + 500
+            },
+            {
+                "audience": "some_audience",
+                "access_token": "other_token_from_store",
+                "scope": "read:foo write:foo read:bar write:bar",
+                "expires_at": int(time.time()) + 500
+            }
+        ]
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    get_refresh_token_mock = mocker.patch.object(client, "get_token_by_refresh_token")
+
+    token = await client.get_access_token(
+        audience="some_audience",
+        scope="read:foo read:bar"
+    )
+
+    assert token == "other_token_from_store"
+    get_refresh_token_mock.assert_not_awaited()
+
+@pytest.mark.asyncio
 async def test_get_access_token_for_connection_cached():
     mock_state_store = AsyncMock()
     mock_state_store.get.return_value = {
