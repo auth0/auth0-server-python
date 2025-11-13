@@ -45,7 +45,7 @@ from pydantic import ValidationError
 # Generic type for store options
 TStoreOptions = TypeVar('TStoreOptions')
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "redirect_uri", "response_type",
-                             "code_challenge", "code_challenge_method", "state", "nonce"]
+                             "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
 
 
 class ServerClient(Generic[TStoreOptions]):
@@ -161,11 +161,17 @@ class ServerClient(Generic[TStoreOptions]):
         state = PKCE.generate_random_string(32)
         auth_params["state"] = state
 
+                #merge any requested scope with defaults
+        requested_scope = options.authorization_params.get("scope", None) if options.authorization_params else None
+        audience = auth_params.get("audience", None)
+        merged_scope = self._merge_scope_with_defaults(requested_scope, audience)
+        auth_params["scope"] = merged_scope
+
         # Build the transaction data to store
         transaction_data = TransactionData(
             code_verifier=code_verifier,
             app_state=options.app_state,
-            audience=auth_params.get("audience", None),
+            audience=audience,
         )
 
         # Store the transaction data
