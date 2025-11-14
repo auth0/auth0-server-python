@@ -1,4 +1,5 @@
 
+from typing import Optional
 import httpx
 from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
 from auth0_server_python.auth_types import (
@@ -6,6 +7,8 @@ from auth0_server_python.auth_types import (
     CompleteConnectAccountResponse,
     ConnectAccountRequest,
     ConnectAccountResponse,
+    ListConnectedAccountResponse,
+    ListConnectedAccountConnectionsResponse
 )
 from auth0_server_python.error import (
     ApiError,
@@ -83,6 +86,127 @@ class MyAccountClient:
                 data = response.json()
 
                 return CompleteConnectAccountResponse.model_validate(data)
+
+        except Exception as e:
+            if isinstance(e, MyAccountApiError):
+                raise
+            raise ApiError(
+                "connect_account_error",
+                f"Connected Accounts complete request failed: {str(e) or 'Unknown error'}",
+                e
+            )
+
+    async def list_connected_accounts(
+        self,
+        access_token: str,
+        connection: Optional[str] = None,
+        from_token: Optional[str] = None,
+        take: Optional[int] = None
+    ) -> ListConnectedAccountResponse:
+        try:
+            async with httpx.AsyncClient() as client:
+                params = {}
+                if connection:
+                    params["connection"] = connection
+                if from_token:
+                    params["from"] = from_token
+                if take:
+                    params["take"] = take
+
+                response = await client.get(
+                    url=f"{self.audience}v1/connected-accounts/accounts",
+                    params=params,
+                    auth=BearerAuth(access_token)
+                )
+
+                if response.status_code != 200:
+                    error_data = response.json()
+                    raise MyAccountApiError(
+                        title=error_data.get("title", None),
+                        type=error_data.get("type", None),
+                        detail=error_data.get("detail", None),
+                        status=error_data.get("status", None),
+                        validation_errors=error_data.get("validation_errors", None)
+                    )
+
+                data = response.json()
+
+                return ListConnectedAccountResponse.model_validate(data)
+
+        except Exception as e:
+            if isinstance(e, MyAccountApiError):
+                raise
+            raise ApiError(
+                "connect_account_error",
+                f"Connected Accounts complete request failed: {str(e) or 'Unknown error'}",
+                e
+            )
+
+
+    async def delete_connected_account(
+        self,
+        access_token: str,
+        connected_account_id: str
+    ) -> CompleteConnectAccountResponse:
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.delete(
+                    url=f"{self.audience}v1/connected-accounts/accounts/{connected_account_id}",
+                    auth=BearerAuth(access_token)
+                )
+
+                if response.status_code != 204:
+                    error_data = response.json()
+                    raise MyAccountApiError(
+                        title=error_data.get("title", None),
+                        type=error_data.get("type", None),
+                        detail=error_data.get("detail", None),
+                        status=error_data.get("status", None),
+                        validation_errors=error_data.get("validation_errors", None)
+                    )
+
+        except Exception as e:
+            if isinstance(e, MyAccountApiError):
+                raise
+            raise ApiError(
+                "connect_account_error",
+                f"Connected Accounts complete request failed: {str(e) or 'Unknown error'}",
+                e
+            )
+
+    async def list_connected_account_connections(
+        self,
+        access_token: str,
+        from_token: Optional[str] = None,
+        take: Optional[int] = None
+    ) -> CompleteConnectAccountResponse:
+        try:
+            async with httpx.AsyncClient() as client:
+                params = {}
+                if from_token:
+                    params["from"] = from_token
+                if take:
+                    params["take"] = take
+
+                response = await client.get(
+                    url=f"{self.audience}v1/connected-accounts/connections",
+                    params=params,
+                    auth=BearerAuth(access_token)
+                )
+
+                if response.status_code != 200:
+                    error_data = response.json()
+                    raise MyAccountApiError(
+                        title=error_data.get("title", None),
+                        type=error_data.get("type", None),
+                        detail=error_data.get("detail", None),
+                        status=error_data.get("status", None),
+                        validation_errors=error_data.get("validation_errors", None)
+                    )
+
+                data = response.json()
+
+                return ListConnectedAccountConnectionsResponse.model_validate(data)
 
         except Exception as e:
             if isinstance(e, MyAccountApiError):
