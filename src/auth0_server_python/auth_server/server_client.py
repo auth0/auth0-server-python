@@ -1472,3 +1472,45 @@ class ServerClient(Generic[TStoreOptions]):
             await self._transaction_store.delete(transaction_identifier, options=store_options)
 
         return response
+    
+    async def list_connected_accounts(
+        self,
+        connection: Optional[str] = None,
+        from_token: Optional[str] = None,
+        take: Optional[int] = None,
+        store_options: dict = None
+    ) -> CompleteConnectAccountResponse: 
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="read:me:connected_accounts",
+            store_options=store_options
+        )
+        return await self._my_account_client.list_connected_accounts(
+            access_token=access_token, connection=connection, from_token=from_token, take=take)
+    
+    async def delete_connected_account(
+        self,
+        connected_account_id: str,
+        store_options: dict = None
+    ) -> CompleteConnectAccountResponse: 
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="delete:me:connected_accounts",
+            store_options=store_options
+        )
+        return await self._my_account_client.delete_connected_account(
+            access_token=access_token, connected_account_id=connected_account_id)
+
+    async def list_connected_account_connections(
+        self,
+        from_token: Optional[str] = None,
+        take: Optional[int] = None,
+        store_options: dict = None
+    ) -> CompleteConnectAccountResponse: 
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="read:me:connected_accounts",
+            store_options=store_options
+        )
+        return await self._my_account_client.list_connected_account_connections(
+            access_token=access_token, from_token=from_token, take=take)
