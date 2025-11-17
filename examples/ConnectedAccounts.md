@@ -14,8 +14,6 @@ This is particularly useful for applications that require access to different re
 
 ## Configure the SDK
 
-The SDK must be configured with an audience (an API Identifier) - this will be the resource server that uses the tokens from the Token Vault.
-
 The Auth0 client Application must be configured to use refresh tokens and [MRRT (Multiple Resource Refresh Tokens)](https://auth0.com/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token) since we will use the refresh token grant to get Access Tokens for the My Account API in addition to the API we are calling.
 
 ```python
