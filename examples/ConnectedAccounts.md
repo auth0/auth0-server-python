@@ -8,7 +8,7 @@ The Connect Accounts feature uses the Auth0 My Account API to allow users to lin
 
 When using Connected Accounts, Auth0 acquires tokens from upstream Identity Providers (like Google) and stores them in a secure [Token Vault](https://auth0.com/docs/secure/tokens/token-vault). These tokens can then be used to access third-party APIs (like Google Calendar) on behalf of the user.
 
-The tokens in the Token Vault are then accessible to [Resource Servers](https://auth0.com/docs/get-started/apis) (APIs) configured in Auth0. The application can then issue requests to the API, which can retrieve the tokens from the Token Vault and use them to access the third-party APIs.
+The tokens in the Token Vault are then accessible to [Applications](https://auth0.com/docs/get-started/applications) configured in Auth0. The application can issue requests to Auth0 to retrieve the tokens from the Token Vault and use them to access the third-party APIs.
 
 This is particularly useful for applications that require access to different resources on behalf of a user, like AI Agents.
 
