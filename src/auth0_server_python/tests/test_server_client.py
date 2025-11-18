@@ -391,8 +391,7 @@ async def test_get_access_token_refresh_expired(mocker):
         secret="some-secret"
     )
 
-    # Patch method that does the refresh call
-    mocker.patch.object(client, "get_token_by_refresh_token", return_value={
+    get_refresh_token_mock = mocker.patch.object(client, "get_token_by_refresh_token", return_value={
         "access_token": "new_token",
         "expires_in": 3600
     })
@@ -400,6 +399,350 @@ async def test_get_access_token_refresh_expired(mocker):
     token = await client.get_access_token()
     assert token == "new_token"
     mock_state_store.set.assert_awaited_once()
+    get_refresh_token_mock.assert_awaited_with({
+        "refresh_token": "refresh_xyz"
+    })
+
+@pytest.mark.asyncio
+async def test_get_access_token_refresh_merging_default_scope(mocker):
+    mock_state_store = AsyncMock()
+    # expired token
+    mock_state_store.get.return_value = {
+        "refresh_token": "refresh_xyz",
+        "token_sets": [
+            {
+                "audience": "default",
+                "access_token": "expired_token",
+                "expires_at": int(time.time()) - 500
+            }
+        ]
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret",
+        authorization_params= {
+            "audience": "default",
+            "scope": "openid profile email"
+        }
+    )
+
+    get_refresh_token_mock = mocker.patch.object(client, "get_token_by_refresh_token", return_value={
+        "access_token": "new_token",
+        "expires_in": 3600
+    })
+
+    token = await client.get_access_token(scope="foo:bar")
+    assert token == "new_token"
+    mock_state_store.set.assert_awaited_once()
+    get_refresh_token_mock.assert_awaited_with({
+        "refresh_token": "refresh_xyz",
+        "audience": "default",
+        "scope": "openid profile email foo:bar"
+    })
+
+@pytest.mark.asyncio
+async def test_get_access_token_refresh_with_auth_params_scope(mocker):
+    mock_state_store = AsyncMock()
+    # expired token
+    mock_state_store.get.return_value = {
+        "refresh_token": "refresh_xyz",
+        "token_sets": [
+            {
+                "audience": "default",
+                "access_token": "expired_token",
+                "expires_at": int(time.time()) - 500
+            }
+        ]
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret",
+        authorization_params= {
+            "scope": "openid profile email"
+        }
+    )
+
+    get_refresh_token_mock = mocker.patch.object(client, "get_token_by_refresh_token", return_value={
+        "access_token": "new_token",
+        "expires_in": 3600
+    })
+
+    token = await client.get_access_token()
+    assert token == "new_token"
+    mock_state_store.set.assert_awaited_once()
+    get_refresh_token_mock.assert_awaited_with({
+        "refresh_token": "refresh_xyz",
+        "scope": "openid profile email"
+    })
+
+@pytest.mark.asyncio
+async def test_get_access_token_refresh_with_auth_params_audience(mocker):
+    mock_state_store = AsyncMock()
+    # expired token
+    mock_state_store.get.return_value = {
+        "refresh_token": "refresh_xyz",
+        "token_sets": [
+            {
+                "audience": "my_audience",
+                "access_token": "expired_token",
+                "expires_at": int(time.time()) - 500
+            }
+        ]
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret",
+        authorization_params= {
+            "audience": "my_audience"
+        }
+    )
+
+    get_refresh_token_mock = mocker.patch.object(client, "get_token_by_refresh_token", return_value={
+        "access_token": "new_token",
+        "expires_in": 3600
+    })
+
+    token = await client.get_access_token()
+    assert token == "new_token"
+    mock_state_store.set.assert_awaited_once()
+    get_refresh_token_mock.assert_awaited_with({
+        "refresh_token": "refresh_xyz",
+        "audience": "my_audience"
+    })
+
+@pytest.mark.asyncio
+async def test_get_access_token_mrrt(mocker):
+    mock_state_store = AsyncMock()
+    # expired token
+    mock_state_store.get.return_value = {
+        "refresh_token": "refresh_xyz",
+        "token_sets": [
+            {
+                "audience": "default",
+                "access_token": "valid_token_for_other_audience",
+                "expires_at": int(time.time()) + 500
+            }
+        ]
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    # Patch method that does the refresh call
+    get_refresh_token_mock = mocker.patch.object(client, "get_token_by_refresh_token", return_value={
+        "access_token": "new_token",
+        "expires_in": 3600
+    })
+
+    token = await client.get_access_token(
+        audience="some_audience",
+        scope="foo:bar"
+    )
+
+    assert token == "new_token"
+    mock_state_store.set.assert_awaited_once()
+    args, kwargs = mock_state_store.set.call_args
+    stored_state = args[1]
+    assert "token_sets" in stored_state
+    assert len(stored_state["token_sets"]) == 2
+    get_refresh_token_mock.assert_awaited_with({
+        "refresh_token": "refresh_xyz",
+        "audience": "some_audience",
+        "scope": "foo:bar",
+    })
+
+@pytest.mark.asyncio
+async def test_get_access_token_mrrt_with_auth_params_scope(mocker):
+    mock_state_store = AsyncMock()
+    # expired token
+    mock_state_store.get.return_value = {
+        "refresh_token": "refresh_xyz",
+        "token_sets": [
+            {
+                "audience": "default",
+                "access_token": "valid_token_for_other_audience",
+                "expires_at": int(time.time()) + 500
+            }
+        ]
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret",
+        authorization_params= {
+            "audience": "default",
+            "scope": {
+                "default": "openid profile email foo:bar",
+                "some_audience": "foo:bar"
+            }
+        }
+    )
+
+    # Patch method that does the refresh call
+    get_refresh_token_mock = mocker.patch.object(client, "get_token_by_refresh_token", return_value={
+        "access_token": "new_token",
+        "expires_in": 3600
+    })
+
+    token = await client.get_access_token(
+        audience="some_audience"
+    )
+
+    assert token == "new_token"
+    mock_state_store.set.assert_awaited_once()
+    args, kwargs = mock_state_store.set.call_args
+    stored_state = args[1]
+    assert "token_sets" in stored_state
+    assert len(stored_state["token_sets"]) == 2
+    get_refresh_token_mock.assert_awaited_with({
+        "refresh_token": "refresh_xyz",
+        "audience": "some_audience",
+        "scope": "foo:bar",
+    })
+
+@pytest.mark.asyncio
+async def test_get_access_token_from_store_with_multiple_audiences(mocker):
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "refresh_token": None,
+        "token_sets": [
+            {
+                "audience": "default",
+                "access_token": "token_from_store",
+                "expires_at": int(time.time()) + 500
+            },
+            {
+                "audience": "some_audience",
+                "access_token": "other_token_from_store",
+                "scope": "foo:bar",
+                "expires_at": int(time.time()) + 500
+            }
+        ]
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    get_refresh_token_mock = mocker.patch.object(client, "get_token_by_refresh_token")
+
+    token = await client.get_access_token(
+        audience="some_audience",
+        scope="foo:bar"
+    )
+
+    assert token == "other_token_from_store"
+    get_refresh_token_mock.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_get_access_token_from_store_with_a_superset_of_requested_scopes(mocker):
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "refresh_token": None,
+        "token_sets": [
+            {
+                "audience": "default",
+                "access_token": "token_from_store",
+                "expires_at": int(time.time()) + 500
+            },
+            {
+                "audience": "some_audience",
+                "access_token": "other_token_from_store",
+                "scope": "read:foo write:foo read:bar write:bar",
+                "expires_at": int(time.time()) + 500
+            }
+        ]
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    get_refresh_token_mock = mocker.patch.object(client, "get_token_by_refresh_token")
+
+    token = await client.get_access_token(
+        audience="some_audience",
+        scope="read:foo read:bar"
+    )
+
+    assert token == "other_token_from_store"
+    get_refresh_token_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_from_store_returns_minimum_matching_scopes(mocker):
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "refresh_token": None,
+        "token_sets": [
+            {
+                "audience": "some_audience",
+                "access_token": "maximum_scope_token",
+                "scope": "read:foo write:foo read:bar write:bar admin:all",
+                "expires_at": int(time.time()) + 500
+            },
+            {
+                "audience": "some_audience",
+                "access_token": "minimum_scope_token",
+                "scope": "read:foo write:foo read:bar write:bar",
+                "expires_at": int(time.time()) + 500
+            }
+        ]
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    get_refresh_token_mock = mocker.patch.object(client, "get_token_by_refresh_token")
+
+    token = await client.get_access_token(
+        audience="some_audience",
+        scope="read:foo read:bar"
+    )
+
+    assert token == "minimum_scope_token"
+    get_refresh_token_mock.assert_not_awaited()
 
 @pytest.mark.asyncio
 async def test_get_access_token_for_connection_cached():
