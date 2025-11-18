@@ -56,6 +56,26 @@ class PollingApiError(ApiError):
         super().__init__(code, message, cause)
         self.interval = interval
 
+class MyAccountApiError(Auth0Error):
+    """
+    Error raised when an API request to My Account API fails.
+    Contains details about the original error from Auth0.
+    """
+
+    def __init__(
+            self,
+            title: Optional[str],
+            type: Optional[str],
+            detail: Optional[str],
+            status: Optional[int],
+            validation_errors: Optional[list[dict[str, str]]] = None
+        ):
+        super().__init__(detail)
+        self.title = title
+        self.type = type
+        self.detail = detail
+        self.status = status
+        self.validation_errors = validation_errors
 
 class AccessTokenError(Auth0Error):
     """Error raised when there's an issue with access tokens."""
@@ -124,6 +144,7 @@ class AccessTokenErrorCode:
     FAILED_TO_REQUEST_TOKEN = "failed_to_request_token"
     REFRESH_TOKEN_ERROR = "refresh_token_error"
     AUTH_REQ_ID_ERROR = "auth_req_id_error"
+    INCORRECT_AUDIENCE = "incorrect_audience"
 
 
 class AccessTokenForConnectionErrorCode:
