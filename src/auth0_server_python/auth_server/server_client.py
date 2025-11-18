@@ -1471,14 +1471,14 @@ class ServerClient(Generic[TStoreOptions]):
             await self._transaction_store.delete(transaction_identifier, options=store_options)
 
         return response
-    
+
     async def list_connected_accounts(
         self,
         connection: Optional[str] = None,
         from_token: Optional[str] = None,
         take: Optional[int] = None,
         store_options: dict = None
-    ) -> CompleteConnectAccountResponse: 
+    ) -> CompleteConnectAccountResponse:
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="read:me:connected_accounts",
@@ -1486,12 +1486,12 @@ class ServerClient(Generic[TStoreOptions]):
         )
         return await self._my_account_client.list_connected_accounts(
             access_token=access_token, connection=connection, from_token=from_token, take=take)
-    
+
     async def delete_connected_account(
         self,
         connected_account_id: str,
         store_options: dict = None
-    ) -> CompleteConnectAccountResponse: 
+    ) -> CompleteConnectAccountResponse:
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="delete:me:connected_accounts",
@@ -1505,7 +1505,7 @@ class ServerClient(Generic[TStoreOptions]):
         from_token: Optional[str] = None,
         take: Optional[int] = None,
         store_options: dict = None
-    ) -> CompleteConnectAccountResponse: 
+    ) -> CompleteConnectAccountResponse:
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="read:me:connected_accounts",
