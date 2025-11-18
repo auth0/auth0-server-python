@@ -180,7 +180,7 @@ class MyAccountClient:
         access_token: str,
         from_token: Optional[str] = None,
         take: Optional[int] = None
-    ) -> CompleteConnectAccountResponse:
+    ) -> ListConnectedAccountConnectionsResponse:
         try:
             async with httpx.AsyncClient() as client:
                 params = {}

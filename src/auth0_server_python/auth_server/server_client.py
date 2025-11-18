@@ -17,6 +17,8 @@ from auth0_server_python.auth_types import (
     CompleteConnectAccountResponse,
     ConnectAccountOptions,
     ConnectAccountRequest,
+    ListConnectedAccountConnectionsResponse,
+    ListConnectedAccountResponse,
     LogoutOptions,
     LogoutTokenClaims,
     StartInteractiveLoginOptions,
@@ -1478,7 +1480,7 @@ class ServerClient(Generic[TStoreOptions]):
         from_token: Optional[str] = None,
         take: Optional[int] = None,
         store_options: dict = None
-    ) -> CompleteConnectAccountResponse:
+    ) -> ListConnectedAccountResponse:
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="read:me:connected_accounts",
@@ -1491,13 +1493,13 @@ class ServerClient(Generic[TStoreOptions]):
         self,
         connected_account_id: str,
         store_options: dict = None
-    ) -> CompleteConnectAccountResponse:
+    ) -> None:
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="delete:me:connected_accounts",
             store_options=store_options
         )
-        return await self._my_account_client.delete_connected_account(
+        await self._my_account_client.delete_connected_account(
             access_token=access_token, connected_account_id=connected_account_id)
 
     async def list_connected_account_connections(
@@ -1505,7 +1507,7 @@ class ServerClient(Generic[TStoreOptions]):
         from_token: Optional[str] = None,
         take: Optional[int] = None,
         store_options: dict = None
-    ) -> CompleteConnectAccountResponse:
+    ) -> ListConnectedAccountConnectionsResponse:
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="read:me:connected_accounts",
