@@ -252,3 +252,24 @@ class CompleteConnectAccountResponse(BaseModel):
     created_at: str
     expires_at: Optional[str] = None
     app_state: Optional[Any] = None
+
+class ConnectedAccount(BaseModel):
+    id: str
+    connection: str
+    access_type: str
+    scopes: list[str]
+    created_at: str
+    expires_at: Optional[str] = None
+
+class ListConnectedAccountResponse(BaseModel):
+    accounts: list[ConnectedAccount]
+    next: Optional[str] = None
+
+class ConnectedAccountConnection(BaseModel):
+    name: str
+    strategy: str
+    scopes: Optional[list[str]] = None
+
+class ListConnectedAccountConnectionsResponse(BaseModel):
+    connections: list[ConnectedAccountConnection]
+    next: Optional[str] = None
