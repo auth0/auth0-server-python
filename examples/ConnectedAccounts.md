@@ -111,6 +111,79 @@ You can now call the API with your access token and the API can use [Access Toke
 ```python
 access_token_for_google = await server_client.get_access_token_for_connection(
     { "connection": "google-oauth2" }, 
-    store_options=store_options
+    store_options={"request": request, "response": response}
+)
+```
+
+## Managing Connected Accounts
+
+`ServerClient` exposes three methods for managing a user's connected accounts
+
+### List Available Connections
+
+This method provides a list of connections that have been enabled for use with Connected Accounts for Token Vault that the user may use to connect accounts.
+
+This method requires the My Account `read:me:connected_accounts` scope to be enabled for your application and configured for MRRT.
+
+This method supports paging via optional the use of `take` parameter. Without this parameters, a default page size of 10 is used. Subsequent pages can be retrieved by also passing the `from_token` parameter with the token returned in the `next` property of the response
+
+```python
+available_connections = await client.list_connected_account_connections(
+    take= 5, # optional
+    from_token= "NEXT_VALUE_FROM_PREVIOUS_RESPONSE", # optional
+    store_options= {"request": request, "response": response}
+)
+```
+
+### List Connected Accounts
+
+This method provides a list of accounts that you have already connected.
+
+This method requires the My Account `read:me:connected_accounts` scope to be enabled for your application and configured for MRRT.
+
+An optional `connection` parameter can be used to filter the connected accounts for a specific connection, otherwise all connected accounts will be returns
+
+This method supports paging via optional the use of `take` parameter. Without this parameters, a default page size of 10 is used. Subsequent pages can be retrieved by also passing the `from_token` parameter with the token returned in the `next` property of the response
+
+```python
+connected_accounts = await client.list_connected_accounts(
+    connection= "google-oauth2" # optional
+    take= 5, # optional
+    from_token= "NEXT_VALUE_FROM_PREVIOUS_RESPONSE", # optional
+    store_options= {"request": request, "response": response}
+)
+```
+
+### Delete Connected Account
+
+This method removes a connected account for the user.
+
+This method requires the My Account `delete:me:connected_accounts` scope to be enabled for your application and configured for MRRT.
+
+This method takes a `connected_account_id` parameter which can be obtained from `list_connected_accounts`.
+
+```python
+connected_accounts = await client.delete_connected_account(
+    connected_account_id= "CONNECTED_ACCOUNT_ID"
+    store_options= {"request": request, "response": response}
+)
+```
+
+## A note about scopes
+
+If multiple pieces of Connected Account functionality are intended to be used, it is recommended that you set the default `scope` for the My Account audience when creating you `ServerClient`. This will avoid multiple token requests as without it a new token will be requested for each scope used. This can be done by configuring the `scope` dictionary in the `authorization_params` when configuring the SDK. Each value in the dictionary corresponds to an `audience` and sets the `default` requested scopes for that audience.
+
+```python
+server_client = ServerClient(
+    domain="YOUR_AUTH0_DOMAIN",
+    client_id="YOUR_CLIENT_ID",
+    client_secret="YOUR_CLIENT_SECRET",
+    secret="YOUR_SECRET",
+    authorization_params={
+        "scope" {
+            "https://YOUR_AUTH0_DOMAIN/me/": "create:me:connected_accounts read:me:connected_accounts delete:me:connected_accounts", # scopes required for the My Account audience
+            # default scopes for custom API audiences can also be defined
+        }
+    }
 )
 ```
