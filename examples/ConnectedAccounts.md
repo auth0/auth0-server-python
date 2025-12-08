@@ -147,7 +147,7 @@ This method supports paging via optional the use of `take` parameter. Without th
 
 ```python
 connected_accounts = await client.list_connected_accounts(
-    connection= "google-oauth2" # optional
+    connection= "google-oauth2", # optional
     take= 5, # optional
     from_token= "NEXT_VALUE_FROM_PREVIOUS_RESPONSE", # optional
     store_options= {"request": request, "response": response}
@@ -164,7 +164,7 @@ This method takes a `connected_account_id` parameter which can be obtained from 
 
 ```python
 connected_accounts = await client.delete_connected_account(
-    connected_account_id= "CONNECTED_ACCOUNT_ID"
+    connected_account_id= "CONNECTED_ACCOUNT_ID",
     store_options= {"request": request, "response": response}
 )
 ```
