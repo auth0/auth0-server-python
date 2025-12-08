@@ -1536,7 +1536,7 @@ class ServerClient(Generic[TStoreOptions]):
         store_options: dict = None
     ) -> ListConnectedAccountConnectionsResponse:
         """
-        Retrieves a list of available connections the can be used connected accounts for the authenticated user.
+        Retrieves a list of available connections that can be used connected accounts for the authenticated user.
 
         Args:
             from_token (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.

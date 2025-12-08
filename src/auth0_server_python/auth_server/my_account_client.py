@@ -139,7 +139,7 @@ class MyAccountClient:
                 raise
             raise ApiError(
                 "connect_account_error",
-                f"Connected Accounts complete request failed: {str(e) or 'Unknown error'}",
+                f"Connected Accounts list request failed: {str(e) or 'Unknown error'}",
                 e
             )
 
@@ -148,7 +148,7 @@ class MyAccountClient:
         self,
         access_token: str,
         connected_account_id: str
-    ) -> CompleteConnectAccountResponse:
+    ) -> None:
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.delete(
@@ -171,7 +171,7 @@ class MyAccountClient:
                 raise
             raise ApiError(
                 "connect_account_error",
-                f"Connected Accounts complete request failed: {str(e) or 'Unknown error'}",
+                f"Connected Accounts delete request failed: {str(e) or 'Unknown error'}",
                 e
             )
 
@@ -214,6 +214,6 @@ class MyAccountClient:
                 raise
             raise ApiError(
                 "connect_account_error",
-                f"Connected Accounts complete request failed: {str(e) or 'Unknown error'}",
+                f"Connected Accounts list connections request failed: {str(e) or 'Unknown error'}",
                 e
             )
