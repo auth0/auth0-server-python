@@ -125,12 +125,12 @@ This method provides a list of connections that have been enabled for use with C
 
 This method requires the My Account `read:me:connected_accounts` scope to be enabled for your application and configured for MRRT.
 
-This method supports paging via optional the use of `take` parameter. Without this parameters, a default page size of 10 is used. Subsequent pages can be retrieved by also passing the `from_token` parameter with the token returned in the `next` property of the response
+This method supports paging via optional the use of `take` parameter. Without this parameters, a default page size of 10 is used. Subsequent pages can be retrieved by also passing the `from_param` parameter with the token returned in the `next` property of the response
 
 ```python
 available_connections = await client.list_connected_account_connections(
     take= 5, # optional
-    from_token= "NEXT_VALUE_FROM_PREVIOUS_RESPONSE", # optional
+    from_param= "NEXT_VALUE_FROM_PREVIOUS_RESPONSE", # optional
     store_options= {"request": request, "response": response}
 )
 ```
@@ -143,13 +143,13 @@ This method requires the My Account `read:me:connected_accounts` scope to be ena
 
 An optional `connection` parameter can be used to filter the connected accounts for a specific connection, otherwise all connected accounts will be returns
 
-This method supports paging via optional the use of `take` parameter. Without this parameters, a default page size of 10 is used. Subsequent pages can be retrieved by also passing the `from_token` parameter with the token returned in the `next` property of the response
+This method supports paging via optional the use of `take` parameter. Without this parameters, a default page size of 10 is used. Subsequent pages can be retrieved by also passing the `from_param` parameter with the token returned in the `next` property of the response
 
 ```python
 connected_accounts = await client.list_connected_accounts(
     connection= "google-oauth2", # optional
     take= 5, # optional
-    from_token= "NEXT_VALUE_FROM_PREVIOUS_RESPONSE", # optional
+    from_param= "NEXT_VALUE_FROM_PREVIOUS_RESPONSE", # optional
     store_options= {"request": request, "response": response}
 )
 ```

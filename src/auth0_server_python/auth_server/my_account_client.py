@@ -101,7 +101,7 @@ class MyAccountClient:
         self,
         access_token: str,
         connection: Optional[str] = None,
-        from_token: Optional[str] = None,
+        from_param: Optional[str] = None,
         take: Optional[int] = None
     ) -> ListConnectedAccountResponse:
         try:
@@ -109,8 +109,8 @@ class MyAccountClient:
                 params = {}
                 if connection:
                     params["connection"] = connection
-                if from_token:
-                    params["from"] = from_token
+                if from_param:
+                    params["from"] = from_param
                 if take:
                     params["take"] = take
 
@@ -178,14 +178,14 @@ class MyAccountClient:
     async def list_connected_account_connections(
         self,
         access_token: str,
-        from_token: Optional[str] = None,
+        from_param: Optional[str] = None,
         take: Optional[int] = None
     ) -> ListConnectedAccountConnectionsResponse:
         try:
             async with httpx.AsyncClient() as client:
                 params = {}
-                if from_token:
-                    params["from"] = from_token
+                if from_param:
+                    params["from"] = from_param
                 if take:
                     params["take"] = take
 

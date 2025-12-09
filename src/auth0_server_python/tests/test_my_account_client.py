@@ -195,7 +195,7 @@ async def test_list_connected_accounts_success(mocker):
     result = await client.list_connected_accounts(
         access_token="<access_token>",
         connection="<connection>",
-        from_token="<from_token>",
+        from_param="<from_param>",
         take=2
     )
 
@@ -204,7 +204,7 @@ async def test_list_connected_accounts_success(mocker):
         url="https://auth0.local/me/v1/connected-accounts/accounts",
         params={
             "connection": "<connection>",
-            "from": "<from_token>",
+            "from": "<from_param>",
             "take": 2
         },
         auth=ANY
@@ -248,7 +248,7 @@ async def test_list_connected_accounts_api_response_failure(mocker):
         await client.list_connected_accounts(
         access_token="<access_token>",
         connection="<connection>",
-        from_token="<from_token>",
+        from_param="<from_param>",
         take=2
     )
 
@@ -333,7 +333,7 @@ async def test_list_connected_account_connections_success(mocker):
     # Act
     result = await client.list_connected_account_connections(
         access_token="<access_token>",
-        from_token="<from_token>",
+        from_param="<from_param>",
         take=2
     )
 
@@ -341,7 +341,7 @@ async def test_list_connected_account_connections_success(mocker):
     mock_get.assert_awaited_with(
         url="https://auth0.local/me/v1/connected-accounts/connections",
         params={
-            "from": "<from_token>",
+            "from": "<from_param>",
             "take": 2
         },
         auth=ANY
@@ -378,7 +378,7 @@ async def test_list_connected_account_connections_api_response_failure(mocker):
     with pytest.raises(MyAccountApiError) as exc:
         await client.list_connected_account_connections(
         access_token="<access_token>",
-        from_token="<from_token>",
+        from_param="<from_param>",
         take=2
     )
 

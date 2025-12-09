@@ -1975,7 +1975,7 @@ async def test_list_connected_accounts_gets_access_token_and_calls_my_account(mo
     # Act
     response = await client.list_connected_accounts(
         connection="<connection>",
-        from_token="<from_token>",
+        from_param="<from_param>",
         take=2
     )
 
@@ -1989,7 +1989,7 @@ async def test_list_connected_accounts_gets_access_token_and_calls_my_account(mo
     mock_my_account_client.list_connected_accounts.assert_awaited_with(
         access_token="<access_token>",
         connection="<connection>",
-        from_token="<from_token>",
+        from_param="<from_param>",
         take=2
     )
 
@@ -2053,7 +2053,7 @@ async def test_list_connected_account_connections_gets_access_token_and_calls_my
 
     # Act
     response = await client.list_connected_account_connections(
-        from_token="<from_token>",
+        from_param="<from_param>",
         take=2
     )
 
@@ -2066,6 +2066,6 @@ async def test_list_connected_account_connections_gets_access_token_and_calls_my
     )
     mock_my_account_client.list_connected_account_connections.assert_awaited_with(
         access_token="<access_token>",
-        from_token="<from_token>",
+        from_param="<from_param>",
         take=2
     )

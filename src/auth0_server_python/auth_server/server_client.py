@@ -1477,7 +1477,7 @@ class ServerClient(Generic[TStoreOptions]):
     async def list_connected_accounts(
         self,
         connection: Optional[str] = None,
-        from_token: Optional[str] = None,
+        from_param: Optional[str] = None,
         take: Optional[int] = None,
         store_options: dict = None
     ) -> ListConnectedAccountResponse:
@@ -1486,7 +1486,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Args:
             connection (Optional[str], optional): Filter results to a specific connection. Defaults to None.
-            from_token (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.
+            from_param (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.
             take (Optional[int], optional): The maximum number of connections to retrieve. Defaults to None.
             store_options: Optional options used to pass to the Transaction and State Store.
 
@@ -1503,7 +1503,7 @@ class ServerClient(Generic[TStoreOptions]):
             store_options=store_options
         )
         return await self._my_account_client.list_connected_accounts(
-            access_token=access_token, connection=connection, from_token=from_token, take=take)
+            access_token=access_token, connection=connection, from_param=from_param, take=take)
 
     async def delete_connected_account(
         self,
@@ -1531,7 +1531,7 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def list_connected_account_connections(
         self,
-        from_token: Optional[str] = None,
+        from_param: Optional[str] = None,
         take: Optional[int] = None,
         store_options: dict = None
     ) -> ListConnectedAccountConnectionsResponse:
@@ -1539,7 +1539,7 @@ class ServerClient(Generic[TStoreOptions]):
         Retrieves a list of available connections that can be used connected accounts for the authenticated user.
 
         Args:
-            from_token (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.
+            from_param (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.
             take (Optional[int], optional): The maximum number of connections to retrieve. Defaults to None.
             store_options: Optional options used to pass to the Transaction and State Store.
 
@@ -1556,4 +1556,4 @@ class ServerClient(Generic[TStoreOptions]):
             store_options=store_options
         )
         return await self._my_account_client.list_connected_account_connections(
-            access_token=access_token, from_token=from_token, take=take)
+            access_token=access_token, from_param=from_param, take=take)
