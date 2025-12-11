@@ -108,7 +108,6 @@ class InvalidArgumentError(Auth0Error):
     code = "invalid_argument"
 
     def __init__(self, argument: str, message: str):
-        message = message
         super().__init__(message)
         self.name = "InvalidArgumentError"
         self.argument = argument

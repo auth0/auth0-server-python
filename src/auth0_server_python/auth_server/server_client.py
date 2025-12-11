@@ -1500,7 +1500,7 @@ class ServerClient(Generic[TStoreOptions]):
         """
         if take is not None and (not isinstance(take, int) or take < 1):
             raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
-        
+
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="read:me:connected_accounts",
@@ -1527,7 +1527,7 @@ class ServerClient(Generic[TStoreOptions]):
         """
         if not connected_account_id:
             raise MissingRequiredArgumentError("connected_account_id")
-        
+
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="delete:me:connected_accounts",
@@ -1559,7 +1559,7 @@ class ServerClient(Generic[TStoreOptions]):
         """
         if take is not None and (not isinstance(take, int) or take < 1):
             raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
-        
+
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="read:me:connected_accounts",

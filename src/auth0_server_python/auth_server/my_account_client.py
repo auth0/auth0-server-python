@@ -13,6 +13,8 @@ from auth0_server_python.auth_types import (
 )
 from auth0_server_python.error import (
     ApiError,
+    InvalidArgumentError,
+    MissingRequiredArgumentError,
     MyAccountApiError,
 )
 
@@ -104,6 +106,12 @@ class MyAccountClient:
         from_param: Optional[str] = None,
         take: Optional[int] = None
     ) -> ListConnectedAccountResponse:
+        if access_token is None:
+            raise MissingRequiredArgumentError("access_token")
+
+        if take is not None and (not isinstance(take, int) or take < 1):
+            raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
+
         try:
             async with httpx.AsyncClient() as client:
                 params = {}
@@ -149,6 +157,13 @@ class MyAccountClient:
         access_token: str,
         connected_account_id: str
     ) -> None:
+
+        if access_token is None:
+            raise MissingRequiredArgumentError("access_token")
+
+        if connected_account_id is None:
+            raise MissingRequiredArgumentError("connected_account_id")
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.delete(
@@ -181,6 +196,12 @@ class MyAccountClient:
         from_param: Optional[str] = None,
         take: Optional[int] = None
     ) -> ListConnectedAccountConnectionsResponse:
+        if access_token is None:
+            raise MissingRequiredArgumentError("access_token")
+
+        if take is not None and (not isinstance(take, int) or take < 1):
+            raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
+
         try:
             async with httpx.AsyncClient() as client:
                 params = {}

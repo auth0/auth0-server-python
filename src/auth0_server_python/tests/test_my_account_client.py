@@ -13,7 +13,11 @@ from auth0_server_python.auth_types import (
     ListConnectedAccountConnectionsResponse,
     ListConnectedAccountResponse,
 )
-from auth0_server_python.error import MyAccountApiError
+from auth0_server_python.error import (
+    InvalidArgumentError,
+    MissingRequiredArgumentError,
+    MyAccountApiError,
+)
 
 
 @pytest.mark.asyncio
@@ -229,6 +233,45 @@ async def test_list_connected_accounts_success(mocker):
     )
 
 @pytest.mark.asyncio
+async def test_list_connected_accounts_missing_access_token(mocker):
+    # Arrange
+    client = MyAccountClient(domain="auth0.local")
+    mock_get = mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+
+    # Act
+    with pytest.raises(MissingRequiredArgumentError) as exc:
+        await client.list_connected_accounts(
+        access_token=None,
+        connection="<connection>",
+        from_param="<from_param>",
+        take=2
+    )
+
+    # Assert
+    mock_get.assert_not_awaited()
+    assert "access_token" in str(exc.value)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("take", ["not_an_integer", 21.3, -5, 0])
+async def test_list_connected_accounts_invalid_take_param(mocker, take):
+    # Arrange
+    client = MyAccountClient(domain="auth0.local")
+    mock_get = mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+
+    # Act
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.list_connected_accounts(
+        access_token="<access_token>",
+        connection="<connection>",
+        from_param="<from_param>",
+        take=take
+    )
+
+    # Assert
+    mock_get.assert_not_awaited()
+    assert "The 'take' parameter must be a positive integer." in str(exc.value)
+
+@pytest.mark.asyncio
 async def test_list_connected_accounts_api_response_failure(mocker):
     # Arrange
     client = MyAccountClient(domain="auth0.local")
@@ -276,6 +319,40 @@ async def test_delete_connected_account_success(mocker):
         url="https://auth0.local/me/v1/connected-accounts/accounts/<id_1>",
         auth=ANY
     )
+
+@pytest.mark.asyncio
+async def test_delete_connected_account_missing_access_token(mocker):
+    # Arrange
+    client = MyAccountClient(domain="auth0.local")
+    mock_delete = mocker.patch("httpx.AsyncClient.delete", new_callable=AsyncMock)
+
+    # Act
+    with pytest.raises(MissingRequiredArgumentError) as exc:
+        await client.delete_connected_account(
+            access_token=None,
+            connected_account_id="<id_1>"
+        )
+
+    # Assert
+    mock_delete.assert_not_awaited()
+    assert "access_token" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_delete_connected_account_missing_connected_account_id(mocker):
+    # Arrange
+    client = MyAccountClient(domain="auth0.local")
+    mock_delete = mocker.patch("httpx.AsyncClient.delete", new_callable=AsyncMock)
+
+    # Act
+    with pytest.raises(MissingRequiredArgumentError) as exc:
+        await client.delete_connected_account(
+            access_token="<access_token>",
+            connected_account_id=None
+        )
+
+    # Assert
+    mock_delete.assert_not_awaited()
+    assert "connected_account_id" in str(exc.value)
 
 @pytest.mark.asyncio
 async def test_delete_connected_account_api_response_failure(mocker):
@@ -358,6 +435,44 @@ async def test_list_connected_account_connections_success(mocker):
         ) ],
         next="<next_token>"
     )
+
+@pytest.mark.asyncio
+async def test_list_connected_account_connections_missing_access_token(mocker):
+    # Arrange
+    client = MyAccountClient(domain="auth0.local")
+    mock_get = mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+
+    # Act
+    with pytest.raises(MissingRequiredArgumentError) as exc:
+        await client.list_connected_account_connections(
+        access_token=None,
+        from_param="<from_param>",
+        take=2
+    )
+
+    # Assert
+    mock_get.assert_not_awaited()
+    assert "access_token" in str(exc.value)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("take", ["not_an_integer", 21.3, -5, 0])
+async def test_list_connected_account_connections_invalid_take_param(mocker, take):
+    # Arrange
+    client = MyAccountClient(domain="auth0.local")
+    mock_get = mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+
+    # Act
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.list_connected_account_connections(
+        access_token="<access_token>",
+        from_param="<from_param>",
+        take=take
+    )
+
+    # Assert
+    mock_get.assert_not_awaited()
+    assert "The 'take' parameter must be a positive integer." in str(exc.value)
+
 
 @pytest.mark.asyncio
 async def test_list_connected_account_connections_api_response_failure(mocker):
