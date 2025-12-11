@@ -261,7 +261,7 @@ class ConnectedAccount(BaseModel):
     created_at: str
     expires_at: Optional[str] = None
 
-class ListConnectedAccountResponse(BaseModel):
+class ListConnectedAccountsResponse(BaseModel):
     accounts: list[ConnectedAccount]
     next: Optional[str] = None
 

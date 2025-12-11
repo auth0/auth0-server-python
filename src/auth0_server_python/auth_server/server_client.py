@@ -18,7 +18,7 @@ from auth0_server_python.auth_types import (
     ConnectAccountOptions,
     ConnectAccountRequest,
     ListConnectedAccountConnectionsResponse,
-    ListConnectedAccountResponse,
+    ListConnectedAccountsResponse,
     LogoutOptions,
     LogoutTokenClaims,
     StartInteractiveLoginOptions,
@@ -1481,7 +1481,7 @@ class ServerClient(Generic[TStoreOptions]):
         from_param: Optional[str] = None,
         take: Optional[int] = None,
         store_options: dict = None
-    ) -> ListConnectedAccountResponse:
+    ) -> ListConnectedAccountsResponse:
         """
         Retrieves a list of connected accounts for the authenticated user.
 
@@ -1492,7 +1492,7 @@ class ServerClient(Generic[TStoreOptions]):
             store_options: Optional options used to pass to the Transaction and State Store.
 
         Returns:
-            ListConnectedAccountResponse: The response object containing the list of connected accounts.
+            ListConnectedAccountsResponse: The response object containing the list of connected accounts.
 
         Raises:
             Auth0Error: If there is an error retrieving the access token.

@@ -11,7 +11,7 @@ from auth0_server_python.auth_types import (
     ConnectedAccountConnection,
     ConnectParams,
     ListConnectedAccountConnectionsResponse,
-    ListConnectedAccountResponse,
+    ListConnectedAccountsResponse,
 )
 from auth0_server_python.error import (
     InvalidArgumentError,
@@ -213,7 +213,7 @@ async def test_list_connected_accounts_success(mocker):
         },
         auth=ANY
     )
-    assert result == ListConnectedAccountResponse(
+    assert result == ListConnectedAccountsResponse(
         accounts=[ ConnectedAccount(
             id="<id_1>",
             connection="<connection>",

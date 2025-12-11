@@ -15,7 +15,7 @@ from auth0_server_python.auth_types import (
     ConnectedAccountConnection,
     ConnectParams,
     ListConnectedAccountConnectionsResponse,
-    ListConnectedAccountResponse,
+    ListConnectedAccountsResponse,
     LogoutOptions,
     TransactionData,
 )
@@ -1977,7 +1977,7 @@ async def test_list_connected_accounts_gets_access_token_and_calls_my_account(mo
     mock_my_account_client = AsyncMock(MyAccountClient)
     mocker.patch.object(client, "_my_account_client", mock_my_account_client)
     mocker.patch.object(mock_my_account_client, "audience", "https://auth0.local/me/")
-    expected_response= ListConnectedAccountResponse(
+    expected_response= ListConnectedAccountsResponse(
         accounts=[ ConnectedAccount(
             id="<id_1>",
             connection="<connection>",

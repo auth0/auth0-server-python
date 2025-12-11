@@ -9,7 +9,7 @@ from auth0_server_python.auth_types import (
     ConnectAccountRequest,
     ConnectAccountResponse,
     ListConnectedAccountConnectionsResponse,
-    ListConnectedAccountResponse,
+    ListConnectedAccountsResponse,
 )
 from auth0_server_python.error import (
     ApiError,
@@ -105,7 +105,7 @@ class MyAccountClient:
         connection: Optional[str] = None,
         from_param: Optional[str] = None,
         take: Optional[int] = None
-    ) -> ListConnectedAccountResponse:
+    ) -> ListConnectedAccountsResponse:
         if access_token is None:
             raise MissingRequiredArgumentError("access_token")
 
@@ -140,7 +140,7 @@ class MyAccountClient:
 
                 data = response.json()
 
-                return ListConnectedAccountResponse.model_validate(data)
+                return ListConnectedAccountsResponse.model_validate(data)
 
         except Exception as e:
             if isinstance(e, MyAccountApiError):
