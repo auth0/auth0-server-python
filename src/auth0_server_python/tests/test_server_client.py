@@ -23,6 +23,7 @@ from auth0_server_python.error import (
     AccessTokenForConnectionError,
     ApiError,
     BackchannelLogoutError,
+    InvalidArgumentError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     PollingApiError,
@@ -1938,6 +1939,31 @@ async def test_complete_connect_account_no_transactions(mocker):
     mock_my_account_client.complete_connect_account.assert_not_awaited()
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("take", ["not_an_integer", 21.3, -5, 0])
+async def test_list_connected_accounts__with_invalid_take_param(mocker, take):
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+
+    # Act
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.list_connected_accounts(
+            connection="<connection>",
+            from_param="<from_param>",
+            take=take
+        )
+
+    # Assert
+    assert "The 'take' parameter must be a positive integer." in str(exc.value)
+    mock_my_account_client.list_connected_accounts.assert_not_awaited()
+
+@pytest.mark.asyncio
 async def test_list_connected_accounts_gets_access_token_and_calls_my_account(mocker):
     # Setup
     client = ServerClient(
@@ -2023,6 +2049,26 @@ async def test_delete_connected_account_gets_access_token_and_calls_my_account(m
     )
 
 @pytest.mark.asyncio
+async def test_delete_connected_account_with_empty_connected_account_id(mocker):
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+
+    # Act
+    with pytest.raises(MissingRequiredArgumentError) as exc:
+        await client.delete_connected_account(connected_account_id=None)
+
+    # Assert
+    assert "connected_account_id" in str(exc.value)
+    mock_my_account_client.delete_connected_account.assert_not_awaited()
+
+@pytest.mark.asyncio
 async def test_list_connected_account_connections_gets_access_token_and_calls_my_account(mocker):
     # Setup
     client = ServerClient(
@@ -2069,3 +2115,27 @@ async def test_list_connected_account_connections_gets_access_token_and_calls_my
         from_param="<from_param>",
         take=2
     )
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("take", ["not_an_integer", 21.3, -5, 0])
+async def test_list_connected_account_connections_with_invalid_take_param(mocker, take):
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+
+    # Act
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.list_connected_account_connections(
+            from_param="<from_param>",
+            take=take
+        )
+
+    # Assert
+    assert "The 'take' parameter must be a positive integer." in str(exc.value)
+    mock_my_account_client.list_connected_account_connections.assert_not_awaited()
