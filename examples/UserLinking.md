@@ -127,3 +127,103 @@ link_user_url = await server_client.start_link_user(options, store_options=store
 ```
 
 Read more above in [Configuring the Transaction and State Store](./ConfigureStore.md).
+
+## Start Unlinking The User
+
+User unlinking allows you to remove a previously linked identity from a user account. The process is similar to linking and begins by calling `start_unlink_user()` to obtain an authorization URL.
+
+```python
+# Start the unlink user flow by providing the connection to unlink.
+options = {
+    "connection": "google-oauth2",  # The connection to unlink
+    "authorization_params": {"redirect_uri": "http://localhost:3000/auth/callback"},
+    "app_state": {"returnTo": "http://localhost:3000/profile"}
+}
+
+# Assume store_options contains Request/Response objects required by the state store.
+store_options = {"request": request, "response": response}
+
+unlink_user_url = await server_client.start_unlink_user(options, store_options=store_options)
+
+# Redirect the user to unlink_user_url
+# (In a FastAPI route, you would return a RedirectResponse with unlink_user_url)
+```
+
+Once the unlink user flow is completed, the user will be redirected back to the `redirect_uri` specified in the `authorization_params`. At that point, it's required to call `complete_unlink_user()` to finalize the user-unlinking process. Read more below in [Complete Unlinking The User](#complete-unlinking-the-user).
+
+### Passing `authorization_params`
+
+Just like `start_link_user()`, you can customize the parameters passed to the `/authorize` endpoint:
+
+1. **Globally:**
+    Configure them when instantiating the `ServerClient`.
+
+2. **Per-call Override:**
+    Supply them when calling `start_unlink_user()`.
+
+```python
+options = {
+    "connection": "google-oauth2",
+    "authorization_params": {
+        "redirect_uri": "http://localhost:3000/auth/callback",
+        "audience": "urn:custom:api"
+    }
+}
+unlink_user_url = await server_client.start_unlink_user(options, store_options=store_options)
+```
+
+>[!NOTE]
+> Any `authorization_params` property specified when calling `start_unlink_user()` will override the same, statically configured, `authorization_params` property on `ServerClient`.
+
+### Passing App State
+
+The `app_state` parameter allows you to pass custom data (for example, a return URL) that will be returned when the unlinking process is complete.
+
+```python
+options = {
+    "connection": "google-oauth2",
+    "app_state": {"return_to": "http://localhost:3000/profile"}
+}
+unlink_user_url = await server_client.start_unlink_user(options, store_options=store_options)
+
+# Later, when completing unlinking:
+result = await server_client.complete_unlink_user(callback_url, store_options=store_options)
+print(result.get("app_state").get("return_to"))  # Should output "http://localhost:3000/profile"
+```
+
+### Passing Store Options
+
+Every method that interacts with the state or transaction store accepts a second parameter, `store_options`. This parameter should include the HTTP request and response objects (or equivalents) needed to manage cookies or sessions.
+
+```python
+store_options = {"request": request, "response": response}
+unlink_user_url = await server_client.start_unlink_user(options, store_options=store_options)
+```
+
+Read more above in [Configuring the Transaction and State Store](./ConfigureStore.md).
+
+## Complete Unlinking The User
+
+After the user has been redirected back to your application (at the `redirect_uri`), you need to complete the unlinking process. This is done by calling `complete_unlink_user()`, which extracts the necessary parameters from the callback URL and returns the `app_state`.
+
+```python
+# Complete the unlinking process:
+result = await server_client.complete_unlink_user(callback_url, store_options=store_options)
+
+# Retrieve the app_state:
+print(result.get("app_state").get("return_to"))
+```
+
+> [!NOTE]
+> The URL passed to `complete_unlink_user()` should be the full callback URL from Auth0, including the `state` and `code` parameters.
+
+### Passing Store Options
+
+Just like most methods, `complete_unlink_user()` accepts a second argument that is used to pass to the configured Transaction and State Store:
+
+```python
+store_options = {"request": request, "response": response}
+result = await server_client.complete_unlink_user(callback_url, store_options=store_options)
+```
+
+Read more above in [Configuring the Transaction and State Store](./ConfigureStore.md).
