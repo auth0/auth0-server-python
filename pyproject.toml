@@ -22,7 +22,7 @@ jwcrypto = "^1.5.6"
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.2"
 pytest-cov = "^4.0"
-pytest-asyncio = "^0.20.3"
+pytest-asyncio = ">=0.20.3,<0.24.0"
 pytest-mock = "^3.14.0"
 twine = "^6.1.0"
 ruff = "^0.1.0"
