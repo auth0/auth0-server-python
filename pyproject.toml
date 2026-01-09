@@ -25,7 +25,7 @@ pytest-cov = "^4.0"
 pytest-asyncio = ">=0.20.3,<0.24.0"
 pytest-mock = "^3.14.0"
 twine = "^6.1.0"
-ruff = "^0.1.0"
+ruff = ">=0.1,<0.15"
 
 [tool.pytest.ini_options]
 addopts = "--cov=auth0_server_python --cov-report=term-missing:skip-covered --cov-report=xml"
