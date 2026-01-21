@@ -21,6 +21,7 @@ from auth0_server_python.auth_types import (
     LogoutTokenClaims,
     StartInteractiveLoginOptions,
     StateData,
+    TokenByPasswordOptions,
     TokenSet,
     TransactionData,
     UserClaims,
@@ -36,6 +37,7 @@ from auth0_server_python.error import (
     MissingTransactionError,
     PollingApiError,
     StartLinkUserError,
+    TokenByPasswordError,
 )
 from auth0_server_python.utils import PKCE, URL, State
 from authlib.integrations.base_client.errors import OAuthError
@@ -1471,3 +1473,192 @@ class ServerClient(Generic[TStoreOptions]):
             await self._transaction_store.delete(transaction_identifier, options=store_options)
 
         return response
+
+    async def get_token_by_password(
+        self,
+        options: TokenByPasswordOptions,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        """
+        Authenticates a user using the Resource Owner Password Grant flow.
+
+        IMPORTANT: This flow should ONLY be used by highly-trusted first-party applications.
+        It requires users to expose their credentials directly to the application.
+        Prefer Authorization Code Flow with PKCE for better security whenever possible.
+
+        This method:
+        1. Sends username/password to Auth0's token endpoint
+        2. Returns tokens (access_token, id_token, refresh_token if configured)
+        3. Updates the state store with the new session
+
+        Args:
+            options: Configuration for password-based authentication including username, password,
+                     and optional parameters (audience, scope, realm, auth0_forwarded_for)
+            store_options: Optional options to pass to the state store
+
+        Returns:
+            Dictionary containing:
+            - state_data: The new session data (user claims, tokens)
+            - authorization_details: (Optional) RAR details if returned
+
+        Raises:
+            TokenByPasswordError: When authentication fails due to invalid credentials,
+                                 blocked account, or other authentication errors
+            MissingRequiredArgumentError: When username or password is missing
+            ApiError: When there are network or configuration errors
+
+        Example:
+            ```python
+            result = await auth0.get_token_by_password(
+                TokenByPasswordOptions(
+                    username="user@example.com",
+                    password="secure_password",
+                    audience="https://api.example.com",
+                    scope="openid profile email",
+                    realm="Username-Password-Authentication"
+                )
+            )
+
+            user = result["state_data"]["user"]
+            print(f"Logged in as: {user['email']}")
+            ```
+
+        See:
+            https://auth0.com/docs/get-started/authentication-and-authorization-flow/resource-owner-password-flow
+        """
+        # Validate required fields (Pydantic handles this, but be explicit)
+        if not options.username:
+            raise MissingRequiredArgumentError("username")
+        if not options.password:
+            raise MissingRequiredArgumentError("password")
+
+        try:
+            # Fetch OIDC metadata if not already cached
+            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
+                self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+
+            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            if not token_endpoint:
+                raise ApiError("configuration_error",
+                               "Token endpoint missing in OIDC metadata")
+
+            # Build request parameters
+            params = {
+                "grant_type": "password",
+                "username": options.username,
+                "password": options.password,
+                "client_id": self._client_id,
+            }
+
+            # Add optional parameters
+            if options.audience:
+                params["audience"] = options.audience
+            if options.scope:
+                params["scope"] = options.scope
+            if options.realm:
+                params["realm"] = options.realm
+
+            # Build custom headers for IP forwarding (server-side use case)
+            headers = {}
+            if options.auth0_forwarded_for:
+                headers["auth0-forwarded-for"] = options.auth0_forwarded_for
+
+            # Make the token request
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    token_endpoint,
+                    data=params,
+                    headers=headers,
+                    auth=(self._client_id, self._client_secret)
+                )
+
+                # Handle error responses
+                if response.status_code != 200:
+                    error_data = response.json() if response.headers.get(
+                        "content-type", "").startswith("application/json") else {}
+                    error_code = error_data.get("error", "unknown_error")
+                    error_description = error_data.get(
+                        "error_description", f"Password authentication failed with status {response.status_code}")
+
+                    # Map specific error codes to user-friendly messages
+                    if error_code == "invalid_grant":
+                        error_description = "Invalid credentials or user does not exist"
+                    elif error_code == "access_denied":
+                        error_description = "User account is blocked or suspended"
+                    elif error_code == "mfa_required":
+                        error_description = "Multi-factor authentication is required. ROPG does not support MFA flows."
+                    elif error_code == "invalid_scope":
+                        error_description = "The requested scope is invalid for the specified audience"
+                    elif response.status_code == 429:
+                        error_description = "Too many authentication attempts. Please try again later."
+
+                    raise TokenByPasswordError(
+                        f"Password authentication failed: {error_description}"
+                    )
+
+                # Parse token response
+                try:
+                    token_response = response.json()
+                except json.JSONDecodeError:
+                    raise ApiError(
+                        "invalid_response",
+                        "Failed to parse token response as JSON"
+                    )
+
+            # Extract user claims from id_token
+            user_claims = None
+            id_token = token_response.get("id_token")
+            if id_token:
+                claims = jwt.decode(id_token, options={"verify_signature": False})
+                user_claims = UserClaims.parse_obj(claims)
+
+            # Determine audience for token set
+            audience = options.audience or self._default_authorization_params.get(
+                "audience", self.DEFAULT_AUDIENCE_STATE_KEY)
+
+            # Build a token set using the token response data
+            token_set = TokenSet(
+                audience=audience,
+                access_token=token_response.get("access_token", ""),
+                scope=token_response.get("scope", ""),
+                expires_at=int(time.time()) + token_response.get("expires_in", 3600)
+            )
+
+            # Generate a session id (sid)
+            sid = claims.get("sid") if id_token and "sid" in claims else PKCE.generate_random_string(32)
+
+            # Construct state data to represent the session
+            state_data = StateData(
+                user=user_claims,
+                id_token=id_token,
+                refresh_token=token_response.get("refresh_token"),  # might be None
+                token_sets=[token_set],
+                internal={
+                    "sid": sid,
+                    "created_at": int(time.time())
+                }
+            )
+
+            # Store the state data in the state store
+            await self._state_store.set(self._state_identifier, state_data, options=store_options)
+
+            # Build result
+            result = {"state_data": state_data.dict()}
+
+            # Include RAR authorization_details if present
+            authorization_details = token_response.get("authorization_details")
+            if authorization_details:
+                result["authorization_details"] = authorization_details
+
+            return result
+
+        except TokenByPasswordError:
+            # Re-raise TokenByPasswordError as-is
+            raise
+        except Exception as e:
+            if isinstance(e, ApiError):
+                raise
+            raise TokenByPasswordError(
+                f"Password authentication failed: {str(e) or 'Unknown error'}",
+                e
+            )

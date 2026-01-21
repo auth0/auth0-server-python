@@ -104,6 +104,56 @@ async def callback(request: Request):
     return RedirectResponse(url="/")
 ```
 
+### 4. Resource Owner Password Grant (Direct Authentication)
+
+> [!WARNING]
+> The Resource Owner Password Grant flow should **ONLY** be used by highly-trusted first-party applications where redirect-based flows cannot be used. This flow requires users to expose their credentials directly to the application.
+>
+> **Always prefer the Authorization Code Flow with PKCE** (interactive login above) for better security when possible.
+
+For scenarios where redirect-based flows are not feasible, you can authenticate users directly with their username and password:
+
+```python
+from auth0_server_python.auth_types import TokenByPasswordOptions
+
+# Basic password authentication
+result = await auth0.get_token_by_password(
+    TokenByPasswordOptions(
+        username="user@example.com",
+        password="secure_password"
+    )
+)
+
+# Access the authenticated user
+user = result["state_data"]["user"]
+print(f"Logged in as: {user['email']}")
+```
+
+#### Server-Side IP Forwarding
+
+When calling this endpoint from a server, you can forward the end-user's IP address for security and auditing purposes:
+
+```python
+# In a server-side application (e.g., FastAPI backend)
+@app.post("/api/auth/login")
+async def login(request: Request, credentials: LoginCredentials):
+    # Get the end-user's IP address
+    client_ip = request.client.host
+
+    result = await auth0.get_token_by_password(
+        TokenByPasswordOptions(
+            username=credentials.username,
+            password=credentials.password,
+            auth0_forwarded_for=client_ip  # Forward the end-user's IP
+        )
+    )
+    return result
+```
+
+For more examples including realm specification and audience/scope usage, see [examples/ResourceOwnerPasswordGrant.md](examples/ResourceOwnerPasswordGrant.md).
+
+**Learn more:** [Resource Owner Password Flow Documentation](https://auth0.com/docs/get-started/authentication-and-authorization-flow/resource-owner-password-flow)
+
 ## Feedback
 
 ### Contributing

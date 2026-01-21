@@ -153,3 +153,21 @@ class AccessTokenForConnectionErrorCode:
     FAILED_TO_RETRIEVE = "failed_to_retrieve"
     API_ERROR = "api_error"
     FETCH_ERROR = "retrieval_error"
+
+
+class TokenByPasswordError(ApiError):
+    """
+    Error raised when Resource Owner Password Grant authentication fails.
+
+    This typically occurs when:
+    - Invalid credentials provided
+    - User account is blocked or suspended
+    - Realm does not exist or is misconfigured
+    - MFA is required but not provided (ROPG does not support MFA flows)
+    - Rate limit exceeded due to too many failed attempts
+    """
+    code = "token_by_password_error"
+
+    def __init__(self, message: str, cause=None):
+        super().__init__("token_by_password_error", message, cause)
+        self.name = "TokenByPasswordError"

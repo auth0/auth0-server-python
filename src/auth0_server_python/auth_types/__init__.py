@@ -252,3 +252,25 @@ class CompleteConnectAccountResponse(BaseModel):
     created_at: str
     expires_at: Optional[str] = None
     app_state: Optional[Any] = None
+
+class TokenByPasswordOptions(BaseModel):
+    """
+    Options for Resource Owner Password Grant authentication.
+
+    Warning:
+        This flow should only be used by highly-trusted applications.
+        Prefer redirect-based flows (Authorization Code Flow) whenever possible.
+        Credentials are sent directly to Auth0 and must be handled securely.
+
+    See:
+        https://auth0.com/docs/get-started/authentication-and-authorization-flow/resource-owner-password-flow
+    """
+    username: str = Field(..., description="The user's username or email")
+    password: str = Field(..., description="The user's password")
+    audience: Optional[str] = Field(None, description="The API audience for the access token")
+    scope: Optional[str] = Field(None, description="Space-separated list of scopes (e.g., 'openid profile email')")
+    realm: Optional[str] = Field(None, description="The realm to authenticate against (e.g., 'Username-Password-Authentication')")
+    auth0_forwarded_for: Optional[str] = Field(None, description="End-user's IP address (server-side only, sets auth0-forwarded-for header)")
+
+    class Config:
+        extra = "forbid"  # Strict validation - reject unknown fields
