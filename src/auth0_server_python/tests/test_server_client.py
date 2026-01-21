@@ -13,6 +13,7 @@ from auth0_server_python.auth_types import (
     ConnectAccountResponse,
     ConnectParams,
     LogoutOptions,
+    TokenByPasswordOptions,
     TransactionData,
 )
 from auth0_server_python.error import (
@@ -23,6 +24,7 @@ from auth0_server_python.error import (
     MissingTransactionError,
     PollingApiError,
     StartLinkUserError,
+    TokenByPasswordError,
 )
 from auth0_server_python.utils import PKCE
 
@@ -1932,3 +1934,627 @@ async def test_complete_connect_account_no_transactions(mocker):
     # Assert
     assert "transaction" in str(exc.value)
     mock_my_account_client.complete_connect_account.assert_not_awaited()
+
+
+# ==========================================
+# Resource Owner Password Grant Tests
+# ==========================================
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_success_basic(mocker):
+    """
+    Test basic password authentication with username and password only.
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "access_token_value",
+        "id_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhdXRoMHwxMjM0NTYiLCJlbWFpbCI6InVzZXJAZXhhbXBsZS5jb20iLCJzaWQiOiJzZXNzaW9uX2lkIn0.fakesignature",
+        "refresh_token": "refresh_token_value",
+        "scope": "openid profile email",
+        "expires_in": 3600,
+        "token_type": "Bearer"
+    }
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    result = await client.get_token_by_password(
+        TokenByPasswordOptions(
+            username="user@example.com",
+            password="secure_password"
+        )
+    )
+
+    # Assert
+    assert "state_data" in result
+    assert result["state_data"]["user"]["sub"] == "auth0|123456"
+    assert result["state_data"]["user"]["email"] == "user@example.com"
+    assert result["state_data"]["id_token"] is not None
+    assert result["state_data"]["refresh_token"] == "refresh_token_value"
+    assert len(result["state_data"]["token_sets"]) == 1
+    assert result["state_data"]["token_sets"][0]["access_token"] == "access_token_value"
+
+    # Verify the HTTP request was made correctly
+    mock_httpx_client.post.assert_called_once()
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[0][0] == "https://auth0.local/oauth/token"
+    assert call_args[1]["data"]["grant_type"] == "password"
+    assert call_args[1]["data"]["username"] == "user@example.com"
+    assert call_args[1]["data"]["password"] == "secure_password"
+    assert call_args[1]["data"]["client_id"] == "<client_id>"
+
+    # Verify state was stored
+    mock_state_store.set.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_with_all_options(mocker):
+    """
+    Test password authentication with all optional parameters (audience, scope, realm).
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "access_token_value",
+        "id_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhdXRoMHwxMjM0NTYiLCJlbWFpbCI6InVzZXJAZXhhbXBsZS5jb20ifQ.fakesignature",
+        "scope": "openid profile email",
+        "expires_in": 3600
+    }
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    result = await client.get_token_by_password(
+        TokenByPasswordOptions(
+            username="user@example.com",
+            password="secure_password",
+            audience="https://api.example.com",
+            scope="openid profile email offline_access",
+            realm="Username-Password-Authentication"
+        )
+    )
+
+    # Assert
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[1]["data"]["audience"] == "https://api.example.com"
+    assert call_args[1]["data"]["scope"] == "openid profile email offline_access"
+    assert call_args[1]["data"]["realm"] == "Username-Password-Authentication"
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_with_ip_forwarding(mocker):
+    """
+    Test password authentication with auth0_forwarded_for header (IP forwarding).
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "access_token_value",
+        "id_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhdXRoMHwxMjM0NTYifQ.fakesignature",
+        "expires_in": 3600
+    }
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    await client.get_token_by_password(
+        TokenByPasswordOptions(
+            username="user@example.com",
+            password="secure_password",
+            auth0_forwarded_for="203.0.113.42"
+        )
+    )
+
+    # Assert - verify the custom header was set
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[1]["headers"]["auth0-forwarded-for"] == "203.0.113.42"
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_without_ip_forwarding(mocker):
+    """
+    Test that auth0-forwarded-for header is not included when not provided.
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "access_token_value",
+        "id_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhdXRoMHwxMjM0NTYifQ.fakesignature",
+        "expires_in": 3600
+    }
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    await client.get_token_by_password(
+        TokenByPasswordOptions(
+            username="user@example.com",
+            password="secure_password"
+        )
+    )
+
+    # Assert - verify headers is empty
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[1]["headers"] == {}
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_with_rar(mocker):
+    """
+    Test password authentication with Rich Authorization Requests (RAR).
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response with authorization_details
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "access_token_value",
+        "id_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhdXRoMHwxMjM0NTYifQ.fakesignature",
+        "expires_in": 3600,
+        "authorization_details": [{"type": "test_type"}]
+    }
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    result = await client.get_token_by_password(
+        TokenByPasswordOptions(
+            username="user@example.com",
+            password="secure_password"
+        )
+    )
+
+    # Assert
+    assert "authorization_details" in result
+    assert result["authorization_details"] == [{"type": "test_type"}]
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_invalid_credentials(mocker):
+    """
+    Test password authentication with invalid credentials.
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response with error
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.headers.get.return_value = "application/json"
+    mock_response.json.return_value = {
+        "error": "invalid_grant",
+        "error_description": "Wrong email or password."
+    }
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act & Assert
+    with pytest.raises(TokenByPasswordError) as exc:
+        await client.get_token_by_password(
+            TokenByPasswordOptions(
+                username="user@example.com",
+                password="wrong_password"
+            )
+        )
+    assert "Invalid credentials or user does not exist" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_account_blocked(mocker):
+    """
+    Test password authentication when account is blocked.
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response with access_denied
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.headers.get.return_value = "application/json"
+    mock_response.json.return_value = {
+        "error": "access_denied",
+        "error_description": "Account blocked"
+    }
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act & Assert
+    with pytest.raises(TokenByPasswordError) as exc:
+        await client.get_token_by_password(
+            TokenByPasswordOptions(
+                username="user@example.com",
+                password="password"
+            )
+        )
+    assert "blocked or suspended" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_mfa_required(mocker):
+    """
+    Test password authentication when MFA is required.
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response with mfa_required
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.headers.get.return_value = "application/json"
+    mock_response.json.return_value = {
+        "error": "mfa_required",
+        "error_description": "MFA is required"
+    }
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act & Assert
+    with pytest.raises(TokenByPasswordError) as exc:
+        await client.get_token_by_password(
+            TokenByPasswordOptions(
+                username="user@example.com",
+                password="password"
+            )
+        )
+    assert "ROPG does not support MFA" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_rate_limited(mocker):
+    """
+    Test password authentication when rate limited.
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response with rate limit error
+    mock_response = MagicMock()
+    mock_response.status_code = 429
+    mock_response.headers.get.return_value = "application/json"
+    mock_response.json.return_value = {
+        "error": "too_many_requests",
+        "error_description": "Rate limit exceeded"
+    }
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act & Assert
+    with pytest.raises(TokenByPasswordError) as exc:
+        await client.get_token_by_password(
+            TokenByPasswordOptions(
+                username="user@example.com",
+                password="password"
+            )
+        )
+    assert "Too many authentication attempts" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_invalid_scope(mocker):
+    """
+    Test password authentication with invalid scope.
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response with invalid_scope error
+    mock_response = MagicMock()
+    mock_response.status_code = 400
+    mock_response.headers.get.return_value = "application/json"
+    mock_response.json.return_value = {
+        "error": "invalid_scope",
+        "error_description": "Scope not allowed"
+    }
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act & Assert
+    with pytest.raises(TokenByPasswordError) as exc:
+        await client.get_token_by_password(
+            TokenByPasswordOptions(
+                username="user@example.com",
+                password="password",
+                scope="invalid_scope"
+            )
+        )
+    assert "invalid for the specified audience" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_missing_username():
+    """
+    Test password authentication with missing username.
+    """
+    # Pydantic validation should catch this at construction time
+    with pytest.raises(Exception):  # Pydantic ValidationError
+        TokenByPasswordOptions(
+            password="password"
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_missing_password():
+    """
+    Test password authentication with missing password.
+    """
+    # Pydantic validation should catch this at construction time
+    with pytest.raises(Exception):  # Pydantic ValidationError
+        TokenByPasswordOptions(
+            username="user@example.com"
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_token_by_password_invalid_json_response(mocker):
+    """
+    Test password authentication with malformed JSON response.
+    """
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response with invalid JSON
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.side_effect = json.JSONDecodeError("Invalid JSON", "", 0)
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act & Assert
+    with pytest.raises(ApiError) as exc:
+        await client.get_token_by_password(
+            TokenByPasswordOptions(
+                username="user@example.com",
+                password="password"
+            )
+        )
+    assert "Failed to parse" in str(exc.value)
