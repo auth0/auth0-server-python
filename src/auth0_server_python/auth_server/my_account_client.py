@@ -22,7 +22,6 @@ from auth0_server_python.error import (
 class MyAccountClient:
     """
     Client for interacting with the Auth0 MyAccount API.
-    Handles connected accounts operations including connecting, completing, listing, and deleting accounts.
     """
 
     def __init__(self, domain: str):
@@ -30,7 +29,7 @@ class MyAccountClient:
         Initialize the MyAccount API client.
 
         Args:
-            domain: Auth0 domain (e.g., 'your-tenant.auth0.com')
+            domain: Auth0 domain (e.g., '<tenant>.<locality>.auth0.com')
         """
         self._domain = domain
 
