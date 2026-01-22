@@ -213,8 +213,32 @@ class StartLinkUserOptions(BaseModel):
     authorization_params: Optional[dict[str, Any]] = None
     app_state: Optional[Any] = None
 
-class ConnectParams(BaseModel):
-    ticket: str
+# BASE & SHARED
+class ConnectedAccountBase(BaseModel):
+    id: str
+    connection: str
+    access_type: str
+    scopes: list[str]
+    created_at: str
+    expires_at: Optional[str] = None
+
+# ENTITIES (What exists)
+class ConnectedAccount(ConnectedAccountBase):
+    id: str
+    connection: str
+    access_type: str
+    scopes: list[str]
+    created_at: str
+    expires_at: Optional[str] = None
+
+
+class ConnectedAccountConnection(BaseModel):
+    name: str
+    strategy: str
+    scopes: Optional[list[str]] = None
+
+
+# Connect Operations (How to connect)
 
 class ConnectAccountOptions(BaseModel):
     connection: str
@@ -232,6 +256,9 @@ class ConnectAccountRequest(BaseModel):
     code_challenge_method: Optional[str] = 'S256'
     authorization_params: Optional[dict[str, Any]] = None
 
+class ConnectParams(BaseModel):
+    ticket: str
+
 class ConnectAccountResponse(BaseModel):
     auth_session: str
     connect_uri: str
@@ -244,11 +271,15 @@ class CompleteConnectAccountRequest(BaseModel):
     redirect_uri: str
     code_verifier: Optional[str] = None
 
-class CompleteConnectAccountResponse(BaseModel):
-    id: str
-    connection: str
-    access_type: str
-    scopes: list[str]
-    created_at: str
-    expires_at: Optional[str] = None
+class CompleteConnectAccountResponse(ConnectedAccountBase):
     app_state: Optional[Any] = None
+
+# Manage operations
+class ListConnectedAccountsResponse(BaseModel):
+    accounts: list[ConnectedAccount]
+    next: Optional[str] = None
+
+class ListConnectedAccountConnectionsResponse(BaseModel):
+    connections: list[ConnectedAccountConnection]
+    next: Optional[str] = None
+
