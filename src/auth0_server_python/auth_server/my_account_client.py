@@ -20,11 +20,28 @@ from auth0_server_python.error import (
 
 
 class MyAccountClient:
+    """
+    Client for interacting with the Auth0 MyAccount API.
+    Handles connected accounts operations including connecting, completing, listing, and deleting accounts.
+    """
+
     def __init__(self, domain: str):
+        """
+        Initialize the MyAccount API client.
+
+        Args:
+            domain: Auth0 domain (e.g., 'your-tenant.auth0.com')
+        """
         self._domain = domain
 
     @property
     def audience(self):
+        """
+        Get the MyAccount API audience URL.
+
+        Returns:
+            The audience URL for the MyAccount API
+        """
         return f"https://{self._domain}/me/"
 
     async def connect_account(
@@ -32,6 +49,20 @@ class MyAccountClient:
         access_token: str,
         request: ConnectAccountRequest
     ) -> ConnectAccountResponse:
+        """
+        Initiate the connected account flow.
+
+        Args:
+            access_token: User's access token for authentication
+            request: Request containing connection details and configuration
+
+        Returns:
+            Response containing the connect URI and authentication session details
+
+        Raises:
+            MyAccountApiError: If the API returns an error response
+            ApiError: If the request fails due to network or other issues
+        """
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -68,6 +99,20 @@ class MyAccountClient:
         access_token: str,
         request: CompleteConnectAccountRequest
     ) -> CompleteConnectAccountResponse:
+        """
+        Complete the connected account flow after user authorization.
+
+        Args:
+            access_token: User's access token for authentication
+            request: Request containing the auth session, connect code, and redirect URI
+
+        Returns:
+            Response containing the connected account details including ID, connection, and scopes
+
+        Raises:
+            MyAccountApiError: If the API returns an error response
+            ApiError: If the request fails due to network or other issues
+        """
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -106,6 +151,24 @@ class MyAccountClient:
         from_param: Optional[str] = None,
         take: Optional[int] = None
     ) -> ListConnectedAccountsResponse:
+        """
+        List connected accounts for the authenticated user.
+
+        Args:
+            access_token: User's access token for authentication
+            connection: Optional filter to list accounts for a specific connection
+            from_param: Optional pagination cursor for fetching next page of results
+            take: Optional number of results to return (must be a positive integer)
+
+        Returns:
+            Response containing the list of connected accounts and pagination details
+
+        Raises:
+            MissingRequiredArgumentError: If access_token is not provided
+            InvalidArgumentError: If take parameter is not a positive integer
+            MyAccountApiError: If the API returns an error response
+            ApiError: If the request fails due to network or other issues
+        """
         if access_token is None:
             raise MissingRequiredArgumentError("access_token")
 
@@ -157,6 +220,21 @@ class MyAccountClient:
         access_token: str,
         connected_account_id: str
     ) -> None:
+        """
+        Delete a connected account for the authenticated user.
+
+        Args:
+            access_token: User's access token for authentication
+            connected_account_id: ID of the connected account to delete
+
+        Returns:
+            None
+
+        Raises:
+            MissingRequiredArgumentError: If access_token or connected_account_id is not provided
+            MyAccountApiError: If the API returns an error response
+            ApiError: If the request fails due to network or other issues
+        """
 
         if access_token is None:
             raise MissingRequiredArgumentError("access_token")
@@ -196,6 +274,23 @@ class MyAccountClient:
         from_param: Optional[str] = None,
         take: Optional[int] = None
     ) -> ListConnectedAccountConnectionsResponse:
+        """
+        List available connections that support connected accounts.
+
+        Args:
+            access_token: User's access token for authentication
+            from_param: Optional pagination cursor for fetching next page of results
+            take: Optional number of results to return (must be a positive integer)
+
+        Returns:
+            Response containing the list of available connections and pagination details
+
+        Raises:
+            MissingRequiredArgumentError: If access_token is not provided
+            InvalidArgumentError: If take parameter is not a positive integer
+            MyAccountApiError: If the API returns an error response
+            ApiError: If the request fails due to network or other issues
+        """
         if access_token is None:
             raise MissingRequiredArgumentError("access_token")
 
