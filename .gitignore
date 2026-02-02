@@ -24,4 +24,6 @@ test.py
 test-script.py
 .coverage
 coverage.xml
-
+examples/mcd-poc
+IMPLEMENTATION_NOTES.md
+examples/MCD_DEVELOPER_GUIDE.md

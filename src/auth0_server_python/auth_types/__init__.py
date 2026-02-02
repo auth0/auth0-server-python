@@ -66,6 +66,7 @@ class SessionData(BaseModel):
     refresh_token: Optional[str] = None
     token_sets: list[TokenSet] = Field(default_factory=list)
     connection_token_sets: list[ConnectionTokenSet] = Field(default_factory=list)
+    domain: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
@@ -89,6 +90,8 @@ class TransactionData(BaseModel):
     app_state: Optional[Any] = None
     auth_session: Optional[str] = None
     redirect_uri: Optional[str] = None
+    origin_domain: Optional[str] = None
+    origin_issuer: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
@@ -252,3 +255,23 @@ class CompleteConnectAccountResponse(BaseModel):
     created_at: str
     expires_at: Optional[str] = None
     app_state: Optional[Any] = None
+
+
+class DomainResolverContext(BaseModel):
+    """
+    Context passed to domain resolver function for MCD support.
+    
+    Contains request information needed to determine the correct Auth0 domain
+    based on the incoming request's hostname or headers.
+    
+    Attributes:
+        request_url: The full request URL (e.g., "https://a.my-app.com/auth/login")
+        request_headers: Dictionary of request headers (e.g., {"host": "a.my-app.com", "x-forwarded-host": "..."})
+    
+    Example:
+        async def domain_resolver(context: DomainResolverContext) -> str:
+            host = context.request_headers.get('host', '').split(':')[0]
+            return DOMAIN_MAP.get(host, DEFAULT_DOMAIN)
+    """
+    request_url: Optional[str] = None
+    request_headers: Optional[dict[str, str]] = None

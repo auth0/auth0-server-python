@@ -101,6 +101,18 @@ class MissingRequiredArgumentError(Auth0Error):
         self.argument = argument
 
 
+class ConfigurationError(Auth0Error):
+    """
+    Error raised when SDK configuration is invalid.
+    This includes invalid combinations of parameters or incorrect configuration values.
+    """
+    code = "configuration_error"
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.name = "ConfigurationError"
+
+
 class BackchannelLogoutError(Auth0Error):
     """
     Error raised during backchannel logout processing.
@@ -111,6 +123,21 @@ class BackchannelLogoutError(Auth0Error):
     def __init__(self, message: str):
         super().__init__(message)
         self.name = "BackchannelLogoutError"
+
+
+class DomainResolverError(Auth0Error):
+    """
+    Error raised when domain resolver function fails or returns invalid value.
+    
+    This error indicates an issue with the custom domain resolver function
+    provided for MCD (Multiple Custom Domains) support.
+    """
+    code = "domain_resolver_error"
+
+    def __init__(self, message: str, original_error: Exception = None):
+        super().__init__(message)
+        self.name = "DomainResolverError"
+        self.original_error = original_error
 
 
 class AccessTokenForConnectionError(Auth0Error):
