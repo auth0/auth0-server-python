@@ -4,6 +4,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from pydantic_core import ValidationError
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.server_client import ServerClient
 from auth0_server_python.auth_types import (
@@ -2135,14 +2136,13 @@ async def test_custom_token_exchange_empty_token():
     )
 
     # Act & Assert - empty token
-    with pytest.raises(CustomTokenExchangeError) as exc:
+    with pytest.raises(ValidationError) as exc:
         await client.custom_token_exchange(
             CustomTokenExchangeOptions(
                 subject_token="   ",
                 subject_token_type="urn:acme:mcp-token"
             )
         )
-    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT
     assert "empty or whitespace" in str(exc.value).lower()
 
 
@@ -2160,14 +2160,13 @@ async def test_custom_token_exchange_bearer_prefix():
     )
 
     # Act & Assert
-    with pytest.raises(CustomTokenExchangeError) as exc:
+    with pytest.raises(ValidationError) as exc:
         await client.custom_token_exchange(
             CustomTokenExchangeOptions(
                 subject_token="Bearer abc123",
                 subject_token_type="urn:ietf:params:oauth:token-type:access_token"
             )
         )
-    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT
     assert "Bearer" in str(exc.value)
 
 
@@ -2185,7 +2184,7 @@ async def test_custom_token_exchange_missing_actor_token_type():
     )
 
     # Act & Assert
-    with pytest.raises(CustomTokenExchangeError) as exc:
+    with pytest.raises(ValidationError) as exc:
         await client.custom_token_exchange(
             CustomTokenExchangeOptions(
                 subject_token="token",
@@ -2194,7 +2193,6 @@ async def test_custom_token_exchange_missing_actor_token_type():
                 actor_token_type=None
             )
         )
-    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT
     assert "actor_token_type" in str(exc.value).lower()
 
 
@@ -2500,7 +2498,7 @@ async def test_login_with_custom_token_exchange_success(mocker):
     )
 
     # Assert
-    assert "state_data" in result.state_data
+    assert result.state_data is not None
     assert result.state_data["user"]["sub"] == "user123"
     assert result.state_data["user"]["name"] == "John Doe"
     assert result.state_data["id_token"] == id_token
