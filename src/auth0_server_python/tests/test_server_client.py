@@ -2307,11 +2307,12 @@ async def test_oidc_metadata_caching():
     result1 = await client._get_oidc_metadata_cached("tenant.auth0.com")
     assert result1 == mock_metadata
     assert fetch_count == 1
+    first_fetch_count = fetch_count
 
     # Second call - should use cache
     result2 = await client._get_oidc_metadata_cached("tenant.auth0.com")
     assert result2 == mock_metadata
-    assert fetch_count == 1  # Should NOT increment
+    assert fetch_count == first_fetch_count  # Should NOT increment
 
     # Verify cache contains data
     assert "tenant.auth0.com" in client._metadata_cache
@@ -2394,11 +2395,12 @@ async def test_jwks_caching():
     result1 = await client._get_jwks_cached("tenant.auth0.com", mock_metadata)
     assert result1 == mock_jwks
     assert fetch_count == 1
+    first_fetch_count = fetch_count
 
     # Second call - should use cache
     result2 = await client._get_jwks_cached("tenant.auth0.com", mock_metadata)
     assert result2 == mock_jwks
-    assert fetch_count == 1  # Should NOT increment
+    assert fetch_count == first_fetch_count  # Should NOT increment
 
 
 @pytest.mark.asyncio
