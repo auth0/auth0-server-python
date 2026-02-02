@@ -153,3 +153,22 @@ class AccessTokenForConnectionErrorCode:
     FAILED_TO_RETRIEVE = "failed_to_retrieve"
     API_ERROR = "api_error"
     FETCH_ERROR = "retrieval_error"
+
+
+class CustomTokenExchangeError(Auth0Error):
+    """
+    Error raised during custom token exchange operations.
+    """
+    def __init__(self, code: str, message: str, cause=None):
+        super().__init__(message)
+        self.code = code
+        self.name = "CustomTokenExchangeError"
+        self.cause = cause
+
+
+class CustomTokenExchangeErrorCode:
+    """Error codes for custom token exchange operations."""
+    INVALID_TOKEN_FORMAT = "invalid_token_format"
+    MISSING_ACTOR_TOKEN_TYPE = "missing_actor_token_type"
+    TOKEN_EXCHANGE_FAILED = "token_exchange_failed"
+    INVALID_RESPONSE = "invalid_response"
