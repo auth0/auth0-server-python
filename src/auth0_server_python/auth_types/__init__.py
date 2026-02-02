@@ -265,6 +265,7 @@ class CustomTokenExchangeOptions(BaseModel):
         scope: Space-delimited list of scopes (optional)
         actor_token: Security token representing the acting party (optional)
         actor_token_type: Type of actor token (required if actor_token present)
+        organization: Organization identifier for the token exchange (optional)
         authorization_params: Additional OAuth parameters (optional)
     """
     subject_token: str = Field(..., min_length=1)
@@ -273,6 +274,7 @@ class CustomTokenExchangeOptions(BaseModel):
     scope: Optional[str] = None
     actor_token: Optional[str] = None
     actor_token_type: Optional[str] = None
+    organization: Optional[str] = None
     authorization_params: Optional[dict[str, Any]] = None
 
     @field_validator('subject_token', 'actor_token')
@@ -328,6 +330,7 @@ class LoginWithCustomTokenExchangeOptions(BaseModel):
     scope: Optional[str] = None
     actor_token: Optional[str] = None
     actor_token_type: Optional[str] = None
+    organization: Optional[str] = None
     authorization_params: Optional[dict[str, Any]] = None
 
     @field_validator('subject_token', 'actor_token')

@@ -2068,6 +2068,60 @@ async def test_custom_token_exchange_with_actor_token(mocker):
 
 
 @pytest.mark.asyncio
+async def test_custom_token_exchange_with_organization(mocker):
+    """Test token exchange with organization parameter."""
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "org_scoped_token",
+        "token_type": "Bearer",
+        "expires_in": 3600
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    options = CustomTokenExchangeOptions(
+        subject_token="custom-token",
+        subject_token_type="urn:acme:mcp-token",
+        organization="org_abc1234"
+    )
+    result = await client.custom_token_exchange(options)
+
+    # Assert
+    assert result.access_token == "org_scoped_token"
+
+    # Verify organization param was sent
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[1]["data"]["organization"] == "org_abc1234"
+
+
+@pytest.mark.asyncio
 async def test_custom_token_exchange_empty_token():
     """Test that empty/whitespace tokens are rejected."""
     # Setup

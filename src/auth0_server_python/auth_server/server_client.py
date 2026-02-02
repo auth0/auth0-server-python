@@ -1546,6 +1546,9 @@ class ServerClient(Generic[TStoreOptions]):
                 params["actor_token"] = options.actor_token
                 params["actor_token_type"] = options.actor_token_type
 
+            if options.organization:
+                params["organization"] = options.organization
+
             # Merge additional authorization params
             if options.authorization_params:
                 # Prevent override of critical parameters

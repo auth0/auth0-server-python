@@ -90,7 +90,6 @@ response = await auth0.custom_token_exchange(
         subject_token_type="urn:acme:mcp-token",
         audience="https://api.example.com",
         authorization_params={
-            "organization": "org_123",
             "custom_field": "custom_value"
         }
     )
@@ -99,7 +98,22 @@ response = await auth0.custom_token_exchange(
 
 > **NOTE**: Critical parameters (`grant_type`, `client_id`, `subject_token`, `subject_token_type`) cannot be overridden via `authorization_params` for security reasons.
 
-## 5. Error Handling
+## 5. Organization Support
+
+Specify an organization when exchanging tokens.
+
+```python
+response = await auth0.custom_token_exchange(
+    CustomTokenExchangeOptions(
+        subject_token="custom-token",
+        subject_token_type="urn:acme:mcp-token",
+        audience="https://api.example.com",
+        organization="org_abc1234"
+    )
+)
+```
+
+## 6. Error Handling
 
 ```python
 from auth0_server_python.error import CustomTokenExchangeError
@@ -122,7 +136,7 @@ except CustomTokenExchangeError as e:
 - `TOKEN_EXCHANGE_FAILED`: General token exchange failure
 - `INVALID_RESPONSE`: Auth0 returned a non-JSON response
 
-## 6. Token Type URIs
+## 7. Token Type URIs
 
 Use standard URNs when possible:
 
