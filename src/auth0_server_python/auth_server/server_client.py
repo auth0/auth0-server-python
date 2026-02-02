@@ -184,7 +184,7 @@ class ServerClient(Generic[TStoreOptions]):
                 )
         else:
             origin_domain = self._domain
-        
+
         # Fetch OIDC metadata from resolved domain
         try:
             metadata = await self._get_oidc_metadata_cached(origin_domain)
@@ -243,7 +243,7 @@ class ServerClient(Generic[TStoreOptions]):
             transaction_data,
             options=store_options
         )
-        
+
         # Set metadata for OAuth client
         self._oauth.metadata = metadata
         # If PAR is enabled, use the PAR endpoint
@@ -339,7 +339,7 @@ class ServerClient(Generic[TStoreOptions]):
         # Get origin domain and issuer from transaction
         origin_domain = transaction_data.origin_domain
         origin_issuer = transaction_data.origin_issuer
-        
+
         # Fetch metadata from the origin domain
         metadata = await self._get_oidc_metadata_cached(origin_domain)
         self._oauth.metadata = metadata
@@ -365,32 +365,32 @@ class ServerClient(Generic[TStoreOptions]):
         user_info = token_response.get("userinfo")
         user_claims = None
         id_token = token_response.get("id_token")
-        
+
         if user_info:
             user_claims = UserClaims.parse_obj(user_info)
         elif id_token:
             # Fetch JWKS for signature verification (Requirement 3)
             jwks = await self._get_jwks_cached(origin_domain, metadata)
-            
+
             # Decode and verify ID token with signature verification enabled
             try:
                 # Get the signing key from JWKS
                 unverified_header = jwt.get_unverified_header(id_token)
                 kid = unverified_header.get("kid")
-                
+
                 # Find the key with matching kid
                 signing_key = None
                 for key in jwks.get("keys", []):
                     if key.get("kid") == kid:
                         signing_key = jwt.PyJWK.from_dict(key)
                         break
-                
+
                 if not signing_key:
                     raise ApiError(
                         "jwks_key_not_found",
                         f"No matching key found in JWKS for kid: {kid}"
                     )
-                
+
                 claims = jwt.decode(
                     id_token,
                     signing_key.key,
@@ -430,7 +430,7 @@ class ServerClient(Generic[TStoreOptions]):
                     f"ID token verification failed: {str(e)}",
                     e
                 )
-        
+
 
         # Build a token set using the token response data
         token_set = TokenSet(
@@ -708,11 +708,11 @@ class ServerClient(Generic[TStoreOptions]):
                         original_error=e
                     )
                 session_domain = getattr(state_data, 'domain', None)
-                
+
                 if session_domain and session_domain != current_domain:
                     # Session created with different domain - reject for security
                     return None
-            
+
             if hasattr(state_data, "dict") and callable(state_data.dict):
                 state_data = state_data.dict()
             return state_data.get("user")
@@ -745,11 +745,11 @@ class ServerClient(Generic[TStoreOptions]):
                         original_error=e
                     )
                 session_domain = getattr(state_data, 'domain', None)
-                
+
                 if session_domain and session_domain != current_domain:
                     # Session created with different domain - reject for security
                     return None
-            
+
             if hasattr(state_data, "dict") and callable(state_data.dict):
                 state_data = state_data.dict()
             session_data = {k: v for k, v in state_data.items()
@@ -793,7 +793,7 @@ class ServerClient(Generic[TStoreOptions]):
                     original_error=e
                 )
             session_domain = getattr(state_data, 'domain', None)
-            
+
             if session_domain and session_domain != current_domain:
                 # Session created with different domain - reject for security
                 raise AccessTokenError(
@@ -832,7 +832,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Get new token with refresh token
         try:
-            # Use session's domain for token refresh 
+            # Use session's domain for token refresh
             session_domain = state_data_dict.get("domain") or self._domain
             get_refresh_token_options = {
                 "refresh_token": state_data_dict["refresh_token"],
@@ -863,7 +863,7 @@ class ServerClient(Generic[TStoreOptions]):
                 f"Failed to get token with refresh token: {str(e)}"
             )
 
-   
+
 
     async def get_access_token_for_connection(
         self,
@@ -987,25 +987,25 @@ class ServerClient(Generic[TStoreOptions]):
         try:
             # Fetch JWKS for signature verification (Requirement 3)
             jwks = await self._get_jwks_cached(self._domain)
-            
+
             # Decode and verify logout token with signature verification enabled
             try:
                 # Get the signing key from JWKS
                 unverified_header = jwt.get_unverified_header(logout_token)
                 kid = unverified_header.get("kid")
-                
+
                 # Find the key with matching kid
                 signing_key = None
                 for key in jwks.get("keys", []):
                     if key.get("kid") == kid:
                         signing_key = jwt.PyJWK.from_dict(key)
                         break
-                
+
                 if not signing_key:
                     raise BackchannelLogoutError(
                         f"No matching key found in JWKS for kid: {kid}"
                     )
-                
+
                 claims = jwt.decode(
                     logout_token,
                     signing_key.key,
@@ -1071,47 +1071,47 @@ class ServerClient(Generic[TStoreOptions]):
     async def _get_oidc_metadata_cached(self, domain: str) -> dict:
         """
         Get OIDC metadata with caching.
-        
+
         Args:
             domain: Auth0 domain
-            
+
         Returns:
             OIDC metadata document
         """
         now = time.time()
-        
+
         # Check cache
         if domain in self._metadata_cache:
             cached = self._metadata_cache[domain]
             if cached["expires_at"] > now:
                 return cached["data"]
-        
+
         # Cache miss/expired - fetch fresh
         metadata = await self._fetch_oidc_metadata(domain)
-        
+
         # Enforce cache size limit (FIFO eviction)
         if len(self._metadata_cache) >= self._cache_max_size:
             oldest_key = next(iter(self._metadata_cache))
             del self._metadata_cache[oldest_key]
-        
+
         # Store in cache
         self._metadata_cache[domain] = {
             "data": metadata,
             "expires_at": now + self._cache_ttl
         }
-        
+
         return metadata
 
     async def _fetch_jwks(self, jwks_uri: str) -> dict:
         """
         Fetch JWKS (JSON Web Key Set) from jwks_uri.
-        
+
         Args:
             jwks_uri: The JWKS endpoint URL
-            
+
         Returns:
             JWKS document containing public keys
-            
+
         Raises:
             ApiError: If JWKS fetch fails
         """
@@ -1126,54 +1126,54 @@ class ServerClient(Generic[TStoreOptions]):
     async def _get_jwks_cached(self, domain: str, metadata: dict = None) -> dict:
         """
         Get JWKS with caching usingOIDC discovery.
-        
+
         Args:
             domain: Auth0 domain
             metadata: Optional OIDC metadata (if already fetched)
-            
+
         Returns:
             JWKS document
-            
+
         Raises:
             ApiError: If JWKS fetch fails or jwks_uri missing from metadata
         """
         now = time.time()
-        
+
         # Check cache
         if domain in self._jwks_cache:
             cached = self._jwks_cache[domain]
             if cached["expires_at"] > now:
                 return cached["data"]
-        
+
         # Get jwks_uri from OIDC metadata
         if not metadata:
             metadata = await self._get_oidc_metadata_cached(domain)
-        
+
         jwks_uri = metadata.get('jwks_uri')
         if not jwks_uri:
             raise ApiError(
                 "missing_jwks_uri",
                 f"OIDC metadata for {domain} does not contain jwks_uri. Provider may be non-RFC-compliant."
             )
-        
+
         # Fetch JWKS
         jwks = await self._fetch_jwks(jwks_uri)
-        
+
         # Enforce cache size limit (FIFO eviction)
         if len(self._jwks_cache) >= self._cache_max_size:
             oldest_key = next(iter(self._jwks_cache))
             del self._jwks_cache[oldest_key]
-        
+
         # Store in cache
         self._jwks_cache[domain] = {
             "data": jwks,
             "expires_at": now + self._cache_ttl
         }
-        
+
         return jwks
 
     # ------------------------------------------
-    # Token & Scope Management - MRRT 
+    # Token & Scope Management - MRRT
     # ------------------------------------------
 
     def _merge_scope_with_defaults(
@@ -1606,7 +1606,7 @@ class ServerClient(Generic[TStoreOptions]):
         try:
             # Use session domain if provided, otherwise fallback to static domain
             domain = options.get("domain") or self._domain
-            
+
             # Ensure we have the OIDC metadata from the correct domain
             if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
                 self._oauth.metadata = await self._get_oidc_metadata_cached(domain)
@@ -1692,7 +1692,7 @@ class ServerClient(Generic[TStoreOptions]):
         try:
             # Use session domain if provided, otherwise fallback to static domain
             domain = options.get("domain") or self._domain
-            
+
             # Ensure we have OIDC metadata from the correct domain
             if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
                 self._oauth.metadata = await self._get_oidc_metadata_cached(domain)

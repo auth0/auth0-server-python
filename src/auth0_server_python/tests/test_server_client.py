@@ -56,14 +56,14 @@ async def test_start_interactive_login_no_redirect_uri(mocker):
         transaction_store=AsyncMock(),
         secret="some-secret"
     )
-    
+
     # Mock OIDC metadata fetch
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
         return_value={"issuer": "https://auth0.local/", "authorization_endpoint": "https://auth0.local/authorize"}
     )
-    
+
     with pytest.raises(MissingRequiredArgumentError) as exc:
         await client.start_interactive_login()
     # Check the error message
@@ -130,7 +130,7 @@ async def test_complete_interactive_login_returns_app_state(mocker):
     mock_tx_store = AsyncMock()
     # The stored transaction includes an appState with origin_domain and origin_issuer
     mock_tx_store.get.return_value = TransactionData(
-        code_verifier="123", 
+        code_verifier="123",
         app_state={"foo": "bar"},
         origin_domain="auth0.local",
         origin_issuer="https://auth0.local/"
@@ -1990,7 +1990,7 @@ async def test_domain_as_static_string():
         client_secret="test_client_secret",
         secret="test_secret_key_32_chars_long!!"
     )
-    
+
     assert client._domain == "tenant.auth0.com"
     assert client._domain_resolver is None
 
@@ -2000,14 +2000,14 @@ async def test_domain_as_callable_function():
     """Test Method 2: Domain resolver function configuration."""
     async def domain_resolver(store_options):
         return "tenant.auth0.com"
-    
+
     client = ServerClient(
         domain=domain_resolver,
         client_id="test_client_id",
         client_secret="test_client_secret",
         secret="test_secret_key_32_chars_long!!"
     )
-    
+
     assert client._domain is None
     assert client._domain_resolver == domain_resolver
 
@@ -2056,12 +2056,12 @@ async def test_empty_domain_string():
 async def test_domain_resolver_receives_context(mocker):
     """Test that domain resolver receives DomainResolverContext with request data."""
     received_context = None
-    
+
     async def domain_resolver(context):
         nonlocal received_context
         received_context = context
         return "tenant.auth0.com"
-    
+
     client = ServerClient(
         domain=domain_resolver,
         client_id="test_client",
@@ -2070,24 +2070,24 @@ async def test_domain_resolver_receives_context(mocker):
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     # Mock request with headers
     mock_request = MagicMock()
     mock_request.url = "https://a.my-app.com/auth/login"
     mock_request.headers = {"host": "a.my-app.com", "x-forwarded-host": "a.my-app.com"}
-    
+
     # Mock OIDC metadata fetch
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
         return_value={"issuer": "https://tenant.auth0.com/", "authorization_endpoint": "https://tenant.auth0.com/authorize"}
     )
-    
+
     try:
         await client.start_interactive_login(store_options={"request": mock_request})
-    except:
+    except Exception:  # noqa: S110
         pass  # We only care about context being passed
-    
+
     assert received_context is not None
     assert isinstance(received_context, DomainResolverContext)
     assert received_context.request_url == "https://a.my-app.com/auth/login"
@@ -2099,7 +2099,7 @@ async def test_domain_resolver_error_on_none():
     """Test that domain resolver returning None raises DomainResolverError."""
     async def bad_resolver(context):
         return None
-    
+
     client = ServerClient(
         domain=bad_resolver,
         client_id="test_client",
@@ -2108,7 +2108,7 @@ async def test_domain_resolver_error_on_none():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     with pytest.raises(DomainResolverError, match="returned None"):
         await client.start_interactive_login(store_options={"request": MagicMock()})
 
@@ -2118,7 +2118,7 @@ async def test_domain_resolver_error_on_empty_string():
     """Test that domain resolver returning empty string raises DomainResolverError."""
     async def bad_resolver(context):
         return ""
-    
+
     client = ServerClient(
         domain=bad_resolver,
         client_id="test_client",
@@ -2127,7 +2127,7 @@ async def test_domain_resolver_error_on_empty_string():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     with pytest.raises(DomainResolverError, match="empty string"):
         await client.start_interactive_login(store_options={"request": MagicMock()})
 
@@ -2137,7 +2137,7 @@ async def test_domain_resolver_error_on_exception():
     """Test that domain resolver exceptions are wrapped in DomainResolverError."""
     async def bad_resolver(context):
         raise ValueError("Something went wrong")
-    
+
     client = ServerClient(
         domain=bad_resolver,
         client_id="test_client",
@@ -2146,7 +2146,7 @@ async def test_domain_resolver_error_on_exception():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     with pytest.raises(DomainResolverError, match="raised an exception"):
         await client.start_interactive_login(store_options={"request": MagicMock()})
 
@@ -2155,12 +2155,12 @@ async def test_domain_resolver_error_on_exception():
 async def test_domain_resolver_with_no_request(mocker):
     """Test that domain resolver works with empty context when no request."""
     received_context = None
-    
+
     async def domain_resolver(context):
         nonlocal received_context
         received_context = context
         return "tenant.auth0.com"
-    
+
     client = ServerClient(
         domain=domain_resolver,
         client_id="test_client",
@@ -2169,18 +2169,18 @@ async def test_domain_resolver_with_no_request(mocker):
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
         return_value={"issuer": "https://tenant.auth0.com/", "authorization_endpoint": "https://tenant.auth0.com/authorize"}
     )
-    
+
     try:
         await client.start_interactive_login(store_options=None)
-    except:
-        pass
-    
+    except Exception:  # noqa: S110
+        pass  # Intentionally ignore - testing context only
+
     assert received_context is not None
     assert received_context.request_url is None
     assert received_context.request_headers is None
@@ -2191,7 +2191,7 @@ async def test_domain_resolver_error_on_non_string_type():
     """Test that domain resolver returning non-string raises DomainResolverError."""
     async def bad_resolver(context):
         return 12345
-    
+
     client = ServerClient(
         domain=bad_resolver,
         client_id="test_client",
@@ -2200,7 +2200,7 @@ async def test_domain_resolver_error_on_non_string_type():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     with pytest.raises(DomainResolverError, match="must return a string"):
         await client.start_interactive_login(store_options={"request": MagicMock()})
 
@@ -2221,7 +2221,7 @@ async def test_fetch_jwks_success():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     mock_jwks = {
         "keys": [
             {
@@ -2233,20 +2233,20 @@ async def test_fetch_jwks_success():
             }
         ]
     }
-    
+
     # Mock httpx client
     mock_response = MagicMock()
     mock_response.json.return_value = mock_jwks
     mock_response.raise_for_status = MagicMock()
-    
+
     mock_client = AsyncMock()
     mock_client.__aenter__.return_value = mock_client
     mock_client.__aexit__.return_value = None
     mock_client.get.return_value = mock_response
-    
+
     with patch('httpx.AsyncClient', return_value=mock_client):
         jwks = await client._fetch_jwks("https://tenant.auth0.com/.well-known/jwks.json")
-    
+
     assert jwks == mock_jwks
     assert "keys" in jwks
     mock_client.get.assert_awaited_once_with("https://tenant.auth0.com/.well-known/jwks.json")
@@ -2263,13 +2263,13 @@ async def test_fetch_jwks_failure():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     # Mock httpx client to raise exception
     mock_client = AsyncMock()
     mock_client.__aenter__.return_value = mock_client
     mock_client.__aexit__.return_value = None
     mock_client.get.side_effect = Exception("Network error")
-    
+
     with patch('httpx.AsyncClient', return_value=mock_client):
         with pytest.raises(ApiError, match="Failed to fetch JWKS"):
             await client._fetch_jwks("https://tenant.auth0.com/.well-known/jwks.json")
@@ -2286,33 +2286,33 @@ async def test_oidc_metadata_caching():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     mock_metadata = {
         "issuer": "https://tenant.auth0.com/",
         "authorization_endpoint": "https://tenant.auth0.com/authorize",
         "token_endpoint": "https://tenant.auth0.com/oauth/token",
         "jwks_uri": "https://tenant.auth0.com/.well-known/jwks.json"
     }
-    
+
     # Mock _fetch_oidc_metadata to track calls
     fetch_count = 0
     async def mock_fetch(domain):
         nonlocal fetch_count
         fetch_count += 1
         return mock_metadata
-    
+
     client._fetch_oidc_metadata = mock_fetch
-    
+
     # First call - should fetch
     result1 = await client._get_oidc_metadata_cached("tenant.auth0.com")
     assert result1 == mock_metadata
     assert fetch_count == 1
-    
+
     # Second call - should use cache
     result2 = await client._get_oidc_metadata_cached("tenant.auth0.com")
     assert result2 == mock_metadata
     assert fetch_count == 1  # Should NOT increment
-    
+
     # Verify cache contains data
     assert "tenant.auth0.com" in client._metadata_cache
     assert client._metadata_cache["tenant.auth0.com"]["data"] == mock_metadata
@@ -2329,30 +2329,30 @@ async def test_oidc_metadata_cache_expiration():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     # Set short TTL for testing
     client._cache_ttl = 1  # 1 second
-    
+
     mock_metadata = {
         "issuer": "https://tenant.auth0.com/",
         "jwks_uri": "https://tenant.auth0.com/.well-known/jwks.json"
     }
-    
+
     fetch_count = 0
     async def mock_fetch(domain):
         nonlocal fetch_count
         fetch_count += 1
         return mock_metadata
-    
+
     client._fetch_oidc_metadata = mock_fetch
-    
+
     # First call
     await client._get_oidc_metadata_cached("tenant.auth0.com")
     assert fetch_count == 1
-    
+
     # Wait for cache to expire
     time.sleep(1.1)
-    
+
     # Second call after expiration - should fetch again
     await client._get_oidc_metadata_cached("tenant.auth0.com")
     assert fetch_count == 2
@@ -2369,32 +2369,32 @@ async def test_jwks_caching():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     mock_metadata = {
         "issuer": "https://tenant.auth0.com/",
         "jwks_uri": "https://tenant.auth0.com/.well-known/jwks.json"
     }
-    
+
     mock_jwks = {
         "keys": [{"kty": "RSA", "kid": "key1"}]
     }
-    
+
     # Mock the fetch methods
     client._get_oidc_metadata_cached = AsyncMock(return_value=mock_metadata)
-    
+
     fetch_count = 0
     async def mock_fetch_jwks(uri):
         nonlocal fetch_count
         fetch_count += 1
         return mock_jwks
-    
+
     client._fetch_jwks = mock_fetch_jwks
-    
+
     # First call - should fetch
     result1 = await client._get_jwks_cached("tenant.auth0.com", mock_metadata)
     assert result1 == mock_jwks
     assert fetch_count == 1
-    
+
     # Second call - should use cache
     result2 = await client._get_jwks_cached("tenant.auth0.com", mock_metadata)
     assert result2 == mock_jwks
@@ -2412,33 +2412,33 @@ async def test_jwks_cache_size_limit():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     # Set small cache size for testing
     client._cache_max_size = 3
-    
+
     mock_jwks = {"keys": [{"kty": "RSA"}]}
-    
+
     # Mock methods
     async def mock_fetch_metadata(domain):
         return {"jwks_uri": f"https://{domain}/.well-known/jwks.json"}
-    
+
     async def mock_fetch_jwks(uri):
         return mock_jwks
-    
+
     client._fetch_oidc_metadata = mock_fetch_metadata
     client._fetch_jwks = mock_fetch_jwks
-    
+
     # Fill cache to limit
     await client._get_jwks_cached("domain1.auth0.com")
     await client._get_jwks_cached("domain2.auth0.com")
     await client._get_jwks_cached("domain3.auth0.com")
-    
+
     assert len(client._jwks_cache) == 3
     assert "domain1.auth0.com" in client._jwks_cache
-    
+
     # Add one more - should evict oldest (domain1)
     await client._get_jwks_cached("domain4.auth0.com")
-    
+
     assert len(client._jwks_cache) == 3
     assert "domain1.auth0.com" not in client._jwks_cache  # Evicted
     assert "domain4.auth0.com" in client._jwks_cache
@@ -2455,20 +2455,20 @@ async def test_jwks_missing_uri_raises_error():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     # Metadata WITHOUT jwks_uri
     mock_metadata_no_jwks_uri = {
         "issuer": "https://tenant.auth0.com/",
         "authorization_endpoint": "https://tenant.auth0.com/authorize"
         # No jwks_uri
     }
-    
+
     client._get_oidc_metadata_cached = AsyncMock(return_value=mock_metadata_no_jwks_uri)
-    
+
     # Should raise ApiError when jwks_uri is missing
     with pytest.raises(ApiError) as exc_info:
         await client._get_jwks_cached("tenant.auth0.com")
-    
+
     assert exc_info.value.code == "missing_jwks_uri"
     assert "non-RFC-compliant" in str(exc_info.value)
 
@@ -2484,23 +2484,23 @@ async def test_metadata_cache_size_limit():
         transaction_store=AsyncMock(),
         state_store=AsyncMock()
     )
-    
+
     client._cache_max_size = 2
-    
+
     async def mock_fetch(domain):
         return {"issuer": f"https://{domain}/"}
-    
+
     client._fetch_oidc_metadata = mock_fetch
-    
+
     # Fill cache
     await client._get_oidc_metadata_cached("domain1.auth0.com")
     await client._get_oidc_metadata_cached("domain2.auth0.com")
-    
+
     assert len(client._metadata_cache) == 2
-    
+
     # Add third - should evict first
     await client._get_oidc_metadata_cached("domain3.auth0.com")
-    
+
     assert len(client._metadata_cache) == 2
     assert "domain1.auth0.com" not in client._metadata_cache
     assert "domain3.auth0.com" in client._metadata_cache
@@ -2557,12 +2557,12 @@ async def test_complete_login_issuer_validation_success(mocker):
 
     # Mock jwt.get_unverified_header
     mocker.patch("jwt.get_unverified_header", return_value={"kid": "test-key"})
-    
+
     # Mock PyJWK.from_dict
     mock_signing_key = mocker.MagicMock()
     mock_signing_key.key = "mock_pem_key"
     mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
-    
+
     # Mock jwt.decode with valid issuer
     mocker.patch("jwt.decode", return_value={
         "sub": "user123",
@@ -2572,7 +2572,7 @@ async def test_complete_login_issuer_validation_success(mocker):
 
     # Should succeed without raising error
     result = await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
-    
+
     assert result is not None
     assert "state_data" in result
 
@@ -2623,19 +2623,19 @@ async def test_complete_login_issuer_mismatch_raises_error(mocker):
 
     # Mock jwt.get_unverified_header
     mocker.patch("jwt.get_unverified_header", return_value={"kid": "test-key"})
-    
+
     # Mock PyJWK.from_dict
     mock_signing_key = mocker.MagicMock()
     mock_signing_key.key = "mock_pem_key"
     mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
-    
+
     # Mock jwt.decode to raise InvalidIssuerError
     mocker.patch("jwt.decode", side_effect=jwt.InvalidIssuerError("Invalid issuer"))
 
     # Should raise ApiError with invalid_issuer code
     with pytest.raises(ApiError) as exc_info:
         await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
-    
+
     assert exc_info.value.code == "invalid_issuer"
     assert "issuer mismatch" in str(exc_info.value).lower()
 
@@ -2654,13 +2654,13 @@ async def test_normalize_domain_handles_different_schemes():
 
     # Test domain without scheme
     assert client._normalize_domain("auth0.com") == "https://auth0.com"
-    
+
     # Test domain with https scheme (should remain unchanged)
     assert client._normalize_domain("https://auth0.com") == "https://auth0.com"
-    
+
     # Test domain with http scheme (should convert to https)
     assert client._normalize_domain("http://auth0.com") == "https://auth0.com"
-    
+
     # Test domain with trailing slash
     assert client._normalize_domain("https://auth0.com/") == "https://auth0.com/"
 
@@ -2684,7 +2684,7 @@ async def test_session_stores_origin_domain(mocker):
     async def capture_state(identifier, state_data, options=None):
         nonlocal captured_state
         captured_state = state_data
-    
+
     mock_state_store = AsyncMock()
     mock_state_store.set = AsyncMock(side_effect=capture_state)
 
@@ -2702,14 +2702,14 @@ async def test_session_stores_origin_domain(mocker):
         "token_endpoint": "https://tenant1.auth0.com/token"
     })
     mocker.patch.object(client, "_get_jwks_cached", return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]})
-    
+
     async_fetch_token = AsyncMock(return_value={
         "access_token": "token123",
         "id_token": "id_token_jwt",
         "scope": "openid"
     })
     mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
-    
+
     # Mock JWT verification
     mocker.patch("jwt.get_unverified_header", return_value={"kid": "test-key"})
     mock_signing_key = mocker.MagicMock()
@@ -2718,7 +2718,7 @@ async def test_session_stores_origin_domain(mocker):
     mocker.patch("jwt.decode", return_value={"sub": "user123", "iss": "https://tenant1.auth0.com/"})
 
     await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
-    
+
     # Verify session has domain field set
     assert captured_state.domain == "tenant1.auth0.com"
 
@@ -2733,14 +2733,14 @@ async def test_cross_domain_session_rejected():
         token_sets=[],
         internal={"sid": "123", "created_at": int(time.time())}
     )
-    
+
     mock_state_store = AsyncMock()
     mock_state_store.get.return_value = session_data
-    
+
     # Domain resolver returns domain2 (different from session)
     async def domain_resolver(context):
         return "tenant2.auth0.com"
-    
+
     client = ServerClient(
         domain=domain_resolver,
         client_id="test_client",
@@ -2759,12 +2759,12 @@ async def test_cross_domain_session_rejected():
 async def test_logout_uses_current_domain(mocker):
     """Test that logout uses current resolved domain (Requirement 7)."""
     current_domain = "tenant2.auth0.com"
-    
+
     async def domain_resolver(context):
         return current_domain
-    
+
     mock_state_store = AsyncMock()
-    
+
     client = ServerClient(
         domain=domain_resolver,
         client_id="test_client",
@@ -2775,7 +2775,7 @@ async def test_logout_uses_current_domain(mocker):
     )
 
     logout_url = await client.logout(store_options={"request": {}})
-    
+
     # Verify logout URL uses current domain
     assert current_domain in logout_url
     assert logout_url.startswith(f"https://{current_domain}")
@@ -2785,7 +2785,7 @@ async def test_logout_uses_current_domain(mocker):
 async def test_logout_clears_session_for_current_domain():
     """Test that logout clears session (Requirement 7)."""
     mock_state_store = AsyncMock()
-    
+
     client = ServerClient(
         domain="tenant.auth0.com",
         client_id="test_client",
@@ -2796,7 +2796,7 @@ async def test_logout_clears_session_for_current_domain():
     )
 
     await client.logout()
-    
+
     # Verify session was deleted
     mock_state_store.delete.assert_called_once()
 
@@ -2805,7 +2805,7 @@ async def test_logout_clears_session_for_current_domain():
 async def test_domain_migration_old_sessions_remain_valid():
     """Test that old sessions remain valid with old domain requests (Requirement 8)."""
     old_domain = "old-tenant.auth0.com"
-    
+
     # Session from old domain
     session_data = StateData(
         user={"sub": "user123"},
@@ -2813,14 +2813,14 @@ async def test_domain_migration_old_sessions_remain_valid():
         token_sets=[],
         internal={"sid": "123", "created_at": int(time.time())}
     )
-    
+
     mock_state_store = AsyncMock()
     mock_state_store.get.return_value = session_data
-    
+
     # Domain resolver returns old domain
     async def domain_resolver(context):
         return old_domain
-    
+
     client = ServerClient(
         domain=domain_resolver,
         client_id="test_client",
@@ -2840,7 +2840,7 @@ async def test_domain_migration_old_sessions_remain_valid():
 async def test_domain_migration_new_sessions_use_new_domain(mocker):
     """Test that new logins create sessions with new domain (Requirement 8)."""
     new_domain = "new-tenant.auth0.com"
-    
+
     mock_tx_store = AsyncMock()
     mock_tx_store.get.return_value = TransactionData(
         code_verifier="123",
@@ -2852,7 +2852,7 @@ async def test_domain_migration_new_sessions_use_new_domain(mocker):
     async def capture_state(identifier, state_data, options=None):
         nonlocal captured_state
         captured_state = state_data
-    
+
     mock_state_store = AsyncMock()
     mock_state_store.set = AsyncMock(side_effect=capture_state)
 
@@ -2870,14 +2870,14 @@ async def test_domain_migration_new_sessions_use_new_domain(mocker):
         "token_endpoint": f"https://{new_domain}/token"
     })
     mocker.patch.object(client, "_get_jwks_cached", return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]})
-    
+
     async_fetch_token = AsyncMock(return_value={
         "access_token": "token123",
         "id_token": "id_token_jwt",
         "scope": "openid"
     })
     mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
-    
+
     # Mock JWT verification
     mocker.patch("jwt.get_unverified_header", return_value={"kid": "test-key"})
     mock_signing_key = mocker.MagicMock()
@@ -2886,7 +2886,7 @@ async def test_domain_migration_new_sessions_use_new_domain(mocker):
     mocker.patch("jwt.decode", return_value={"sub": "user123", "iss": f"https://{new_domain}/"})
 
     await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
-    
+
     # Verify new session has new domain
     assert captured_state.domain == new_domain
 
@@ -2896,7 +2896,7 @@ async def test_domain_migration_sessions_isolated():
     """Test that old domain sessions cannot be used with new domain (Requirement 8)."""
     old_domain = "old-tenant.auth0.com"
     new_domain = "new-tenant.auth0.com"
-    
+
     # Session from old domain
     session_data = StateData(
         user={"sub": "user123"},
@@ -2904,14 +2904,14 @@ async def test_domain_migration_sessions_isolated():
         token_sets=[],
         internal={"sid": "123", "created_at": int(time.time())}
     )
-    
+
     mock_state_store = AsyncMock()
     mock_state_store.get.return_value = session_data
-    
+
     # Domain resolver returns NEW domain (migration happened)
     async def domain_resolver(context):
         return new_domain
-    
+
     client = ServerClient(
         domain=domain_resolver,
         client_id="test_client",

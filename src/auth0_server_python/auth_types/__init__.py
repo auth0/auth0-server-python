@@ -260,14 +260,14 @@ class CompleteConnectAccountResponse(BaseModel):
 class DomainResolverContext(BaseModel):
     """
     Context passed to domain resolver function for MCD support.
-    
+
     Contains request information needed to determine the correct Auth0 domain
     based on the incoming request's hostname or headers.
-    
+
     Attributes:
         request_url: The full request URL (e.g., "https://a.my-app.com/auth/login")
         request_headers: Dictionary of request headers (e.g., {"host": "a.my-app.com", "x-forwarded-host": "..."})
-    
+
     Example:
         async def domain_resolver(context: DomainResolverContext) -> str:
             host = context.request_headers.get('host', '').split(':')[0]

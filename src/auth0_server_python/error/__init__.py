@@ -128,7 +128,7 @@ class BackchannelLogoutError(Auth0Error):
 class DomainResolverError(Auth0Error):
     """
     Error raised when domain resolver function fails or returns invalid value.
-    
+
     This error indicates an issue with the custom domain resolver function
     provided for MCD (Multiple Custom Domains) support.
     """
