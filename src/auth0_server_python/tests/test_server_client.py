@@ -4,7 +4,6 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from pydantic_core import ValidationError
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.server_client import ServerClient
 from auth0_server_python.auth_types import (
@@ -30,6 +29,7 @@ from auth0_server_python.error import (
     StartLinkUserError,
 )
 from auth0_server_python.utils import PKCE
+from pydantic_core import ValidationError
 
 
 @pytest.mark.asyncio
