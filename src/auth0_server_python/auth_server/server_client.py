@@ -145,7 +145,7 @@ class ServerClient(Generic[TStoreOptions]):
         self._metadata_cache = {}  # {domain: {"data": {...}, "expires_at": timestamp}}
         self._jwks_cache = {}      # {domain: {"data": {...}, "expires_at": timestamp}}
         self._cache_ttl = 3600     # 1 hour TTL
-        self._cache_max_size = 100 # Max 100 domains to prevent memory bloat
+        self._cache_max_entries = 100 # Max 100 domains to prevent memory bloat
 
     # ==========================================
     # Interactive Login Flow
@@ -1090,7 +1090,7 @@ class ServerClient(Generic[TStoreOptions]):
         metadata = await self._fetch_oidc_metadata(domain)
 
         # Enforce cache size limit (FIFO eviction)
-        if len(self._metadata_cache) >= self._cache_max_size:
+        if len(self._metadata_cache) >= self._cache_max_entries:
             oldest_key = next(iter(self._metadata_cache))
             del self._metadata_cache[oldest_key]
 
@@ -1160,7 +1160,7 @@ class ServerClient(Generic[TStoreOptions]):
         jwks = await self._fetch_jwks(jwks_uri)
 
         # Enforce cache size limit (FIFO eviction)
-        if len(self._jwks_cache) >= self._cache_max_size:
+        if len(self._jwks_cache) >= self._cache_max_entries:
             oldest_key = next(iter(self._jwks_cache))
             del self._jwks_cache[oldest_key]
 

@@ -1978,7 +1978,7 @@ async def test_complete_connect_account_no_transactions(mocker):
 
 
 # =============================================================================
-# Requirement 1: Multiple Issuer Configuration Methods Tests
+# MCD Tests : Multiple Issuer Configuration Methods Tests
 # =============================================================================
 
 @pytest.mark.asyncio
@@ -2049,7 +2049,7 @@ async def test_empty_domain_string():
 
 
 # =============================================================================
-# Requirement 2: Domain Resolver Context Tests
+# MCD Tests : Domain Resolver Context Tests
 # =============================================================================
 
 @pytest.mark.asyncio
@@ -2179,8 +2179,7 @@ async def test_domain_resolver_with_no_request(mocker):
     try:
         await client.start_interactive_login(store_options=None)
     except Exception:  # noqa: S110
-        pass  # Intentionally ignore - testing context only
-
+        pass  # We only care about context being passed
     assert received_context is not None
     assert received_context.request_url is None
     assert received_context.request_headers is None
@@ -2206,7 +2205,7 @@ async def test_domain_resolver_error_on_non_string_type():
 
 
 # =============================================================================
-# Requirement 3: OIDC Metadata and JWKS Fetching Tests
+# OIDC Metadata and JWKS Fetching Tests
 # =============================================================================
 
 
@@ -2416,7 +2415,7 @@ async def test_jwks_cache_size_limit():
     )
 
     # Set small cache size for testing
-    client._cache_max_size = 3
+    client._cache_max_entries = 3
 
     mock_jwks = {"keys": [{"kty": "RSA"}]}
 
@@ -2487,7 +2486,7 @@ async def test_metadata_cache_size_limit():
         state_store=AsyncMock()
     )
 
-    client._cache_max_size = 2
+    client._cache_max_entries = 2
 
     async def mock_fetch(domain):
         return {"issuer": f"https://{domain}/"}
@@ -2509,7 +2508,7 @@ async def test_metadata_cache_size_limit():
 
 
 # =============================================================================
-# Requirement 4: Issuer Validation Tests
+# Issuer Validation Tests
 # =============================================================================
 
 
@@ -2668,7 +2667,7 @@ async def test_normalize_domain_handles_different_schemes():
 
 
 # =============================================================================
-# Requirements 5-8: Domain-specific Session Management Tests
+# MCD Tests : Domain-specific Session Management Tests
 # =============================================================================
 
 
