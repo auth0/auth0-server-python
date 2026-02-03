@@ -1645,6 +1645,7 @@ class ServerClient(Generic[TStoreOptions]):
                 scope=options.scope,
                 actor_token=options.actor_token,
                 actor_token_type=options.actor_token_type,
+                organization=options.organization,
                 authorization_params=options.authorization_params
             )
 
