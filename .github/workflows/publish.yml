@@ -77,7 +77,7 @@ jobs:
           pip install --user --upgrade pip
           pip install --user pipx
           pipx ensurepath
-          pipx install poetry
+          pipx install poetry==2.2.1
           poetry config virtualenvs.in-project true
           poetry install --with dev
           poetry self add "poetry-dynamic-versioning[plugin]"
