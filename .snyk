@@ -21,4 +21,8 @@ ignore:
     - '*':
         reason: "Accepting the Unknown license for now"
         expires: "2030-12-31T23:59:59Z"
+  "snyk:lic:pip:cryptography:Unknown":
+    - '*':
+        reason: "Accepting the Unknown license for now"
+        expires: "2030-12-31T23:59:59Z"
 patch: {}
