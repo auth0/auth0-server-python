@@ -169,6 +169,56 @@ connected_accounts = await client.delete_connected_account(
 )
 ```
 
+## Error Handling
+
+All SDK errors inherit from `Auth0Error`. For most cases, catch `Auth0Error` to handle all errors uniformly. Only catch specific error types when you need to take different actions based on the error.
+
+### Basic Error Handling (Recommended)
+
+```python
+from auth0_server_python.error import Auth0Error
+
+try:
+    connect_url = await client.start_connect_account(
+        ConnectAccountOptions(connection="google-oauth2", redirect_uri="https://example.com/callback"),
+        store_options={"request": request, "response": response}
+    )
+except Auth0Error as e:
+    print(f"Error: {str(e)}")
+    return {"error": "Failed to connect account"}
+```
+
+### Advanced Error Handling (When Specific Actions Required)
+
+Catch specific types only when you need to handle different error conditions differently:
+
+```python
+from auth0_server_python.error import Auth0Error, MyAccountApiError
+
+try:
+    connect_url = await client.start_connect_account(
+        ConnectAccountOptions(connection="google-oauth2", redirect_uri="https://example.com/callback"),
+        store_options={"request": request, "response": response}
+    )
+except MyAccountApiError as e:
+    if e.status == 401:
+        return redirect_to_login()  # Token expired
+    elif e.status == 403:
+        return {"error": "Missing required permission"}  # Missing scope
+    elif e.status == 400 and e.validation_errors:
+        return {"error": "Validation failed", "details": e.validation_errors}
+    raise  # Re-raise other cases
+except Auth0Error as e:
+    return {"error": str(e)}
+```
+
+### Common Error Types
+
+- **`Auth0Error`** (base): Catch this for general error handling
+- **`MyAccountApiError`**: My Account API errors with `status`, `detail`, and optional `validation_errors`
+- **`InvalidArgumentError`**: Invalid parameter value
+- **`MissingRequiredArgumentError`**: Required parameter not provided
+
 ## A note about scopes
 
 If multiple pieces of Connected Account functionality are intended to be used, it is recommended that you set the default `scope` for the My Account audience when creating you `ServerClient`. This will avoid multiple token requests as without it a new token will be requested for each scope used. This can be done by configuring the `scope` dictionary in the `authorization_params` when configuring the SDK. Each value in the dictionary corresponds to an `audience` and sets the `default` requested scopes for that audience.
