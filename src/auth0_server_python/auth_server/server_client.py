@@ -17,10 +17,16 @@ from auth0_server_python.auth_types import (
     CompleteConnectAccountResponse,
     ConnectAccountOptions,
     ConnectAccountRequest,
+    CustomTokenExchangeOptions,
+    ListConnectedAccountConnectionsResponse,
+    ListConnectedAccountsResponse,
+    LoginWithCustomTokenExchangeOptions,
+    LoginWithCustomTokenExchangeResult,
     LogoutOptions,
     LogoutTokenClaims,
     StartInteractiveLoginOptions,
     StateData,
+    TokenExchangeResponse,
     TokenSet,
     TransactionData,
     UserClaims,
@@ -33,7 +39,10 @@ from auth0_server_python.error import (
     ApiError,
     BackchannelLogoutError,
     ConfigurationError,
+    CustomTokenExchangeError,
+    CustomTokenExchangeErrorCode,
     DomainResolverError,
+    InvalidArgumentError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     PollingApiError,
@@ -61,9 +70,9 @@ class ServerClient(Generic[TStoreOptions]):
     """
     DEFAULT_AUDIENCE_STATE_KEY = "default"
 
-    # ==========================================
-    # Initialization
-    # ==========================================
+    # ============================================================================
+    # INITIALIZATION
+    # ============================================================================
 
     def __init__(
         self,
@@ -121,6 +130,7 @@ class ServerClient(Generic[TStoreOptions]):
                 raise ConfigurationError("Domain cannot be empty.")
             self._domain = domain_str
             self._domain_resolver = None
+
         self._client_id = client_id
         self._client_secret = client_secret
         self._redirect_uri = redirect_uri
@@ -147,9 +157,136 @@ class ServerClient(Generic[TStoreOptions]):
         self._cache_ttl = 3600     # 1 hour TTL
         self._cache_max_entries = 100 # Max 100 domains to prevent memory bloat
 
-    # ==========================================
-    # Interactive Login Flow
-    # ==========================================
+    def _normalize_domain(self, domain: str) -> str:
+        """
+        Normalize domain for comparison and URL construction.
+        Handles cases with/without https:// scheme.
+        """
+        if domain.startswith('https://'):
+            return domain
+        elif domain.startswith('http://'):
+            return domain.replace('http://', 'https://')
+        else:
+            return f'https://{domain}'
+
+    async def _fetch_oidc_metadata(self, domain: str) -> dict:
+        """Fetch OIDC metadata from domain."""
+        normalized_domain = self._normalize_domain(domain)
+        metadata_url = f"{normalized_domain}/.well-known/openid-configuration"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(metadata_url)
+            response.raise_for_status()
+            return response.json()
+
+    async def _get_oidc_metadata_cached(self, domain: str) -> dict:
+        """
+        Get OIDC metadata with caching.
+
+        Args:
+            domain: Auth0 domain
+
+        Returns:
+            OIDC metadata document
+        """
+        now = time.time()
+
+        # Check cache
+        if domain in self._metadata_cache:
+            cached = self._metadata_cache[domain]
+            if cached["expires_at"] > now:
+                return cached["data"]
+
+        # Cache miss/expired - fetch fresh
+        metadata = await self._fetch_oidc_metadata(domain)
+
+        # Enforce cache size limit (FIFO eviction)
+        if len(self._metadata_cache) >= self._cache_max_entries:
+            oldest_key = next(iter(self._metadata_cache))
+            del self._metadata_cache[oldest_key]
+
+        # Store in cache
+        self._metadata_cache[domain] = {
+            "data": metadata,
+            "expires_at": now + self._cache_ttl
+        }
+
+        return metadata
+
+    async def _fetch_jwks(self, jwks_uri: str) -> dict:
+        """
+        Fetch JWKS (JSON Web Key Set) from jwks_uri.
+
+        Args:
+            jwks_uri: The JWKS endpoint URL
+
+        Returns:
+            JWKS document containing public keys
+
+        Raises:
+            ApiError: If JWKS fetch fails
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(jwks_uri)
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            raise ApiError("jwks_fetch_error", f"Failed to fetch JWKS from {jwks_uri}", e)
+
+    async def _get_jwks_cached(self, domain: str, metadata: dict = None) -> dict:
+        """
+        Get JWKS with caching usingOIDC discovery.
+
+        Args:
+            domain: Auth0 domain
+            metadata: Optional OIDC metadata (if already fetched)
+
+        Returns:
+            JWKS document
+
+        Raises:
+            ApiError: If JWKS fetch fails or jwks_uri missing from metadata
+        """
+        now = time.time()
+
+        # Check cache
+        if domain in self._jwks_cache:
+            cached = self._jwks_cache[domain]
+            if cached["expires_at"] > now:
+                return cached["data"]
+
+        # Get jwks_uri from OIDC metadata
+        if not metadata:
+            metadata = await self._get_oidc_metadata_cached(domain)
+
+        jwks_uri = metadata.get('jwks_uri')
+        if not jwks_uri:
+            raise ApiError(
+                "missing_jwks_uri",
+                f"OIDC metadata for {domain} does not contain jwks_uri. Provider may be non-RFC-compliant."
+            )
+
+        # Fetch JWKS
+        jwks = await self._fetch_jwks(jwks_uri)
+
+        # Enforce cache size limit (FIFO eviction)
+        if len(self._jwks_cache) >= self._cache_max_entries:
+            oldest_key = next(iter(self._jwks_cache))
+            del self._jwks_cache[oldest_key]
+
+        # Store in cache
+        self._jwks_cache[domain] = {
+            "data": jwks,
+            "expires_at": now + self._cache_ttl
+        }
+
+        return jwks
+
+    # ============================================================================
+    # INTERACTIVE LOGIN FLOW
+    # Handles browser-based authentication using the Authorization Code flow
+    # with PKCE for secure token exchange.
+    # ============================================================================
 
     async def start_interactive_login(
         self,
@@ -476,210 +613,10 @@ class ServerClient(Generic[TStoreOptions]):
 
         return result
 
-    # ==========================================
-    # User Account Linking
-    # ==========================================
-
-    async def start_link_user(
-        self,
-        options,
-        store_options: Optional[dict[str, Any]] = None
-    ):
-        """
-        Starts the user linking process, and returns a URL to redirect the user-agent to.
-
-        Args:
-            options: Options used to configure the user linking process.
-            store_options: Optional options used to pass to the Transaction and State Store.
-
-        Returns:
-            URL to redirect the user to for authentication.
-        """
-        state_data = await self._state_store.get(self._state_identifier, store_options)
-
-        if not state_data or not state_data.get("id_token"):
-            raise StartLinkUserError(
-                "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
-            )
-
-        # Generate PKCE and state for security
-        code_verifier = PKCE.generate_code_verifier()
-        state = PKCE.generate_random_string(32)
-
-        # Build the URL for user linking
-        link_user_url = await self._build_link_user_url(
-            connection=options.get("connection"),
-            connection_scope=options.get("connectionScope"),
-            id_token=state_data["id_token"],
-            code_verifier=code_verifier,
-            state=state,
-            authorization_params=options.get("authorization_params")
-        )
-
-        # Store transaction data
-        transaction_data = TransactionData(
-            code_verifier=code_verifier,
-            app_state=options.get("app_state")
-        )
-
-        await self._transaction_store.set(
-            f"{self._transaction_identifier}:{state}",
-            transaction_data,
-            options=store_options
-        )
-
-        return link_user_url
-
-    async def complete_link_user(
-        self,
-        url: str,
-        store_options: Optional[dict[str, Any]] = None
-    ) -> dict[str, Any]:
-        """
-        Completes the user linking process.
-
-        Args:
-            url: The URL from which the query params should be extracted
-            store_options: Optional options for the stores
-
-        Returns:
-            Dictionary containing the original app state
-        """
-
-        # We can reuse the interactive login completion since the flow is similar
-        result = await self.complete_interactive_login(url, store_options)
-
-        # Return just the app state as specified
-        return {
-            "app_state": result.get("app_state")
-        }
-
-    async def start_unlink_user(
-        self,
-        options,
-        store_options: Optional[dict[str, Any]] = None
-    ):
-        """
-        Starts the user unlinking process, and returns a URL to redirect the user-agent to.
-
-        Args:
-            options: Options used to configure the user unlinking process.
-            store_options: Optional options used to pass to the Transaction and State Store.
-
-        Returns:
-            URL to redirect the user to for authentication.
-        """
-        state_data = await self._state_store.get(self._state_identifier, store_options)
-
-        if not state_data or not state_data.get("id_token"):
-            raise StartLinkUserError(
-                "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
-            )
-
-        # Generate PKCE and state for security
-        code_verifier = PKCE.generate_code_verifier()
-        state = PKCE.generate_random_string(32)
-
-        # Build the URL for user linking
-        link_user_url = await self._build_unlink_user_url(
-            connection=options.get("connection"),
-            id_token=state_data["id_token"],
-            code_verifier=code_verifier,
-            state=state,
-            authorization_params=options.get("authorization_params")
-        )
-
-        # Store transaction data
-        transaction_data = TransactionData(
-            code_verifier=code_verifier,
-            app_state=options.get("app_state")
-        )
-
-        await self._transaction_store.set(
-            f"{self._transaction_identifier}:{state}",
-            transaction_data,
-            options=store_options
-        )
-
-        return link_user_url
-
-    async def complete_unlink_user(
-        self,
-        url: str,
-        store_options: Optional[dict[str, Any]] = None
-    ) -> dict[str, Any]:
-        """
-        Completes the user unlinking process.
-
-        Args:
-            url: The URL from which the query params should be extracted
-            store_options: Optional options for the stores
-
-        Returns:
-            Dictionary containing the original app state
-        """
-
-        # We can reuse the interactive login completion since the flow is similar
-        result = await self.complete_interactive_login(url, store_options)
-
-        # Return just the app state as specified
-        return {
-            "app_state": result.get("app_state")
-        }
-
-    # ==========================================
-    # Backchannel Authentication (CIBA)
-    # ==========================================
-
-    async def login_backchannel(
-        self,
-        options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
-    ) -> dict[str, Any]:
-        """
-        Logs in using Client-Initiated Backchannel Authentication.
-
-        Note:
-            Using Client-Initiated Backchannel Authentication requires the feature
-            to be enabled in the Auth0 dashboard.
-
-        See:
-            https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow
-
-        Args:
-            options: Options used to configure the backchannel login process.
-            store_options: Optional options used to pass to the Transaction and State Store.
-
-        Returns:
-            A dictionary containing the authorizationDetails (when RAR was used).
-        """
-        token_endpoint_response = await self.backchannel_authentication({
-            "binding_message": options.get("binding_message"),
-            "login_hint": options.get("login_hint"),
-            "authorization_params": options.get("authorization_params"),
-        })
-
-        existing_state_data = await self._state_store.get(self._state_identifier, store_options)
-
-        audience = self._default_authorization_params.get(
-            "audience", self.DEFAULT_AUDIENCE_STATE_KEY)
-
-        state_data = State.update_state_data(
-            audience,
-            existing_state_data,
-            token_endpoint_response
-        )
-
-        await self._state_store.set(self._state_identifier, state_data, store_options)
-
-        result = {
-            "authorization_details": token_endpoint_response.get("authorization_details")
-        }
-        return result
-
-    # ==========================================
-    # Session & Token Management
-    # ==========================================
+    # ============================================================================
+    # USER SESSION MANAGEMENT
+    # Methods for retrieving user information, session data, and logout operations.
+    # ============================================================================
 
     async def get_user(self, store_options: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
         """
@@ -756,6 +693,113 @@ class ServerClient(Generic[TStoreOptions]):
                             if k != "internal"}
             return session_data
         return None
+
+    async def logout(
+        self,
+        options: Optional[LogoutOptions] = None,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> str:
+        options = options or LogoutOptions()
+
+        # Delete the session from the state store
+        await self._state_store.delete(self._state_identifier, store_options)
+
+        # Resolve domain dynamically for MCD support
+        if self._domain_resolver:
+            context = build_domain_resolver_context(store_options)
+            try:
+                resolved = await self._domain_resolver(context)
+                domain = validate_resolved_domain_value(resolved)
+            except DomainResolverError:
+                raise
+            except Exception as e:
+                raise DomainResolverError(
+                    f"Domain resolver function raised an exception: {str(e)}",
+                    original_error=e
+                )
+        else:
+            domain = self._domain
+
+        # Use the URL helper to create the logout URL.
+        logout_url = URL.create_logout_url(
+            domain, self._client_id, options.return_to)
+
+        return logout_url
+
+    async def handle_backchannel_logout(
+        self,
+        logout_token: str,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> None:
+        """
+        Handles backchannel logout requests.
+
+        Args:
+            logout_token: The logout token sent by Auth0
+            store_options: Options to pass to the state store
+        """
+        if not logout_token:
+            raise BackchannelLogoutError("Missing logout token")
+
+        try:
+            # Fetch JWKS for signature verification (Requirement 3)
+            jwks = await self._get_jwks_cached(self._domain)
+
+            # Decode and verify logout token with signature verification enabled
+            try:
+                # Get the signing key from JWKS
+                unverified_header = jwt.get_unverified_header(logout_token)
+                kid = unverified_header.get("kid")
+
+                # Find the key with matching kid
+                signing_key = None
+                for key in jwks.get("keys", []):
+                    if key.get("kid") == kid:
+                        signing_key = jwt.PyJWK.from_dict(key)
+                        break
+
+                if not signing_key:
+                    raise BackchannelLogoutError(
+                        f"No matching key found in JWKS for kid: {kid}"
+                    )
+
+                claims = jwt.decode(
+                    logout_token,
+                    signing_key.key,
+                    algorithms=["RS256"],
+                    options={"verify_signature": True}
+                )
+            except jwt.InvalidSignatureError as e:
+                raise BackchannelLogoutError(
+                    f"Logout token signature verification failed: {str(e)}"
+                )
+            except jwt.InvalidTokenError as e:
+                raise BackchannelLogoutError(
+                    f"Logout token verification failed: {str(e)}"
+                )
+
+            # Validate the token is a logout token
+            events = claims.get("events", {})
+            if "http://schemas.openid.net/event/backchannel-logout" not in events:
+                raise BackchannelLogoutError(
+                    "Invalid logout token: not a backchannel logout event")
+
+            # Delete sessions associated with this token
+            logout_claims = LogoutTokenClaims(
+                sub=claims.get("sub"),
+                sid=claims.get("sid")
+            )
+
+            await self._state_store.delete_by_logout_token(logout_claims.dict(), store_options)
+
+        except (jwt.PyJWTError, ValidationError) as e:
+            raise BackchannelLogoutError(
+                f"Error processing logout token: {str(e)}")
+
+    # ============================================================================
+    # ACCESS TOKEN MANAGEMENT
+    # Retrieves, validates, and refreshes access tokens for API calls.
+    # ============================================================================
 
     async def get_access_token(
         self,
@@ -864,323 +908,97 @@ class ServerClient(Generic[TStoreOptions]):
             )
 
 
-
-    async def get_access_token_for_connection(
-        self,
-        options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
-    ) -> str:
+    async def get_token_by_refresh_token(self, options: dict[str, Any]) -> dict[str, Any]:
         """
-        Retrieves an access token for a connection.
-
-        This method attempts to obtain an access token for a specified connection.
-        It first checks if a refresh token exists in the store.
-        If no refresh token is found, it throws an `AccessTokenForConnectionError` indicating
-        that the refresh token was not found.
+        Retrieves a token by exchanging a refresh token.
 
         Args:
-            options: Options for retrieving an access token for a connection.
-            store_options: Optional options used to pass to the Transaction and State Store.
-
-        Returns:
-            The access token for the connection
+            options: Dictionary containing the refresh token and any additional options.
+                Must include a 'refresh_token' key.
 
         Raises:
-            AccessTokenForConnectionError: If the access token was not found or
-                there was an issue requesting the access token.
+            AccessTokenError: If there was an issue requesting the access token.
+
+        Returns:
+            A dictionary containing the token response from Auth0.
         """
-        state_data = await self._state_store.get(self._state_identifier, store_options)
-
-        if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
-            state_data_dict = state_data.dict()
-        else:
-            state_data_dict = state_data or {}
-
-        # Find existing connection token
-        connection_token_set = None
-        if state_data_dict and len(state_data_dict["connection_token_sets"]) > 0:
-            for ts in state_data_dict.get("connection_token_sets"):
-                if ts.get("connection") == options["connection"]:
-                    connection_token_set = ts
-                    break
-
-        # If token is valid, return it
-        if connection_token_set and connection_token_set.get("expires_at", 0) > time.time():
-            return connection_token_set["access_token"]
-
-        # Check for refresh token
-        if not state_data_dict or not state_data_dict.get("refresh_token"):
-            raise AccessTokenForConnectionError(
-                AccessTokenForConnectionErrorCode.MISSING_REFRESH_TOKEN,
-                "A refresh token was not found but is required to be able to retrieve an access token for a connection."
-            )
-        # Get new token for connection
-        # Use session's domain for token exchange
-        session_domain = state_data_dict.get("domain") or self._domain
-        token_endpoint_response = await self.get_token_for_connection({
-            "connection": options.get("connection"),
-            "login_hint": options.get("login_hint"),
-            "refresh_token": state_data_dict["refresh_token"],
-            "domain": session_domain
-        })
-
-        # Update state data with new token
-        updated_state_data = State.update_state_data_for_connection_token_set(
-            options, state_data_dict, token_endpoint_response)
-
-        # Store updated state
-        await self._state_store.set(self._state_identifier, updated_state_data, store_options)
-
-        return token_endpoint_response["access_token"]
-
-    # ==========================================
-    # Logout
-    # ==========================================
-
-    async def logout(
-        self,
-        options: Optional[LogoutOptions] = None,
-        store_options: Optional[dict[str, Any]] = None
-    ) -> str:
-        options = options or LogoutOptions()
-
-        # Delete the session from the state store
-        await self._state_store.delete(self._state_identifier, store_options)
-
-        # Resolve domain dynamically for MCD support
-        if self._domain_resolver:
-            context = build_domain_resolver_context(store_options)
-            try:
-                resolved = await self._domain_resolver(context)
-                domain = validate_resolved_domain_value(resolved)
-            except DomainResolverError:
-                raise
-            except Exception as e:
-                raise DomainResolverError(
-                    f"Domain resolver function raised an exception: {str(e)}",
-                    original_error=e
-                )
-        else:
-            domain = self._domain
-
-        # Use the URL helper to create the logout URL.
-        logout_url = URL.create_logout_url(
-            domain, self._client_id, options.return_to)
-
-        return logout_url
-
-    async def handle_backchannel_logout(
-        self,
-        logout_token: str,
-        store_options: Optional[dict[str, Any]] = None
-    ) -> None:
-        """
-        Handles backchannel logout requests.
-
-        Args:
-            logout_token: The logout token sent by Auth0
-            store_options: Options to pass to the state store
-        """
-        if not logout_token:
-            raise BackchannelLogoutError("Missing logout token")
+        refresh_token = options.get("refresh_token")
+        if not refresh_token:
+            raise MissingRequiredArgumentError("refresh_token")
 
         try:
-            # Fetch JWKS for signature verification (Requirement 3)
-            jwks = await self._get_jwks_cached(self._domain)
+            # Use session domain if provided, otherwise fallback to static domain
+            domain = options.get("domain") or self._domain
 
-            # Decode and verify logout token with signature verification enabled
-            try:
-                # Get the signing key from JWKS
-                unverified_header = jwt.get_unverified_header(logout_token)
-                kid = unverified_header.get("kid")
+            # Ensure we have the OIDC metadata from the correct domain
+            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
+                self._oauth.metadata = await self._get_oidc_metadata_cached(domain)
 
-                # Find the key with matching kid
-                signing_key = None
-                for key in jwks.get("keys", []):
-                    if key.get("kid") == kid:
-                        signing_key = jwt.PyJWK.from_dict(key)
-                        break
+            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            if not token_endpoint:
+                raise ApiError("configuration_error",
+                               "Token endpoint missing in OIDC metadata")
 
-                if not signing_key:
-                    raise BackchannelLogoutError(
-                        f"No matching key found in JWKS for kid: {kid}"
+            # Prepare the token request parameters
+            token_params = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": self._client_id,
+            }
+
+            audience = options.get("audience")
+            if audience:
+                token_params["audience"] = audience
+
+            # Merge scope if present in options with any in the original authorization params
+            merged_scope = self._merge_scope_with_defaults(
+                request_scope=options.get("scope"),
+                audience=audience
+            )
+
+            if merged_scope:
+                token_params["scope"] = merged_scope
+
+            # Exchange the refresh token for an access token
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    token_endpoint,
+                    data=token_params,
+                    auth=(self._client_id, self._client_secret)
+                )
+
+                if response.status_code != 200:
+                    error_data = response.json()
+                    raise ApiError(
+                        error_data.get("error", "refresh_token_error"),
+                        error_data.get("error_description",
+                                       "Failed to exchange refresh token")
                     )
 
-                claims = jwt.decode(
-                    logout_token,
-                    signing_key.key,
-                    algorithms=["RS256"],
-                    options={"verify_signature": True}
-                )
-            except jwt.InvalidSignatureError as e:
-                raise BackchannelLogoutError(
-                    f"Logout token signature verification failed: {str(e)}"
-                )
-            except jwt.InvalidTokenError as e:
-                raise BackchannelLogoutError(
-                    f"Logout token verification failed: {str(e)}"
-                )
+                token_response = response.json()
 
-            # Validate the token is a logout token
-            events = claims.get("events", {})
-            if "http://schemas.openid.net/event/backchannel-logout" not in events:
-                raise BackchannelLogoutError(
-                    "Invalid logout token: not a backchannel logout event")
+                # Add required fields if they are missing
+                if "expires_in" in token_response and "expires_at" not in token_response:
+                    token_response["expires_at"] = int(
+                        time.time()) + token_response["expires_in"]
 
-            # Delete sessions associated with this token
-            logout_claims = LogoutTokenClaims(
-                sub=claims.get("sub"),
-                sid=claims.get("sid")
-            )
+                return token_response
 
-            await self._state_store.delete_by_logout_token(logout_claims.dict(), store_options)
-
-        except (jwt.PyJWTError, ValidationError) as e:
-            raise BackchannelLogoutError(
-                f"Error processing logout token: {str(e)}")
-
-    # ==========================================
-    # Internal Helpers
-    # ==========================================
-
-    # ------------------------------------------
-    # OIDC Discovery & Metadata
-    # ------------------------------------------
-
-    def _normalize_domain(self, domain: str) -> str:
-        """
-        Normalize domain for comparison and URL construction.
-        Handles cases with/without https:// scheme.
-        """
-        if domain.startswith('https://'):
-            return domain
-        elif domain.startswith('http://'):
-            return domain.replace('http://', 'https://')
-        else:
-            return f'https://{domain}'
-
-    async def _fetch_oidc_metadata(self, domain: str) -> dict:
-        """Fetch OIDC metadata from domain."""
-        normalized_domain = self._normalize_domain(domain)
-        metadata_url = f"{normalized_domain}/.well-known/openid-configuration"
-        async with httpx.AsyncClient() as client:
-            response = await client.get(metadata_url)
-            response.raise_for_status()
-            return response.json()
-
-    async def _get_oidc_metadata_cached(self, domain: str) -> dict:
-        """
-        Get OIDC metadata with caching.
-
-        Args:
-            domain: Auth0 domain
-
-        Returns:
-            OIDC metadata document
-        """
-        now = time.time()
-
-        # Check cache
-        if domain in self._metadata_cache:
-            cached = self._metadata_cache[domain]
-            if cached["expires_at"] > now:
-                return cached["data"]
-
-        # Cache miss/expired - fetch fresh
-        metadata = await self._fetch_oidc_metadata(domain)
-
-        # Enforce cache size limit (FIFO eviction)
-        if len(self._metadata_cache) >= self._cache_max_entries:
-            oldest_key = next(iter(self._metadata_cache))
-            del self._metadata_cache[oldest_key]
-
-        # Store in cache
-        self._metadata_cache[domain] = {
-            "data": metadata,
-            "expires_at": now + self._cache_ttl
-        }
-
-        return metadata
-
-    async def _fetch_jwks(self, jwks_uri: str) -> dict:
-        """
-        Fetch JWKS (JSON Web Key Set) from jwks_uri.
-
-        Args:
-            jwks_uri: The JWKS endpoint URL
-
-        Returns:
-            JWKS document containing public keys
-
-        Raises:
-            ApiError: If JWKS fetch fails
-        """
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(jwks_uri)
-                response.raise_for_status()
-                return response.json()
         except Exception as e:
-            raise ApiError("jwks_fetch_error", f"Failed to fetch JWKS from {jwks_uri}", e)
-
-    async def _get_jwks_cached(self, domain: str, metadata: dict = None) -> dict:
-        """
-        Get JWKS with caching usingOIDC discovery.
-
-        Args:
-            domain: Auth0 domain
-            metadata: Optional OIDC metadata (if already fetched)
-
-        Returns:
-            JWKS document
-
-        Raises:
-            ApiError: If JWKS fetch fails or jwks_uri missing from metadata
-        """
-        now = time.time()
-
-        # Check cache
-        if domain in self._jwks_cache:
-            cached = self._jwks_cache[domain]
-            if cached["expires_at"] > now:
-                return cached["data"]
-
-        # Get jwks_uri from OIDC metadata
-        if not metadata:
-            metadata = await self._get_oidc_metadata_cached(domain)
-
-        jwks_uri = metadata.get('jwks_uri')
-        if not jwks_uri:
-            raise ApiError(
-                "missing_jwks_uri",
-                f"OIDC metadata for {domain} does not contain jwks_uri. Provider may be non-RFC-compliant."
+            if isinstance(e, ApiError):
+                raise
+            raise AccessTokenError(
+                AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
+                "The access token has expired and there was an error while trying to refresh it.",
+                e
             )
-
-        # Fetch JWKS
-        jwks = await self._fetch_jwks(jwks_uri)
-
-        # Enforce cache size limit (FIFO eviction)
-        if len(self._jwks_cache) >= self._cache_max_entries:
-            oldest_key = next(iter(self._jwks_cache))
-            del self._jwks_cache[oldest_key]
-
-        # Store in cache
-        self._jwks_cache[domain] = {
-            "data": jwks,
-            "expires_at": now + self._cache_ttl
-        }
-
-        return jwks
-
-    # ------------------------------------------
-    # Token & Scope Management - MRRT
-    # ------------------------------------------
 
     def _merge_scope_with_defaults(
         self,
         request_scope: Optional[str],
         audience: Optional[str]
     ) -> Optional[str]:
+        """Helper: Merges requested scopes with default authorization params."""
         audience = audience or self.DEFAULT_AUDIENCE_STATE_KEY
         default_scopes = ""
         if self._default_authorization_params and "scope" in self._default_authorization_params:
@@ -1198,13 +1016,13 @@ class ServerClient(Generic[TStoreOptions]):
         merged_scopes = list(dict.fromkeys(default_scopes_list + request_scopes_list))
         return " ".join(merged_scopes) if merged_scopes else None
 
-
     def _find_matching_token_set(
         self,
         token_sets: list[dict[str, Any]],
         audience: Optional[str],
         scope: Optional[str]
     ) -> Optional[dict[str, Any]]:
+        """Helper: Finds a token set matching the requested audience and scopes."""
         audience = audience or self.DEFAULT_AUDIENCE_STATE_KEY
         requested_scopes = set(scope.split()) if scope else set()
         matches: list[tuple[int, dict]] = []
@@ -1221,91 +1039,57 @@ class ServerClient(Generic[TStoreOptions]):
         # Return the token set with the smallest superset of scopes that matches the requested audience and scopes
         return min(matches, key=lambda t: t[0])[1] if matches else None
 
-    # ------------------------------------------
-    # URL Builders
-    # ------------------------------------------
+    # ============================================================================
+    # BACKCHANNEL AUTHENTICATION (CIBA)
+    # Client-Initiated Backchannel Authentication for decoupled authentication
+    # flows where users authenticate on a separate device.
+    # ============================================================================
 
-    async def _build_link_user_url(
+    async def login_backchannel(
         self,
-        connection: str,
-        id_token: str,
-        code_verifier: str,
-        state: str,
-        connection_scope: Optional[str] = None,
-        authorization_params: Optional[dict[str, Any]] = None
-    ) -> str:
-        """Build a URL for linking user accounts"""
-        # Generate code challenge from verifier
-        code_challenge = PKCE.generate_code_challenge(code_verifier)
+        options: dict[str, Any],
+        store_options: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        """
+        Logs in using Client-Initiated Backchannel Authentication.
 
-        # Get metadata if not already fetched
-        if not hasattr(self, '_oauth_metadata'):
-            self._oauth_metadata = await self._get_oidc_metadata_cached(self._domain)
+        Note:
+            Using Client-Initiated Backchannel Authentication requires the feature
+            to be enabled in the Auth0 dashboard.
 
-        # Get authorization endpoint
-        auth_endpoint = self._oauth_metadata.get("authorization_endpoint",
-                                                 f"https://{self._domain}/authorize")
+        See:
+            https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow
 
-        # Build params
-        params = {
-            "client_id": self._client_id,
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256",
-            "state": state,
-            "requested_connection": connection,
-            "requested_connection_scope": connection_scope,
-            "response_type": "code",
-            "id_token_hint": id_token,
-            "scope": "openid link_account",
-            "audience": "my-account"
+        Args:
+            options: Options used to configure the backchannel login process.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            A dictionary containing the authorizationDetails (when RAR was used).
+        """
+        token_endpoint_response = await self.backchannel_authentication({
+            "binding_message": options.get("binding_message"),
+            "login_hint": options.get("login_hint"),
+            "authorization_params": options.get("authorization_params"),
+        })
+
+        existing_state_data = await self._state_store.get(self._state_identifier, store_options)
+
+        audience = self._default_authorization_params.get(
+            "audience", self.DEFAULT_AUDIENCE_STATE_KEY)
+
+        state_data = State.update_state_data(
+            audience,
+            existing_state_data,
+            token_endpoint_response
+        )
+
+        await self._state_store.set(self._state_identifier, state_data, store_options)
+
+        result = {
+            "authorization_details": token_endpoint_response.get("authorization_details")
         }
-
-        # Add connection scope if provided
-        if connection_scope:
-            params["requested_connection_scope"] = connection_scope
-
-        # Add any additional parameters
-        if authorization_params:
-            params.update(authorization_params)
-        return URL.build_url(auth_endpoint, params)
-
-    async def _build_unlink_user_url(
-        self,
-        connection: str,
-        id_token: str,
-        code_verifier: str,
-        state: str,
-        authorization_params: Optional[dict[str, Any]] = None
-    ) -> str:
-        """Build a URL for unlinking user accounts"""
-        # Generate code challenge from verifier
-        code_challenge = PKCE.generate_code_challenge(code_verifier)
-
-        # Get metadata if not already fetched
-        if not hasattr(self, '_oauth_metadata'):
-            self._oauth_metadata = await self._get_oidc_metadata_cached(self._domain)
-
-        # Get authorization endpoint
-        auth_endpoint = self._oauth_metadata.get("authorization_endpoint",
-                                                 f"https://{self._domain}/authorize")
-
-        # Build params
-        params = {
-            "client_id": self._client_id,
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256",
-            "state": state,
-            "requested_connection": connection,
-            "response_type": "code",
-            "id_token_hint": id_token,
-            "scope": "openid unlink_account",
-            "audience": "my-account"
-        }
-        # Add any additional parameters
-        if authorization_params:
-            params.update(authorization_params)
-
-        return URL.build_url(auth_endpoint, params)
+        return result
 
     async def backchannel_authentication(
         self,
@@ -1581,94 +1365,314 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
-    # ==========================================
-    # Token Exchange Operations
-    # ==========================================
+    # ============================================================================
+    # USER LINKING / UNLINKING
+    # Methods for linking and unlinking external identity provider accounts
+    # to a user's Auth0 profile.
+    # ============================================================================
 
-    async def get_token_by_refresh_token(self, options: dict[str, Any]) -> dict[str, Any]:
+    async def start_link_user(
+        self,
+        options,
+        store_options: Optional[dict[str, Any]] = None
+    ):
         """
-        Retrieves a token by exchanging a refresh token.
+        Starts the user linking process, and returns a URL to redirect the user-agent to.
 
         Args:
-            options: Dictionary containing the refresh token and any additional options.
-                Must include a 'refresh_token' key.
-
-        Raises:
-            AccessTokenError: If there was an issue requesting the access token.
+            options: Options used to configure the user linking process.
+            store_options: Optional options used to pass to the Transaction and State Store.
 
         Returns:
-            A dictionary containing the token response from Auth0.
+            URL to redirect the user to for authentication.
         """
-        refresh_token = options.get("refresh_token")
-        if not refresh_token:
-            raise MissingRequiredArgumentError("refresh_token")
+        state_data = await self._state_store.get(self._state_identifier, store_options)
 
-        try:
-            # Use session domain if provided, otherwise fallback to static domain
-            domain = options.get("domain") or self._domain
-
-            # Ensure we have the OIDC metadata from the correct domain
-            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
-                self._oauth.metadata = await self._get_oidc_metadata_cached(domain)
-
-            token_endpoint = self._oauth.metadata.get("token_endpoint")
-            if not token_endpoint:
-                raise ApiError("configuration_error",
-                               "Token endpoint missing in OIDC metadata")
-
-            # Prepare the token request parameters
-            token_params = {
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-                "client_id": self._client_id,
-            }
-
-            audience = options.get("audience")
-            if audience:
-                token_params["audience"] = audience
-
-            # Merge scope if present in options with any in the original authorization params
-            merged_scope = self._merge_scope_with_defaults(
-                request_scope=options.get("scope"),
-                audience=audience
+        if not state_data or not state_data.get("id_token"):
+            raise StartLinkUserError(
+                "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
             )
 
-            if merged_scope:
-                token_params["scope"] = merged_scope
+        # Generate PKCE and state for security
+        code_verifier = PKCE.generate_code_verifier()
+        state = PKCE.generate_random_string(32)
 
-            # Exchange the refresh token for an access token
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    token_endpoint,
-                    data=token_params,
-                    auth=(self._client_id, self._client_secret)
-                )
+        # Build the URL for user linking
+        link_user_url = await self._build_link_user_url(
+            connection=options.get("connection"),
+            connection_scope=options.get("connectionScope"),
+            id_token=state_data["id_token"],
+            code_verifier=code_verifier,
+            state=state,
+            authorization_params=options.get("authorization_params")
+        )
 
-                if response.status_code != 200:
-                    error_data = response.json()
-                    raise ApiError(
-                        error_data.get("error", "refresh_token_error"),
-                        error_data.get("error_description",
-                                       "Failed to exchange refresh token")
-                    )
+        # Store transaction data
+        transaction_data = TransactionData(
+            code_verifier=code_verifier,
+            app_state=options.get("app_state")
+        )
 
-                token_response = response.json()
+        await self._transaction_store.set(
+            f"{self._transaction_identifier}:{state}",
+            transaction_data,
+            options=store_options
+        )
 
-                # Add required fields if they are missing
-                if "expires_in" in token_response and "expires_at" not in token_response:
-                    token_response["expires_at"] = int(
-                        time.time()) + token_response["expires_in"]
+        return link_user_url
 
-                return token_response
+    async def complete_link_user(
+        self,
+        url: str,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        """
+        Completes the user linking process.
 
-        except Exception as e:
-            if isinstance(e, ApiError):
-                raise
-            raise AccessTokenError(
-                AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
-                "The access token has expired and there was an error while trying to refresh it.",
-                e
+        Args:
+            url: The URL from which the query params should be extracted
+            store_options: Optional options for the stores
+
+        Returns:
+            Dictionary containing the original app state
+        """
+
+        # We can reuse the interactive login completion since the flow is similar
+        result = await self.complete_interactive_login(url, store_options)
+
+        # Return just the app state as specified
+        return {
+            "app_state": result.get("app_state")
+        }
+
+    async def start_unlink_user(
+        self,
+        options,
+        store_options: Optional[dict[str, Any]] = None
+    ):
+        """
+        Starts the user unlinking process, and returns a URL to redirect the user-agent to.
+
+        Args:
+            options: Options used to configure the user unlinking process.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            URL to redirect the user to for authentication.
+        """
+        state_data = await self._state_store.get(self._state_identifier, store_options)
+
+        if not state_data or not state_data.get("id_token"):
+            raise StartLinkUserError(
+                "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
             )
+
+        # Generate PKCE and state for security
+        code_verifier = PKCE.generate_code_verifier()
+        state = PKCE.generate_random_string(32)
+
+        # Build the URL for user linking
+        link_user_url = await self._build_unlink_user_url(
+            connection=options.get("connection"),
+            id_token=state_data["id_token"],
+            code_verifier=code_verifier,
+            state=state,
+            authorization_params=options.get("authorization_params")
+        )
+
+        # Store transaction data
+        transaction_data = TransactionData(
+            code_verifier=code_verifier,
+            app_state=options.get("app_state")
+        )
+
+        await self._transaction_store.set(
+            f"{self._transaction_identifier}:{state}",
+            transaction_data,
+            options=store_options
+        )
+
+        return link_user_url
+
+    async def complete_unlink_user(
+        self,
+        url: str,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        """
+        Completes the user unlinking process.
+
+        Args:
+            url: The URL from which the query params should be extracted
+            store_options: Optional options for the stores
+
+        Returns:
+            Dictionary containing the original app state
+        """
+
+        # We can reuse the interactive login completion since the flow is similar
+        result = await self.complete_interactive_login(url, store_options)
+
+        # Return just the app state as specified
+        return {
+            "app_state": result.get("app_state")
+        }
+
+    async def _build_link_user_url(
+        self,
+        connection: str,
+        id_token: str,
+        code_verifier: str,
+        state: str,
+        connection_scope: Optional[str] = None,
+        authorization_params: Optional[dict[str, Any]] = None
+    ) -> str:
+        """Build a URL for linking user accounts"""
+        # Generate code challenge from verifier
+        code_challenge = PKCE.generate_code_challenge(code_verifier)
+
+        # Get metadata if not already fetched
+        if not hasattr(self, '_oauth_metadata'):
+            self._oauth_metadata = await self._get_oidc_metadata_cached(self._domain)
+
+        # Get authorization endpoint
+        auth_endpoint = self._oauth_metadata.get("authorization_endpoint",
+                                                 f"https://{self._domain}/authorize")
+
+        # Build params
+        params = {
+            "client_id": self._client_id,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+            "requested_connection": connection,
+            "requested_connection_scope": connection_scope,
+            "response_type": "code",
+            "id_token_hint": id_token,
+            "scope": "openid link_account",
+            "audience": "my-account"
+        }
+
+        # Add connection scope if provided
+        if connection_scope:
+            params["requested_connection_scope"] = connection_scope
+
+        # Add any additional parameters
+        if authorization_params:
+            params.update(authorization_params)
+        return URL.build_url(auth_endpoint, params)
+
+    async def _build_unlink_user_url(
+        self,
+        connection: str,
+        id_token: str,
+        code_verifier: str,
+        state: str,
+        authorization_params: Optional[dict[str, Any]] = None
+    ) -> str:
+        """Build a URL for unlinking user accounts"""
+        # Generate code challenge from verifier
+        code_challenge = PKCE.generate_code_challenge(code_verifier)
+
+        # Get metadata if not already fetched
+        if not hasattr(self, '_oauth_metadata'):
+            self._oauth_metadata = await self._get_oidc_metadata_cached(self._domain)
+
+        # Get authorization endpoint
+        auth_endpoint = self._oauth_metadata.get("authorization_endpoint",
+                                                 f"https://{self._domain}/authorize")
+
+        # Build params
+        params = {
+            "client_id": self._client_id,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+            "requested_connection": connection,
+            "response_type": "code",
+            "id_token_hint": id_token,
+            "scope": "openid unlink_account",
+            "audience": "my-account"
+        }
+        # Add any additional parameters
+        if authorization_params:
+            params.update(authorization_params)
+
+        return URL.build_url(auth_endpoint, params)
+
+    # ============================================================================
+    # FEDERATED CONNECTION TOKENS
+    # Retrieves access tokens for federated identity provider connections
+    # (e.g., Google, GitHub) using token exchange.
+    # ============================================================================
+
+    async def get_access_token_for_connection(
+        self,
+        options: dict[str, Any],
+        store_options: Optional[dict[str, Any]] = None
+    ) -> str:
+        """
+        Retrieves an access token for a connection.
+
+        This method attempts to obtain an access token for a specified connection.
+        It first checks if a refresh token exists in the store.
+        If no refresh token is found, it throws an `AccessTokenForConnectionError` indicating
+        that the refresh token was not found.
+
+        Args:
+            options: Options for retrieving an access token for a connection.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            The access token for the connection
+
+        Raises:
+            AccessTokenForConnectionError: If the access token was not found or
+                there was an issue requesting the access token.
+        """
+        state_data = await self._state_store.get(self._state_identifier, store_options)
+
+        if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
+            state_data_dict = state_data.dict()
+        else:
+            state_data_dict = state_data or {}
+
+        # Find existing connection token
+        connection_token_set = None
+        if state_data_dict and len(state_data_dict["connection_token_sets"]) > 0:
+            for ts in state_data_dict.get("connection_token_sets"):
+                if ts.get("connection") == options["connection"]:
+                    connection_token_set = ts
+                    break
+
+        # If token is valid, return it
+        if connection_token_set and connection_token_set.get("expires_at", 0) > time.time():
+            return connection_token_set["access_token"]
+
+        # Check for refresh token
+        if not state_data_dict or not state_data_dict.get("refresh_token"):
+            raise AccessTokenForConnectionError(
+                AccessTokenForConnectionErrorCode.MISSING_REFRESH_TOKEN,
+                "A refresh token was not found but is required to be able to retrieve an access token for a connection."
+            )
+        # Get new token for connection
+        # Use session's domain for token exchange
+        session_domain = state_data_dict.get("domain") or self._domain
+        token_endpoint_response = await self.get_token_for_connection({
+            "connection": options.get("connection"),
+            "login_hint": options.get("login_hint"),
+            "refresh_token": state_data_dict["refresh_token"],
+            "domain": session_domain
+        })
+
+        # Update state data with new token
+        updated_state_data = State.update_state_data_for_connection_token_set(
+            options, state_data_dict, token_endpoint_response)
+
+        # Store updated state
+        await self._state_store.set(self._state_identifier, updated_state_data, store_options)
+
+        return token_endpoint_response["access_token"]
 
     async def get_token_for_connection(self, options: dict[str, Any]) -> dict[str, Any]:
         """
@@ -1753,9 +1757,11 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
-    # ==========================================
-    # Account Connection
-    # ==========================================
+    # ============================================================================
+    # CONNECTED ACCOUNTS
+    # Methods for managing third-party account connections via the My Account API.
+    # Includes initiating connections, completing flows, and CRUD operations.
+    # ============================================================================
 
     async def start_connect_account(
         self,
@@ -1888,3 +1894,325 @@ class ServerClient(Generic[TStoreOptions]):
             await self._transaction_store.delete(transaction_identifier, options=store_options)
 
         return response
+
+    async def list_connected_accounts(
+        self,
+        connection: Optional[str] = None,
+        from_param: Optional[str] = None,
+        take: Optional[int] = None,
+        store_options: dict = None
+    ) -> ListConnectedAccountsResponse:
+        """
+        Retrieves a list of connected accounts for the authenticated user.
+
+        Args:
+            connection (Optional[str], optional): Filter results to a specific connection. Defaults to None.
+            from_param (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.
+            take (Optional[int], optional): The maximum number of connections to retrieve. Defaults to None.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            ListConnectedAccountsResponse: The response object containing the list of connected accounts.
+
+        Raises:
+            Auth0Error: If there is an error retrieving the access token.
+            MyAccountApiError: If the My Account API returns an error response.
+        """
+        if take is not None and (not isinstance(take, int) or take < 1):
+            raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
+
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="read:me:connected_accounts",
+            store_options=store_options
+        )
+        return await self._my_account_client.list_connected_accounts(
+            access_token=access_token, connection=connection, from_param=from_param, take=take)
+
+    async def delete_connected_account(
+        self,
+        connected_account_id: str,
+        store_options: dict = None
+    ) -> None:
+        """
+        Deletes a connected account.
+
+        Args:
+            connected_account_id (str): The ID of the connected account to delete.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Raises:
+            Auth0Error: If there is an error retrieving the access token.
+            MyAccountApiError: If the My Account API returns an error response.
+        """
+        if not connected_account_id:
+            raise MissingRequiredArgumentError("connected_account_id")
+
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="delete:me:connected_accounts",
+            store_options=store_options
+        )
+        await self._my_account_client.delete_connected_account(
+            access_token=access_token, connected_account_id=connected_account_id)
+
+    async def list_connected_account_connections(
+        self,
+        from_param: Optional[str] = None,
+        take: Optional[int] = None,
+        store_options: dict = None
+    ) -> ListConnectedAccountConnectionsResponse:
+        """
+        Retrieves a list of available connections that can be used connected accounts for the authenticated user.
+
+        Args:
+            from_param (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.
+            take (Optional[int], optional): The maximum number of connections to retrieve. Defaults to None.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            ListConnectedAccountConnectionsResponse: The response object containing the list of connected account connections.
+
+        Raises:
+            Auth0Error: If there is an error retrieving the access token.
+            MyAccountApiError: If the My Account API returns an error response.
+        """
+        if take is not None and (not isinstance(take, int) or take < 1):
+            raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
+
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="read:me:connected_accounts",
+            store_options=store_options
+        )
+        return await self._my_account_client.list_connected_account_connections(
+            access_token=access_token, from_param=from_param, take=take)
+
+    # ============================================================================
+    # CUSTOM TOKEN EXCHANGE (RFC 8693)
+    # Exchanges external custom tokens for Auth0 tokens.
+    # ============================================================================
+
+    async def custom_token_exchange(
+        self,
+        options: CustomTokenExchangeOptions
+    ) -> TokenExchangeResponse:
+        """
+        Exchanges a custom token for Auth0 tokens using RFC 8693.
+
+        This method implements the OAuth 2.0 Token Exchange specification,
+        allowing you to exchange external custom tokens for Auth0 access tokens.
+
+        Args:
+            options: Configuration for the token exchange
+
+        Returns:
+            TokenExchangeResponse containing access_token and metadata
+
+        Raises:
+            CustomTokenExchangeError: If token exchange fails
+            MissingRequiredArgumentError: If required parameters are missing
+
+        Example:
+            ```python
+            response = await client.custom_token_exchange(
+                CustomTokenExchangeOptions(
+                    subject_token="custom-token-value",
+                    subject_token_type="urn:acme:mcp-token",
+                    audience="https://api.example.com",
+                    scope="read:data write:data"
+                )
+            )
+            print(response.access_token)
+            ```
+
+        See:
+            https://datatracker.ietf.org/doc/html/rfc8693
+        """
+        try:
+            # Validate options (Pydantic handles this automatically)
+            if not isinstance(options, CustomTokenExchangeOptions):
+                options = CustomTokenExchangeOptions(**options)
+
+            # Ensure we have OIDC metadata
+            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
+                self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+
+            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            if not token_endpoint:
+                raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
+
+            # Prepare token exchange parameters per RFC 8693
+            params = {
+                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                "client_id": self._client_id,
+                "subject_token": options.subject_token,
+                "subject_token_type": options.subject_token_type,
+            }
+
+            # Add optional parameters
+            if options.audience:
+                params["audience"] = options.audience
+
+            if options.scope:
+                params["scope"] = options.scope
+
+            if options.actor_token:
+                params["actor_token"] = options.actor_token
+                params["actor_token_type"] = options.actor_token_type
+
+            if options.organization:
+                params["organization"] = options.organization
+
+            # Merge additional authorization params
+            if options.authorization_params:
+                # Prevent override of critical parameters
+                forbidden_params = {"grant_type", "client_id", "subject_token", "subject_token_type"}
+                for key, value in options.authorization_params.items():
+                    if key not in forbidden_params:
+                        params[key] = value
+
+            # Make the token exchange request
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    token_endpoint,
+                    data=params,
+                    auth=(self._client_id, self._client_secret)
+                )
+
+                if response.status_code != 200:
+                    error_data = response.json() if response.headers.get(
+                        "content-type", "").startswith("application/json") else {}
+                    raise CustomTokenExchangeError(
+                        error_data.get("error", CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED),
+                        error_data.get("error_description", f"Token exchange failed: {response.status_code}")
+                    )
+
+                try:
+                    token_data = response.json()
+                except json.JSONDecodeError:
+                    raise CustomTokenExchangeError(
+                        CustomTokenExchangeErrorCode.INVALID_RESPONSE,
+                        "Failed to parse token response as JSON"
+                    )
+
+                # Validate and return response
+                return TokenExchangeResponse(**token_data)
+
+        except ValidationError as e:
+            raise CustomTokenExchangeError(
+                CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                f"Token validation failed: {str(e)}"
+            )
+        except Exception as e:
+            if isinstance(e, (CustomTokenExchangeError, ApiError)):
+                raise
+            raise CustomTokenExchangeError(
+                CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
+                f"Token exchange failed: {str(e)}",
+                e
+            )
+
+    async def login_with_custom_token_exchange(
+        self,
+        options: LoginWithCustomTokenExchangeOptions,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> LoginWithCustomTokenExchangeResult:
+        """
+        Performs token exchange and establishes a user session.
+
+        This method combines custom_token_exchange() with session management,
+        exchanging a custom token for Auth0 tokens and storing the session state.
+
+        Args:
+            options: Configuration for token exchange and login
+            store_options: Optional options for state store (e.g., request/response for cookies)
+
+        Returns:
+            LoginWithCustomTokenExchangeResult containing session state
+
+        Raises:
+            CustomTokenExchangeError: If token exchange fails
+            ApiError: If session management fails
+
+        Example:
+            ```python
+            result = await client.login_with_custom_token_exchange(
+                LoginWithCustomTokenExchangeOptions(
+                    subject_token="custom-token-value",
+                    subject_token_type="urn:acme:mcp-token",
+                    audience="https://api.example.com"
+                ),
+                store_options={"request": request, "response": response}
+            )
+            print(result.state_data["user"])
+            ```
+
+        See:
+            https://datatracker.ietf.org/doc/html/rfc8693
+        """
+        try:
+            # Perform token exchange
+            exchange_options = CustomTokenExchangeOptions(
+                subject_token=options.subject_token,
+                subject_token_type=options.subject_token_type,
+                audience=options.audience,
+                scope=options.scope,
+                actor_token=options.actor_token,
+                actor_token_type=options.actor_token_type,
+                organization=options.organization,
+                authorization_params=options.authorization_params
+            )
+
+            token_response = await self.custom_token_exchange(exchange_options)
+
+            # Extract user claims from ID token if present
+            user_claims = None
+            sid = PKCE.generate_random_string(32)  # Default sid
+            if token_response.id_token:
+                claims = jwt.decode(token_response.id_token, options={"verify_signature": False})
+                user_claims = UserClaims.parse_obj(claims)
+                # Extract sid from token if available
+                sid = claims.get("sid", sid)
+
+            # Determine audience for token set
+            audience = options.audience or self.DEFAULT_AUDIENCE_STATE_KEY
+
+            # Build token set
+            token_set = TokenSet(
+                audience=audience,
+                access_token=token_response.access_token,
+                scope=token_response.scope or options.scope or "",
+                expires_at=int(time.time()) + token_response.expires_in
+            )
+
+            # Construct state data
+            state_data = StateData(
+                user=user_claims,
+                id_token=token_response.id_token,
+                refresh_token=token_response.refresh_token,
+                token_sets=[token_set],
+                internal={
+                    "sid": sid,
+                    "created_at": int(time.time())
+                }
+            )
+
+            # Store session
+            await self._state_store.set(self._state_identifier, state_data, options=store_options)
+
+            # Build result
+            result = LoginWithCustomTokenExchangeResult(
+                state_data=state_data.dict()
+            )
+
+            return result
+
+        except Exception as e:
+            if isinstance(e, (CustomTokenExchangeError, ApiError)):
+                raise
+            raise CustomTokenExchangeError(
+                CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
+                f"Login with custom token exchange failed: {str(e)}",
+                e
+            )

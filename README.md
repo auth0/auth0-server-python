@@ -104,6 +104,47 @@ async def callback(request: Request):
     return RedirectResponse(url="/")
 ```
 
+### 4. Login with Custom Token Exchange
+
+If you're migrating from a legacy authentication system or integrating with a custom identity provider, you can exchange external tokens for Auth0 tokens using the OAuth 2.0 Token Exchange specification (RFC 8693):
+
+```python
+from auth0_server_python.auth_types import LoginWithCustomTokenExchangeOptions
+
+# Exchange a custom token and establish a session
+result = await auth0.login_with_custom_token_exchange(
+    LoginWithCustomTokenExchangeOptions(
+        subject_token="your-custom-token",
+        subject_token_type="urn:acme:mcp-token",
+        audience="https://api.example.com"
+    ),
+    store_options={"request": request, "response": response}
+)
+
+# Access the user session
+user = result.state_data["user"]
+```
+
+For advanced token exchange scenarios (without creating a session), use `custom_token_exchange()` directly:
+
+```python
+from auth0_server_python.auth_types import CustomTokenExchangeOptions
+
+# Exchange a custom token for Auth0 tokens
+response = await auth0.custom_token_exchange(
+    CustomTokenExchangeOptions(
+        subject_token="your-custom-token",
+        subject_token_type="urn:acme:mcp-token",
+        audience="https://api.example.com",
+        scope="read:data write:data"
+    )
+)
+
+print(response.access_token)
+```
+
+For more details and examples, see [examples/CustomTokenExchange.md](examples/CustomTokenExchange.md).
+
 ## Feedback
 
 ### Contributing

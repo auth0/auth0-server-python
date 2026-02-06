@@ -112,6 +112,17 @@ class ConfigurationError(Auth0Error):
         super().__init__(message)
         self.name = "ConfigurationError"
 
+class InvalidArgumentError(Auth0Error):
+    """
+    Error raised when a given argument is an invalid value.
+    """
+    code = "invalid_argument"
+
+    def __init__(self, argument: str, message: str):
+        super().__init__(message)
+        self.name = "InvalidArgumentError"
+        self.argument = argument
+
 
 class BackchannelLogoutError(Auth0Error):
     """
@@ -180,3 +191,22 @@ class AccessTokenForConnectionErrorCode:
     FAILED_TO_RETRIEVE = "failed_to_retrieve"
     API_ERROR = "api_error"
     FETCH_ERROR = "retrieval_error"
+
+
+class CustomTokenExchangeError(Auth0Error):
+    """
+    Error raised during custom token exchange operations.
+    """
+    def __init__(self, code: str, message: str, cause=None):
+        super().__init__(message)
+        self.code = code
+        self.name = "CustomTokenExchangeError"
+        self.cause = cause
+
+
+class CustomTokenExchangeErrorCode:
+    """Error codes for custom token exchange operations."""
+    INVALID_TOKEN_FORMAT = "invalid_token_format"
+    MISSING_ACTOR_TOKEN_TYPE = "missing_actor_token_type"
+    TOKEN_EXCHANGE_FAILED = "token_exchange_failed"
+    INVALID_RESPONSE = "invalid_response"
