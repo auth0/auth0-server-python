@@ -20,6 +20,8 @@ from auth0_server_python.auth_types import (
     CustomTokenExchangeOptions,
     LoginWithCustomTokenExchangeOptions,
     LoginWithCustomTokenExchangeResult,
+    ListConnectedAccountConnectionsResponse,
+    ListConnectedAccountsResponse,
     LogoutOptions,
     LogoutTokenClaims,
     StartInteractiveLoginOptions,
@@ -38,6 +40,7 @@ from auth0_server_python.error import (
     BackchannelLogoutError,
     CustomTokenExchangeError,
     CustomTokenExchangeErrorCode,
+    InvalidArgumentError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     PollingApiError,
@@ -826,6 +829,230 @@ class ServerClient(Generic[TStoreOptions]):
             raise BackchannelLogoutError(
                 f"Error processing logout token: {str(e)}")
 
+    async def custom_token_exchange(
+        self,
+        options: CustomTokenExchangeOptions
+    ) -> TokenExchangeResponse:
+        """
+        Exchanges a custom token for Auth0 tokens using RFC 8693.
+
+        This method implements the OAuth 2.0 Token Exchange specification,
+        allowing you to exchange external custom tokens for Auth0 access tokens.
+
+        Args:
+            options: Configuration for the token exchange
+
+        Returns:
+            TokenExchangeResponse containing access_token and metadata
+
+        Raises:
+            CustomTokenExchangeError: If token exchange fails
+            MissingRequiredArgumentError: If required parameters are missing
+
+        Example:
+            ```python
+            response = await client.custom_token_exchange(
+                CustomTokenExchangeOptions(
+                    subject_token="custom-token-value",
+                    subject_token_type="urn:acme:mcp-token",
+                    audience="https://api.example.com",
+                    scope="read:data write:data"
+                )
+            )
+            print(response.access_token)
+            ```
+
+        See:
+            https://datatracker.ietf.org/doc/html/rfc8693
+        """
+        try:
+            # Validate options (Pydantic handles this automatically)
+            if not isinstance(options, CustomTokenExchangeOptions):
+                options = CustomTokenExchangeOptions(**options)
+
+            # Ensure we have OIDC metadata
+            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
+                self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+
+            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            if not token_endpoint:
+                raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
+
+            # Prepare token exchange parameters per RFC 8693
+            params = {
+                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                "client_id": self._client_id,
+                "subject_token": options.subject_token,
+                "subject_token_type": options.subject_token_type,
+            }
+
+            # Add optional parameters
+            if options.audience:
+                params["audience"] = options.audience
+
+            if options.scope:
+                params["scope"] = options.scope
+
+            if options.actor_token:
+                params["actor_token"] = options.actor_token
+                params["actor_token_type"] = options.actor_token_type
+
+            if options.organization:
+                params["organization"] = options.organization
+
+            # Merge additional authorization params
+            if options.authorization_params:
+                # Prevent override of critical parameters
+                forbidden_params = {"grant_type", "client_id", "subject_token", "subject_token_type"}
+                for key, value in options.authorization_params.items():
+                    if key not in forbidden_params:
+                        params[key] = value
+
+            # Make the token exchange request
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    token_endpoint,
+                    data=params,
+                    auth=(self._client_id, self._client_secret)
+                )
+
+                if response.status_code != 200:
+                    error_data = response.json() if response.headers.get(
+                        "content-type", "").startswith("application/json") else {}
+                    raise CustomTokenExchangeError(
+                        error_data.get("error", CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED),
+                        error_data.get("error_description", f"Token exchange failed: {response.status_code}")
+                    )
+
+                try:
+                    token_data = response.json()
+                except json.JSONDecodeError:
+                    raise CustomTokenExchangeError(
+                        CustomTokenExchangeErrorCode.INVALID_RESPONSE,
+                        "Failed to parse token response as JSON"
+                    )
+
+                # Validate and return response
+                return TokenExchangeResponse(**token_data)
+
+        except ValidationError as e:
+            raise CustomTokenExchangeError(
+                CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                f"Token validation failed: {str(e)}"
+            )
+        except Exception as e:
+            if isinstance(e, (CustomTokenExchangeError, ApiError)):
+                raise
+            raise CustomTokenExchangeError(
+                CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
+                f"Token exchange failed: {str(e)}",
+                e
+            )
+
+    async def login_with_custom_token_exchange(
+        self,
+        options: LoginWithCustomTokenExchangeOptions,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> LoginWithCustomTokenExchangeResult:
+        """
+        Performs token exchange and establishes a user session.
+
+        This method combines custom_token_exchange() with session management,
+        exchanging a custom token for Auth0 tokens and storing the session state.
+
+        Args:
+            options: Configuration for token exchange and login
+            store_options: Optional options for state store (e.g., request/response for cookies)
+
+        Returns:
+            LoginWithCustomTokenExchangeResult containing session state
+
+        Raises:
+            CustomTokenExchangeError: If token exchange fails
+            ApiError: If session management fails
+
+        Example:
+            ```python
+            result = await client.login_with_custom_token_exchange(
+                LoginWithCustomTokenExchangeOptions(
+                    subject_token="custom-token-value",
+                    subject_token_type="urn:acme:mcp-token",
+                    audience="https://api.example.com"
+                ),
+                store_options={"request": request, "response": response}
+            )
+            print(result.state_data["user"])
+            ```
+
+        See:
+            https://datatracker.ietf.org/doc/html/rfc8693
+        """
+        try:
+            # Perform token exchange
+            exchange_options = CustomTokenExchangeOptions(
+                subject_token=options.subject_token,
+                subject_token_type=options.subject_token_type,
+                audience=options.audience,
+                scope=options.scope,
+                actor_token=options.actor_token,
+                actor_token_type=options.actor_token_type,
+                organization=options.organization,
+                authorization_params=options.authorization_params
+            )
+
+            token_response = await self.custom_token_exchange(exchange_options)
+
+            # Extract user claims from ID token if present
+            user_claims = None
+            sid = PKCE.generate_random_string(32)  # Default sid
+            if token_response.id_token:
+                claims = jwt.decode(token_response.id_token, options={"verify_signature": False})
+                user_claims = UserClaims.parse_obj(claims)
+                # Extract sid from token if available
+                sid = claims.get("sid", sid)
+
+            # Determine audience for token set
+            audience = options.audience or self.DEFAULT_AUDIENCE_STATE_KEY
+
+            # Build token set
+            token_set = TokenSet(
+                audience=audience,
+                access_token=token_response.access_token,
+                scope=token_response.scope or options.scope or "",
+                expires_at=int(time.time()) + token_response.expires_in
+            )
+
+            # Construct state data
+            state_data = StateData(
+                user=user_claims,
+                id_token=token_response.id_token,
+                refresh_token=token_response.refresh_token,
+                token_sets=[token_set],
+                internal={
+                    "sid": sid,
+                    "created_at": int(time.time())
+                }
+            )
+
+            # Store session
+            await self._state_store.set(self._state_identifier, state_data, options=store_options)
+
+            # Build result
+            result = LoginWithCustomTokenExchangeResult(
+                state_data=state_data.dict()
+            )
+
+            return result
+
+        except Exception as e:
+            if isinstance(e, (CustomTokenExchangeError, ApiError)):
+                raise
+            raise CustomTokenExchangeError(
+                CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
+                f"Login with custom token exchange failed: {str(e)}",
+                e
+            )
+
     # Authlib Helpers
 
     async def _build_link_user_url(
@@ -1478,226 +1705,95 @@ class ServerClient(Generic[TStoreOptions]):
 
         return response
 
-    async def custom_token_exchange(
+    async def list_connected_accounts(
         self,
-        options: CustomTokenExchangeOptions
-    ) -> TokenExchangeResponse:
+        connection: Optional[str] = None,
+        from_param: Optional[str] = None,
+        take: Optional[int] = None,
+        store_options: dict = None
+    ) -> ListConnectedAccountsResponse:
         """
-        Exchanges a custom token for Auth0 tokens using RFC 8693.
-
-        This method implements the OAuth 2.0 Token Exchange specification,
-        allowing you to exchange external custom tokens for Auth0 access tokens.
+        Retrieves a list of connected accounts for the authenticated user.
 
         Args:
-            options: Configuration for the token exchange
+            connection (Optional[str], optional): Filter results to a specific connection. Defaults to None.
+            from_param (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.
+            take (Optional[int], optional): The maximum number of connections to retrieve. Defaults to None.
+            store_options: Optional options used to pass to the Transaction and State Store.
 
         Returns:
-            TokenExchangeResponse containing access_token and metadata
+            ListConnectedAccountsResponse: The response object containing the list of connected accounts.
 
         Raises:
-            CustomTokenExchangeError: If token exchange fails
-            MissingRequiredArgumentError: If required parameters are missing
-
-        Example:
-            ```python
-            response = await client.custom_token_exchange(
-                CustomTokenExchangeOptions(
-                    subject_token="custom-token-value",
-                    subject_token_type="urn:acme:mcp-token",
-                    audience="https://api.example.com",
-                    scope="read:data write:data"
-                )
-            )
-            print(response.access_token)
-            ```
-
-        See:
-            https://datatracker.ietf.org/doc/html/rfc8693
+            Auth0Error: If there is an error retrieving the access token.
+            MyAccountApiError: If the My Account API returns an error response.
         """
-        try:
-            # Validate options (Pydantic handles this automatically)
-            if not isinstance(options, CustomTokenExchangeOptions):
-                options = CustomTokenExchangeOptions(**options)
+        if take is not None and (not isinstance(take, int) or take < 1):
+            raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
 
-            # Ensure we have OIDC metadata
-            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
-                self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="read:me:connected_accounts",
+            store_options=store_options
+        )
+        return await self._my_account_client.list_connected_accounts(
+            access_token=access_token, connection=connection, from_param=from_param, take=take)
 
-            token_endpoint = self._oauth.metadata.get("token_endpoint")
-            if not token_endpoint:
-                raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
-
-            # Prepare token exchange parameters per RFC 8693
-            params = {
-                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-                "client_id": self._client_id,
-                "subject_token": options.subject_token,
-                "subject_token_type": options.subject_token_type,
-            }
-
-            # Add optional parameters
-            if options.audience:
-                params["audience"] = options.audience
-
-            if options.scope:
-                params["scope"] = options.scope
-
-            if options.actor_token:
-                params["actor_token"] = options.actor_token
-                params["actor_token_type"] = options.actor_token_type
-
-            if options.organization:
-                params["organization"] = options.organization
-
-            # Merge additional authorization params
-            if options.authorization_params:
-                # Prevent override of critical parameters
-                forbidden_params = {"grant_type", "client_id", "subject_token", "subject_token_type"}
-                for key, value in options.authorization_params.items():
-                    if key not in forbidden_params:
-                        params[key] = value
-
-            # Make the token exchange request
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    token_endpoint,
-                    data=params,
-                    auth=(self._client_id, self._client_secret)
-                )
-
-                if response.status_code != 200:
-                    error_data = response.json() if response.headers.get(
-                        "content-type", "").startswith("application/json") else {}
-                    raise CustomTokenExchangeError(
-                        error_data.get("error", CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED),
-                        error_data.get("error_description", f"Token exchange failed: {response.status_code}")
-                    )
-
-                try:
-                    token_data = response.json()
-                except json.JSONDecodeError:
-                    raise CustomTokenExchangeError(
-                        CustomTokenExchangeErrorCode.INVALID_RESPONSE,
-                        "Failed to parse token response as JSON"
-                    )
-
-                # Validate and return response
-                return TokenExchangeResponse(**token_data)
-
-        except ValidationError as e:
-            raise CustomTokenExchangeError(
-                CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
-                f"Token validation failed: {str(e)}"
-            )
-        except Exception as e:
-            if isinstance(e, (CustomTokenExchangeError, ApiError)):
-                raise
-            raise CustomTokenExchangeError(
-                CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
-                f"Token exchange failed: {str(e)}",
-                e
-            )
-
-    async def login_with_custom_token_exchange(
+    async def delete_connected_account(
         self,
-        options: LoginWithCustomTokenExchangeOptions,
-        store_options: Optional[dict[str, Any]] = None
-    ) -> LoginWithCustomTokenExchangeResult:
+        connected_account_id: str,
+        store_options: dict = None
+    ) -> None:
         """
-        Performs token exchange and establishes a user session.
-
-        This method combines custom_token_exchange() with session management,
-        exchanging a custom token for Auth0 tokens and storing the session state.
+        Deletes a connected account.
 
         Args:
-            options: Configuration for token exchange and login
-            store_options: Optional options for state store (e.g., request/response for cookies)
-
-        Returns:
-            LoginWithCustomTokenExchangeResult containing session state
+            connected_account_id (str): The ID of the connected account to delete.
+            store_options: Optional options used to pass to the Transaction and State Store.
 
         Raises:
-            CustomTokenExchangeError: If token exchange fails
-            ApiError: If session management fails
-
-        Example:
-            ```python
-            result = await client.login_with_custom_token_exchange(
-                LoginWithCustomTokenExchangeOptions(
-                    subject_token="custom-token-value",
-                    subject_token_type="urn:acme:mcp-token",
-                    audience="https://api.example.com"
-                ),
-                store_options={"request": request, "response": response}
-            )
-            print(result.state_data["user"])
-            ```
-
-        See:
-            https://datatracker.ietf.org/doc/html/rfc8693
+            Auth0Error: If there is an error retrieving the access token.
+            MyAccountApiError: If the My Account API returns an error response.
         """
-        try:
-            # Perform token exchange
-            exchange_options = CustomTokenExchangeOptions(
-                subject_token=options.subject_token,
-                subject_token_type=options.subject_token_type,
-                audience=options.audience,
-                scope=options.scope,
-                actor_token=options.actor_token,
-                actor_token_type=options.actor_token_type,
-                organization=options.organization,
-                authorization_params=options.authorization_params
-            )
+        if not connected_account_id:
+            raise MissingRequiredArgumentError("connected_account_id")
 
-            token_response = await self.custom_token_exchange(exchange_options)
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="delete:me:connected_accounts",
+            store_options=store_options
+        )
+        await self._my_account_client.delete_connected_account(
+            access_token=access_token, connected_account_id=connected_account_id)
 
-            # Extract user claims from ID token if present
-            user_claims = None
-            sid = PKCE.generate_random_string(32)  # Default sid
-            if token_response.id_token:
-                claims = jwt.decode(token_response.id_token, options={"verify_signature": False})
-                user_claims = UserClaims.parse_obj(claims)
-                # Extract sid from token if available
-                sid = claims.get("sid", sid)
+    async def list_connected_account_connections(
+        self,
+        from_param: Optional[str] = None,
+        take: Optional[int] = None,
+        store_options: dict = None
+    ) -> ListConnectedAccountConnectionsResponse:
+        """
+        Retrieves a list of available connections that can be used connected accounts for the authenticated user.
 
-            # Determine audience for token set
-            audience = options.audience or self.DEFAULT_AUDIENCE_STATE_KEY
+        Args:
+            from_param (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.
+            take (Optional[int], optional): The maximum number of connections to retrieve. Defaults to None.
+            store_options: Optional options used to pass to the Transaction and State Store.
 
-            # Build token set
-            token_set = TokenSet(
-                audience=audience,
-                access_token=token_response.access_token,
-                scope=token_response.scope or options.scope or "",
-                expires_at=int(time.time()) + token_response.expires_in
-            )
+        Returns:
+            ListConnectedAccountConnectionsResponse: The response object containing the list of connected account connections.
 
-            # Construct state data
-            state_data = StateData(
-                user=user_claims,
-                id_token=token_response.id_token,
-                refresh_token=token_response.refresh_token,
-                token_sets=[token_set],
-                internal={
-                    "sid": sid,
-                    "created_at": int(time.time())
-                }
-            )
+        Raises:
+            Auth0Error: If there is an error retrieving the access token.
+            MyAccountApiError: If the My Account API returns an error response.
+        """
+        if take is not None and (not isinstance(take, int) or take < 1):
+            raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
 
-            # Store session
-            await self._state_store.set(self._state_identifier, state_data, options=store_options)
-
-            # Build result
-            result = LoginWithCustomTokenExchangeResult(
-                state_data=state_data.dict()
-            )
-
-            return result
-
-        except Exception as e:
-            if isinstance(e, (CustomTokenExchangeError, ApiError)):
-                raise
-            raise CustomTokenExchangeError(
-                CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
-                f"Login with custom token exchange failed: {str(e)}",
-                e
-            )
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="read:me:connected_accounts",
+            store_options=store_options
+        )
+        return await self._my_account_client.list_connected_account_connections(
+            access_token=access_token, from_param=from_param, take=take)
