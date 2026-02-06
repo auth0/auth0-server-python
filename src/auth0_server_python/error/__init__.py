@@ -101,6 +101,18 @@ class MissingRequiredArgumentError(Auth0Error):
         self.argument = argument
 
 
+class InvalidArgumentError(Auth0Error):
+    """
+    Error raised when a given argument is an invalid value.
+    """
+    code = "invalid_argument"
+
+    def __init__(self, argument: str, message: str):
+        super().__init__(message)
+        self.name = "InvalidArgumentError"
+        self.argument = argument
+
+
 class BackchannelLogoutError(Auth0Error):
     """
     Error raised during backchannel logout processing.

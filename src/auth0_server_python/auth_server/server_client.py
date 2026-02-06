@@ -17,6 +17,8 @@ from auth0_server_python.auth_types import (
     CompleteConnectAccountResponse,
     ConnectAccountOptions,
     ConnectAccountRequest,
+    ListConnectedAccountConnectionsResponse,
+    ListConnectedAccountsResponse,
     LogoutOptions,
     LogoutTokenClaims,
     StartInteractiveLoginOptions,
@@ -32,6 +34,7 @@ from auth0_server_python.error import (
     AccessTokenForConnectionErrorCode,
     ApiError,
     BackchannelLogoutError,
+    InvalidArgumentError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     PollingApiError,
@@ -1471,3 +1474,96 @@ class ServerClient(Generic[TStoreOptions]):
             await self._transaction_store.delete(transaction_identifier, options=store_options)
 
         return response
+
+    async def list_connected_accounts(
+        self,
+        connection: Optional[str] = None,
+        from_param: Optional[str] = None,
+        take: Optional[int] = None,
+        store_options: dict = None
+    ) -> ListConnectedAccountsResponse:
+        """
+        Retrieves a list of connected accounts for the authenticated user.
+
+        Args:
+            connection (Optional[str], optional): Filter results to a specific connection. Defaults to None.
+            from_param (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.
+            take (Optional[int], optional): The maximum number of connections to retrieve. Defaults to None.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            ListConnectedAccountsResponse: The response object containing the list of connected accounts.
+
+        Raises:
+            Auth0Error: If there is an error retrieving the access token.
+            MyAccountApiError: If the My Account API returns an error response.
+        """
+        if take is not None and (not isinstance(take, int) or take < 1):
+            raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
+
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="read:me:connected_accounts",
+            store_options=store_options
+        )
+        return await self._my_account_client.list_connected_accounts(
+            access_token=access_token, connection=connection, from_param=from_param, take=take)
+
+    async def delete_connected_account(
+        self,
+        connected_account_id: str,
+        store_options: dict = None
+    ) -> None:
+        """
+        Deletes a connected account.
+
+        Args:
+            connected_account_id (str): The ID of the connected account to delete.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Raises:
+            Auth0Error: If there is an error retrieving the access token.
+            MyAccountApiError: If the My Account API returns an error response.
+        """
+        if not connected_account_id:
+            raise MissingRequiredArgumentError("connected_account_id")
+
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="delete:me:connected_accounts",
+            store_options=store_options
+        )
+        await self._my_account_client.delete_connected_account(
+            access_token=access_token, connected_account_id=connected_account_id)
+
+    async def list_connected_account_connections(
+        self,
+        from_param: Optional[str] = None,
+        take: Optional[int] = None,
+        store_options: dict = None
+    ) -> ListConnectedAccountConnectionsResponse:
+        """
+        Retrieves a list of available connections that can be used connected accounts for the authenticated user.
+
+        Args:
+            from_param (Optional[str], optional): A pagination token indicating where to start retrieving results, obtained from a prior request. Defaults to None.
+            take (Optional[int], optional): The maximum number of connections to retrieve. Defaults to None.
+            store_options: Optional options used to pass to the Transaction and State Store.
+
+        Returns:
+            ListConnectedAccountConnectionsResponse: The response object containing the list of connected account connections.
+
+        Raises:
+            Auth0Error: If there is an error retrieving the access token.
+            MyAccountApiError: If the My Account API returns an error response.
+        """
+        if take is not None and (not isinstance(take, int) or take < 1):
+            raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
+
+        access_token = await self.get_access_token(
+            audience=self._my_account_client.audience,
+            scope="read:me:connected_accounts",
+            store_options=store_options
+        )
+        return await self._my_account_client.list_connected_account_connections(
+            access_token=access_token, from_param=from_param, take=take)
