@@ -15,9 +15,9 @@ from auth0_server_python.auth_types import (
     ConnectedAccountConnection,
     ConnectParams,
     CustomTokenExchangeOptions,
-    LoginWithCustomTokenExchangeOptions,
     ListConnectedAccountConnectionsResponse,
     ListConnectedAccountsResponse,
+    LoginWithCustomTokenExchangeOptions,
     LogoutOptions,
     TransactionData,
 )
