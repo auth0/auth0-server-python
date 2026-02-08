@@ -903,6 +903,7 @@ async def test_handle_backchannel_logout_ok(mocker):
     mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
     mocker.patch("jwt.decode", return_value={
         "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
+        "iss": "https://auth0.local",
         "sub": "user_sub",
         "sid": "session_id_123"
     })
@@ -3292,8 +3293,14 @@ async def test_complete_login_issuer_mismatch_raises_error(mocker):
     mock_signing_key.key = "mock_pem_key"
     mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
 
-    # Mock jwt.decode to raise InvalidIssuerError
-    mocker.patch("jwt.decode", side_effect=jwt.InvalidIssuerError("Invalid issuer"))
+    # Mock jwt.decode to return claims with a WRONG issuer
+    # Our custom normalized issuer validation should catch this mismatch
+    mocker.patch("jwt.decode", return_value={
+        "sub": "user123",
+        "iss": "https://wrong-issuer.auth0.com/",  # Different from expected: https://tenant.auth0.com/
+        "aud": "test_client",
+        "exp": 9999999999
+    })
 
     # Should raise ApiError with invalid_issuer code
     with pytest.raises(ApiError) as exc_info:
@@ -3326,6 +3333,49 @@ async def test_normalize_domain_handles_different_schemes():
 
     # Test domain with trailing slash
     assert client._normalize_domain("https://auth0.com/") == "https://auth0.com/"
+
+
+@pytest.mark.asyncio
+async def test_normalize_issuer_handles_edge_cases():
+    """Test that _normalize_issuer handles edge cases for robust issuer comparison.
+
+    This test documents the edge cases that could cause issuer validation failures
+    with PyJWT's strict string comparison:
+    - Trailing slash differences
+    - Case sensitivity
+    - HTTP vs HTTPS schemes
+    - Missing scheme
+    """
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        secret="test_secret_key_32_chars_long!!",
+        transaction_store=AsyncMock(),
+        state_store=AsyncMock()
+    )
+
+    # Test trailing slash normalization
+    assert client._normalize_issuer("https://auth0.com/") == "https://auth0.com"
+    assert client._normalize_issuer("https://auth0.com") == "https://auth0.com"
+    assert client._normalize_issuer("https://auth0.com/") == client._normalize_issuer("https://auth0.com")
+
+    # Test case insensitivity
+    assert client._normalize_issuer("HTTPS://AUTH0.COM/") == "https://auth0.com"
+    assert client._normalize_issuer("Https://Auth0.Com") == "https://auth0.com"
+    assert client._normalize_issuer("HTTPS://AUTH0.COM/") == client._normalize_issuer("https://auth0.com")
+
+    # Test HTTP to HTTPS conversion
+    assert client._normalize_issuer("http://auth0.com") == "https://auth0.com"
+    assert client._normalize_issuer("HTTP://AUTH0.COM/") == "https://auth0.com"
+
+    # Test missing scheme
+    assert client._normalize_issuer("auth0.com") == "https://auth0.com"
+    assert client._normalize_issuer("AUTH0.COM/") == "https://auth0.com"
+
+    # Test empty/None handling
+    assert client._normalize_issuer("") == ""
+    assert client._normalize_issuer(None) is None
 
 
 # =============================================================================

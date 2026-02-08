@@ -169,6 +169,31 @@ class ServerClient(Generic[TStoreOptions]):
         else:
             return f'https://{domain}'
 
+    def _normalize_issuer(self, issuer: str) -> str:
+        """
+        Normalize issuer URL for comparison.
+
+        Args:
+            issuer: The issuer URL to normalize
+
+        Returns:
+            Normalized issuer URL (lowercase)
+        """
+        if not issuer:
+            return issuer
+
+        # Lowercase first for case-insensitive comparison and scheme detection
+        issuer = issuer.lower()
+
+        # Ensure https:// prefix
+        if issuer.startswith('http://'):
+            issuer = issuer.replace('http://', 'https://', 1)
+        elif not issuer.startswith('https://'):
+            issuer = f'https://{issuer}'
+
+        # Remove trailing slash
+        return issuer.rstrip('/')
+
     async def _fetch_oidc_metadata(self, domain: str) -> dict:
         """Fetch OIDC metadata from domain."""
         normalized_domain = self._normalize_domain(domain)
@@ -528,14 +553,24 @@ class ServerClient(Generic[TStoreOptions]):
                         f"No matching key found in JWKS for kid: {kid}"
                     )
 
+                # Decode with signature
                 claims = jwt.decode(
                     id_token,
                     signing_key.key,
                     algorithms=["RS256"],
                     audience=self._client_id,
-                    issuer=origin_issuer,
-                    options={"verify_signature": True}
+                    options={"verify_signature": True, "verify_iss": False}
                 )
+
+                # Custom normalized issuer validation
+                token_issuer = claims.get("iss", "")
+                if self._normalize_issuer(token_issuer) != self._normalize_issuer(origin_issuer):
+                    raise ApiError(
+                        "invalid_issuer",
+                        f"ID token issuer mismatch. Token issuer: {token_issuer}, Expected: {origin_issuer}. "
+                        f"Ensure your Auth0 domain is configured correctly."
+                    )
+
                 user_claims = UserClaims.parse_obj(claims)
             except jwt.InvalidSignatureError as e:
                 raise ApiError(
@@ -547,12 +582,6 @@ class ServerClient(Generic[TStoreOptions]):
                 raise ApiError(
                     "invalid_audience",
                     f"ID token audience mismatch. Expected: {self._client_id}. Ensure your client_id is configured correctly: {str(e)}",
-                    e
-                )
-            except jwt.InvalidIssuerError as e:
-                raise ApiError(
-                    "invalid_issuer",
-                    f"ID token issuer mismatch. Expected: {origin_issuer}. Ensure your Auth0 domain is configured correctly: {str(e)}",
                     e
                 )
             except jwt.ExpiredSignatureError as e:
@@ -767,8 +796,17 @@ class ServerClient(Generic[TStoreOptions]):
                     logout_token,
                     signing_key.key,
                     algorithms=["RS256"],
-                    options={"verify_signature": True}
+                    options={"verify_signature": True, "verify_iss": False}
                 )
+
+                # Normalized issuer validation
+                token_issuer = claims.get("iss", "")
+                expected_issuer = self._normalize_domain(self._domain)
+                if self._normalize_issuer(token_issuer) != self._normalize_issuer(expected_issuer):
+                    raise BackchannelLogoutError(
+                        f"Logout token issuer mismatch. Token issuer: {token_issuer}, Expected: {expected_issuer}. "
+                        f"Ensure your Auth0 domain is configured correctly."
+                    )
             except jwt.InvalidSignatureError as e:
                 raise BackchannelLogoutError(
                     f"Logout token signature verification failed: {str(e)}"
