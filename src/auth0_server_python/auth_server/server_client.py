@@ -151,7 +151,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         self._my_account_client = MyAccountClient(domain=domain)
 
-        # Cache for OIDC metadata and JWKS (Requirement 3: MCD Support)
+        # Cache for OIDC metadata and JWKS
         self._metadata_cache = {}  # {domain: {"data": {...}, "expires_at": timestamp}}
         self._jwks_cache = {}      # {domain: {"data": {...}, "expires_at": timestamp}}
         self._cache_ttl = 3600     # 1 hour TTL
@@ -531,7 +531,7 @@ class ServerClient(Generic[TStoreOptions]):
         if user_info:
             user_claims = UserClaims.parse_obj(user_info)
         elif id_token:
-            # Fetch JWKS for signature verification (Requirement 3)
+            # Fetch JWKS for signature verification
             jwks = await self._get_jwks_cached(origin_domain, metadata)
 
             # Decode and verify ID token with signature verification enabled
@@ -771,7 +771,7 @@ class ServerClient(Generic[TStoreOptions]):
             raise BackchannelLogoutError("Missing logout token")
 
         try:
-            # Fetch JWKS for signature verification (Requirement 3)
+            # Fetch JWKS for signature verification
             jwks = await self._get_jwks_cached(self._domain)
 
             # Decode and verify logout token with signature verification enabled
