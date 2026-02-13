@@ -6,6 +6,9 @@ import time
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from auth0_server_python.auth_types import DomainResolverContext
+from auth0_server_python.error import DomainResolverError
+
 
 class PKCE:
     @classmethod
@@ -224,3 +227,69 @@ class URL:
         if return_to:
             params["returnTo"] = return_to
         return URL.build_url(base_url, params)
+
+
+# =============================================================================
+# Domain Resolver Utilities
+# =============================================================================
+
+def build_domain_resolver_context(store_options: Optional[dict[str, Any]]) -> 'DomainResolverContext':
+    """
+    Build DomainResolverContext from store_options.
+
+    Extracts request information in a framework-agnostic way using duck typing.
+
+    Args:
+        store_options: Dictionary containing 'request' and 'response' objects
+
+    Returns:
+        DomainResolverContext with extracted request data
+    """
+
+    if not store_options:
+        return DomainResolverContext()
+
+    request = store_options.get('request')
+    if not request:
+        return DomainResolverContext()
+
+    # Framework-agnostic extraction using duck typing
+    request_url = str(request.url) if hasattr(request, 'url') else None
+    request_headers = dict(request.headers) if hasattr(request, 'headers') else None
+
+    return DomainResolverContext(
+        request_url=request_url,
+        request_headers=request_headers
+    )
+
+
+def validate_resolved_domain_value(domain_value: Any) -> str:
+    """
+    Validate the value returned by domain resolver.
+
+    Args:
+        domain_value: The value returned by the domain resolver
+
+    Returns:
+        The validated domain string
+
+    Raises:
+        DomainResolverError: If the returned value is invalid
+    """
+
+    if domain_value is None:
+        raise DomainResolverError(
+            "Domain resolver returned None. Must return a valid domain string."
+        )
+
+    if not isinstance(domain_value, str):
+        raise DomainResolverError(
+            f"Domain resolver must return a string. Got {type(domain_value).__name__} instead."
+        )
+
+    if not domain_value.strip():
+        raise DomainResolverError(
+            "Domain resolver returned an empty string. Must return a valid domain."
+        )
+
+    return domain_value
