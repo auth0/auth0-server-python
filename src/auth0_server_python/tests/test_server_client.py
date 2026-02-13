@@ -2976,8 +2976,8 @@ async def test_oidc_metadata_caching():
     assert fetch_count == first_fetch_count  # Should NOT increment
 
     # Verify cache contains data
-    assert "tenant.auth0.com" in client._metadata_cache
-    assert client._metadata_cache["tenant.auth0.com"]["data"] == mock_metadata
+    assert "tenant.auth0.com" in client._discovery_cache
+    assert client._discovery_cache["tenant.auth0.com"]["metadata"] == mock_metadata
 
 
 @pytest.mark.asyncio
@@ -3096,15 +3096,15 @@ async def test_jwks_cache_size_limit():
     await client._get_jwks_cached("domain2.auth0.com")
     await client._get_jwks_cached("domain3.auth0.com")
 
-    assert len(client._jwks_cache) == 3
-    assert "domain1.auth0.com" in client._jwks_cache
+    assert len(client._discovery_cache) == 3
+    assert "domain1.auth0.com" in client._discovery_cache
 
     # Add one more - should evict oldest (domain1)
     await client._get_jwks_cached("domain4.auth0.com")
 
-    assert len(client._jwks_cache) == 3
-    assert "domain1.auth0.com" not in client._jwks_cache  # Evicted
-    assert "domain4.auth0.com" in client._jwks_cache
+    assert len(client._discovery_cache) == 3
+    assert "domain1.auth0.com" not in client._discovery_cache  # Evicted
+    assert "domain4.auth0.com" in client._discovery_cache
 
 
 @pytest.mark.asyncio
@@ -3159,14 +3159,14 @@ async def test_metadata_cache_size_limit():
     await client._get_oidc_metadata_cached("domain1.auth0.com")
     await client._get_oidc_metadata_cached("domain2.auth0.com")
 
-    assert len(client._metadata_cache) == 2
+    assert len(client._discovery_cache) == 2
 
     # Add third - should evict first
     await client._get_oidc_metadata_cached("domain3.auth0.com")
 
-    assert len(client._metadata_cache) == 2
-    assert "domain1.auth0.com" not in client._metadata_cache
-    assert "domain3.auth0.com" in client._metadata_cache
+    assert len(client._discovery_cache) == 2
+    assert "domain1.auth0.com" not in client._discovery_cache
+    assert "domain3.auth0.com" in client._discovery_cache
 
 
 # =============================================================================

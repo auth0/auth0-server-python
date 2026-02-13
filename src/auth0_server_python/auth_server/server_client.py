@@ -6,6 +6,7 @@ Handles authentication flows, token management, and user sessions.
 import asyncio
 import json
 import time
+from collections import OrderedDict
 from typing import Any, Callable, Generic, Optional, TypeVar, Union
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -151,11 +152,10 @@ class ServerClient(Generic[TStoreOptions]):
 
         self._my_account_client = MyAccountClient(domain=domain)
 
-        # Cache for OIDC metadata and JWKS
-        self._metadata_cache = {}  # {domain: {"data": {...}, "expires_at": timestamp}}
-        self._jwks_cache = {}      # {domain: {"data": {...}, "expires_at": timestamp}}
-        self._cache_ttl = 3600     # 1 hour TTL
-        self._cache_max_entries = 100 # Max 100 domains to prevent memory bloat
+        # Unified cache for OIDC metadata and JWKS per domain (LRU eviction + TTL)
+        self._discovery_cache: OrderedDict[str, dict] = OrderedDict()
+        self._cache_ttl = 600     # 10 mins. TTL
+        self._cache_max_entries = 100 # Max 100 domains
 
     def _normalize_domain(self, domain: str) -> str:
         """
@@ -203,9 +203,24 @@ class ServerClient(Generic[TStoreOptions]):
             response.raise_for_status()
             return response.json()
 
+    def _purge_expired_cache_entries(self):
+        """Purge all expired entries from the discovery cache."""
+        now = time.time()
+        expired = [k for k, v in self._discovery_cache.items() if v["expires_at"] <= now]
+        for k in expired:
+            del self._discovery_cache[k]
+
+    def _ensure_cache_capacity(self):
+        """Evict least recently used entry if cache is at capacity."""
+        if len(self._discovery_cache) >= self._cache_max_entries:
+            self._discovery_cache.popitem(last=False)
+
     async def _get_oidc_metadata_cached(self, domain: str) -> dict:
         """
-        Get OIDC metadata with caching.
+        Get OIDC metadata with caching (LRU eviction + TTL).
+
+        Uses a unified cache shared with JWKS when metadata expires,
+        the corresponding JWKS is also invalidated.
 
         Args:
             domain: Auth0 domain
@@ -216,22 +231,25 @@ class ServerClient(Generic[TStoreOptions]):
         now = time.time()
 
         # Check cache
-        if domain in self._metadata_cache:
-            cached = self._metadata_cache[domain]
+        if domain in self._discovery_cache:
+            cached = self._discovery_cache[domain]
             if cached["expires_at"] > now:
-                return cached["data"]
+                self._discovery_cache.move_to_end(domain)
+                return cached["metadata"]
+            # Expired — remove entire entry (metadata + jwks)
+            del self._discovery_cache[domain]
 
         # Cache miss/expired - fetch fresh
         metadata = await self._fetch_oidc_metadata(domain)
 
-        # Enforce cache size limit (FIFO eviction)
-        if len(self._metadata_cache) >= self._cache_max_entries:
-            oldest_key = next(iter(self._metadata_cache))
-            del self._metadata_cache[oldest_key]
+        # Purge expired entries and ensure capacity
+        self._purge_expired_cache_entries()
+        self._ensure_cache_capacity()
 
-        # Store in cache
-        self._metadata_cache[domain] = {
-            "data": metadata,
+        # Store in cache with jwks=None (lazily populated when needed)
+        self._discovery_cache[domain] = {
+            "metadata": metadata,
+            "jwks": None,
             "expires_at": now + self._cache_ttl
         }
 
@@ -260,7 +278,10 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def _get_jwks_cached(self, domain: str, metadata: dict = None) -> dict:
         """
-        Get JWKS with caching usingOIDC discovery.
+        Get JWKS with caching using OIDC discovery (LRU eviction + TTL).
+
+        Uses a unified cache shared with metadata — JWKS is lazily populated
+        on first access and invalidated when the cache entry expires.
 
         Args:
             domain: Auth0 domain
@@ -274,13 +295,20 @@ class ServerClient(Generic[TStoreOptions]):
         """
         now = time.time()
 
-        # Check cache
-        if domain in self._jwks_cache:
-            cached = self._jwks_cache[domain]
+        # Check cache — entry exists, not expired, and jwks already fetched
+        if domain in self._discovery_cache:
+            cached = self._discovery_cache[domain]
             if cached["expires_at"] > now:
-                return cached["data"]
+                if cached["jwks"] is not None:
+                    self._discovery_cache.move_to_end(domain)
+                    return cached["jwks"]
+                # Entry valid but jwks not yet fetched — use cached metadata
+                metadata = cached["metadata"]
+            else:
+                # Expired — remove entire entry
+                del self._discovery_cache[domain]
 
-        # Get jwks_uri from OIDC metadata
+        # Get metadata if not available from cache or parameter
         if not metadata:
             metadata = await self._get_oidc_metadata_cached(domain)
 
@@ -294,16 +322,19 @@ class ServerClient(Generic[TStoreOptions]):
         # Fetch JWKS
         jwks = await self._fetch_jwks(jwks_uri)
 
-        # Enforce cache size limit (FIFO eviction)
-        if len(self._jwks_cache) >= self._cache_max_entries:
-            oldest_key = next(iter(self._jwks_cache))
-            del self._jwks_cache[oldest_key]
-
-        # Store in cache
-        self._jwks_cache[domain] = {
-            "data": jwks,
-            "expires_at": now + self._cache_ttl
-        }
+        # Update existing cache entry with jwks (entry created by _get_oidc_metadata_cached)
+        if domain in self._discovery_cache:
+            self._discovery_cache[domain]["jwks"] = jwks
+            self._discovery_cache.move_to_end(domain)
+        else:
+            # Edge case: entry was evicted between metadata and jwks fetch
+            self._purge_expired_cache_entries()
+            self._ensure_cache_capacity()
+            self._discovery_cache[domain] = {
+                "metadata": metadata,
+                "jwks": jwks,
+                "expires_at": now + self._cache_ttl
+            }
 
         return jwks
 
