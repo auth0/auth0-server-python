@@ -11,7 +11,13 @@ from auth0_server_python.auth_types import (
     ConnectAccountOptions,
     ConnectAccountRequest,
     ConnectAccountResponse,
+    ConnectedAccount,
+    ConnectedAccountConnection,
     ConnectParams,
+    CustomTokenExchangeOptions,
+    ListConnectedAccountConnectionsResponse,
+    ListConnectedAccountsResponse,
+    LoginWithCustomTokenExchangeOptions,
     LogoutOptions,
     TransactionData,
 )
@@ -19,12 +25,16 @@ from auth0_server_python.error import (
     AccessTokenForConnectionError,
     ApiError,
     BackchannelLogoutError,
+    CustomTokenExchangeError,
+    CustomTokenExchangeErrorCode,
+    InvalidArgumentError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     PollingApiError,
     StartLinkUserError,
 )
 from auth0_server_python.utils import PKCE
+from pydantic_core import ValidationError
 
 
 @pytest.mark.asyncio
@@ -1604,6 +1614,11 @@ async def test_get_token_by_refresh_token_exchange_failed(mocker):
     args, kwargs = mock_post.call_args
     assert kwargs["data"]["refresh_token"] == "<refresh_token_should_fail>"
 
+# =============================================================================
+# Connected Accounts Tests (My Account Client)
+# =============================================================================
+
+
 @pytest.mark.asyncio
 async def test_start_connect_account_calls_connect_and_builds_url(mocker):
     # Setup
@@ -1932,3 +1947,880 @@ async def test_complete_connect_account_no_transactions(mocker):
     # Assert
     assert "transaction" in str(exc.value)
     mock_my_account_client.complete_connect_account.assert_not_awaited()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("take", ["not_an_integer", 21.3, -5, 0])
+async def test_list_connected_accounts__with_invalid_take_param(mocker, take):
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+
+    # Act
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.list_connected_accounts(
+            connection="<connection>",
+            from_param="<from_param>",
+            take=take
+        )
+
+    # Assert
+    assert "The 'take' parameter must be a positive integer." in str(exc.value)
+    mock_my_account_client.list_connected_accounts.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_list_connected_accounts_gets_access_token_and_calls_my_account(mocker):
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    mock_get_access_token = AsyncMock(return_value="<access_token>")
+    mocker.patch.object(client, "get_access_token", mock_get_access_token)
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+    mocker.patch.object(mock_my_account_client, "audience", "https://auth0.local/me/")
+    expected_response= ListConnectedAccountsResponse(
+        accounts=[ ConnectedAccount(
+            id="<id_1>",
+            connection="<connection>",
+            access_type="offline",
+            scopes=["openid", "profile", "email", "offline_access"],
+            created_at="<created_at>",
+            expires_at="<expires_at>"
+        ), ConnectedAccount(
+            id="<id_2>",
+            connection="<connection>",
+            access_type="offline",
+            scopes=["user:email", "foo", "bar"],
+            created_at="<created_at>",
+            expires_at="<expires_at>"
+        ) ],
+        next="<next_token>"
+    )
+
+    mock_my_account_client.list_connected_accounts.return_value = expected_response
+
+    # Act
+    response = await client.list_connected_accounts(
+        connection="<connection>",
+        from_param="<from_param>",
+        take=2
+    )
+
+    # Assert
+    assert response == expected_response
+    mock_get_access_token.assert_awaited_with(
+        audience="https://auth0.local/me/",
+        scope="read:me:connected_accounts",
+        store_options=ANY
+    )
+    mock_my_account_client.list_connected_accounts.assert_awaited_with(
+        access_token="<access_token>",
+        connection="<connection>",
+        from_param="<from_param>",
+        take=2
+    )
+
+@pytest.mark.asyncio
+async def test_delete_connected_account_gets_access_token_and_calls_my_account(mocker):
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    mock_get_access_token = AsyncMock(return_value="<access_token>")
+    mocker.patch.object(client, "get_access_token", mock_get_access_token)
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+    mocker.patch.object(mock_my_account_client, "audience", "https://auth0.local/me/")
+
+    # Act
+    await client.delete_connected_account(connected_account_id="<id>")
+
+    # Assert
+    mock_get_access_token.assert_awaited_with(
+        audience="https://auth0.local/me/",
+        scope="delete:me:connected_accounts",
+        store_options=ANY
+    )
+    mock_my_account_client.delete_connected_account.assert_awaited_with(
+        access_token="<access_token>",
+        connected_account_id="<id>"
+    )
+
+@pytest.mark.asyncio
+async def test_delete_connected_account_with_empty_connected_account_id(mocker):
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+
+    # Act
+    with pytest.raises(MissingRequiredArgumentError) as exc:
+        await client.delete_connected_account(connected_account_id=None)
+
+    # Assert
+    assert "connected_account_id" in str(exc.value)
+    mock_my_account_client.delete_connected_account.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_list_connected_account_connections_gets_access_token_and_calls_my_account(mocker):
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    mock_get_access_token = AsyncMock(return_value="<access_token>")
+    mocker.patch.object(client, "get_access_token", mock_get_access_token)
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+    mocker.patch.object(mock_my_account_client, "audience", "https://auth0.local/me/")
+    expected_response= ListConnectedAccountConnectionsResponse(
+        connections=[ ConnectedAccountConnection(
+            name="github",
+            strategy="github",
+            scopes=["user:email"]
+        ), ConnectedAccountConnection(
+            name="google-oauth2",
+            strategy="google-oauth2",
+            scopes=["email", "profile"]
+        ) ],
+        next="<next_token>"
+    )
+
+    mock_my_account_client.list_connected_account_connections.return_value = expected_response
+
+    # Act
+    response = await client.list_connected_account_connections(
+        from_param="<from_param>",
+        take=2
+    )
+
+    # Assert
+    assert response == expected_response
+    mock_get_access_token.assert_awaited_with(
+        audience="https://auth0.local/me/",
+        scope="read:me:connected_accounts",
+        store_options=ANY
+    )
+    mock_my_account_client.list_connected_account_connections.assert_awaited_with(
+        access_token="<access_token>",
+        from_param="<from_param>",
+        take=2
+    )
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("take", ["not_an_integer", 21.3, -5, 0])
+async def test_list_connected_account_connections_with_invalid_take_param(mocker, take):
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret"
+    )
+    mock_my_account_client = AsyncMock(MyAccountClient)
+    mocker.patch.object(client, "_my_account_client", mock_my_account_client)
+
+    # Act
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.list_connected_account_connections(
+            from_param="<from_param>",
+            take=take
+        )
+
+    # Assert
+    assert "The 'take' parameter must be a positive integer." in str(exc.value)
+    mock_my_account_client.list_connected_account_connections.assert_not_awaited()
+
+
+# =============================================================================
+# Custom Token Exchange Tests
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_success(mocker):
+    """Test successful token exchange with basic parameters."""
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock httpx response
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "exchanged_access_token",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "scope": "read:data",
+        "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    options = CustomTokenExchangeOptions(
+        subject_token="custom-token-123",
+        subject_token_type="urn:acme:mcp-token",
+        audience="https://api.example.com",
+        scope="read:data"
+    )
+    result = await client.custom_token_exchange(options)
+
+    # Assert
+    assert result.access_token == "exchanged_access_token"
+    assert result.token_type == "Bearer"
+    assert result.expires_in == 3600
+    assert result.scope == "read:data"
+    assert result.issued_token_type == "urn:ietf:params:oauth:token-type:access_token"
+
+    # Verify the request was made correctly
+    mock_httpx_client.post.assert_called_once()
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[0][0] == "https://auth0.local/oauth/token"
+    assert call_args[1]["data"]["grant_type"] == "urn:ietf:params:oauth:grant-type:token-exchange"
+    assert call_args[1]["data"]["subject_token"] == "custom-token-123"
+    assert call_args[1]["data"]["subject_token_type"] == "urn:acme:mcp-token"
+    assert call_args[1]["data"]["audience"] == "https://api.example.com"
+    assert call_args[1]["data"]["scope"] == "read:data"
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_with_actor_token(mocker):
+    """Test token exchange with actor token (delegation scenario)."""
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "delegated_token",
+        "token_type": "Bearer",
+        "expires_in": 1800
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    options = CustomTokenExchangeOptions(
+        subject_token="user-token",
+        subject_token_type="urn:ietf:params:oauth:token-type:access_token",
+        actor_token="service-token",
+        actor_token_type="urn:ietf:params:oauth:token-type:access_token"
+    )
+    result = await client.custom_token_exchange(options)
+
+    # Assert
+    assert result.access_token == "delegated_token"
+
+    # Verify actor params were sent
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[1]["data"]["actor_token"] == "service-token"
+    assert call_args[1]["data"]["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_with_organization(mocker):
+    """Test token exchange with organization parameter."""
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "org_scoped_token",
+        "token_type": "Bearer",
+        "expires_in": 3600
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    options = CustomTokenExchangeOptions(
+        subject_token="custom-token",
+        subject_token_type="urn:acme:mcp-token",
+        organization="org_abc1234"
+    )
+    result = await client.custom_token_exchange(options)
+
+    # Assert
+    assert result.access_token == "org_scoped_token"
+
+    # Verify organization param was sent
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[1]["data"]["organization"] == "org_abc1234"
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_empty_token():
+    """Test that empty/whitespace tokens are rejected."""
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    # Act & Assert - empty token
+    with pytest.raises(ValidationError) as exc:
+        await client.custom_token_exchange(
+            CustomTokenExchangeOptions(
+                subject_token="   ",
+                subject_token_type="urn:acme:mcp-token"
+            )
+        )
+    assert "empty or whitespace" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_bearer_prefix():
+    """Test that tokens with 'Bearer ' prefix are rejected."""
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    # Act & Assert
+    with pytest.raises(ValidationError) as exc:
+        await client.custom_token_exchange(
+            CustomTokenExchangeOptions(
+                subject_token="Bearer abc123",
+                subject_token_type="urn:ietf:params:oauth:token-type:access_token"
+            )
+        )
+    assert "Bearer" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_missing_actor_token_type():
+    """Test that actor_token_type is required when actor_token is provided."""
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    # Act & Assert
+    with pytest.raises(ValidationError) as exc:
+        await client.custom_token_exchange(
+            CustomTokenExchangeOptions(
+                subject_token="token",
+                subject_token_type="urn:acme:token",
+                actor_token="actor-token",
+                actor_token_type=None
+            )
+        )
+    assert "actor_token_type" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_api_error_400(mocker):
+    """Test handling of 400 error from Auth0."""
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock 400 error response
+    mock_response = MagicMock()
+    mock_response.status_code = 400
+    mock_response.json.return_value = {
+        "error": "invalid_grant",
+        "error_description": "Subject token is invalid"
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act & Assert
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.custom_token_exchange(
+            CustomTokenExchangeOptions(
+                subject_token="invalid-token",
+                subject_token_type="urn:acme:mcp-token"
+            )
+        )
+    assert exc.value.code == "invalid_grant"
+    assert "Subject token is invalid" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_invalid_json_response(mocker):
+    """Test handling of non-JSON response from token endpoint."""
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock response with invalid JSON
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.side_effect = json.JSONDecodeError("msg", "doc", 0)
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act & Assert
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.custom_token_exchange(
+            CustomTokenExchangeOptions(
+                subject_token="token",
+                subject_token_type="urn:acme:mcp-token"
+            )
+        )
+    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_RESPONSE
+    assert "parse" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_missing_token_endpoint(mocker):
+    """Test error when token endpoint is missing from OIDC metadata."""
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    # Mock metadata without token_endpoint
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"}
+    )
+
+    # Act & Assert
+    with pytest.raises(ApiError) as exc:
+        await client.custom_token_exchange(
+            CustomTokenExchangeOptions(
+                subject_token="token",
+                subject_token_type="urn:acme:mcp-token"
+            )
+        )
+    assert exc.value.code == "configuration_error"
+    assert "token endpoint" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_with_authorization_params(mocker):
+    """Test that additional authorization_params are passed through."""
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "token",
+        "token_type": "Bearer",
+        "expires_in": 3600
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    await client.custom_token_exchange(
+        CustomTokenExchangeOptions(
+            subject_token="token",
+            subject_token_type="urn:acme:mcp-token",
+            authorization_params={"custom_param": "custom_value"}
+        )
+    )
+
+    # Assert
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[1]["data"]["custom_param"] == "custom_value"
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_forbidden_params_filtered(mocker):
+    """Test that forbidden params cannot be overridden."""
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "token",
+        "token_type": "Bearer",
+        "expires_in": 3600
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    await client.custom_token_exchange(
+        CustomTokenExchangeOptions(
+            subject_token="token",
+            subject_token_type="urn:acme:mcp-token",
+            authorization_params={
+                "grant_type": "malicious_grant",  # Should be filtered
+                "client_id": "malicious_client",  # Should be filtered
+                "allowed_param": "value"  # Should be allowed
+            }
+        )
+    )
+
+    # Assert
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[1]["data"]["grant_type"] == "urn:ietf:params:oauth:grant-type:token-exchange"
+    assert call_args[1]["data"]["client_id"] == "<client_id>"
+    assert call_args[1]["data"]["allowed_param"] == "value"
+
+
+# =============================================================================
+# Login with Custom Token Exchange Tests
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_login_with_custom_token_exchange_success(mocker):
+    """Test successful login with custom token exchange."""
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock token exchange response with ID token
+    id_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIiwibmFtZSI6IkpvaG4gRG9lIiwic2lkIjoic2Vzc2lvbjEyMyJ9.fake"
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "exchanged_token",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "id_token": id_token,
+        "refresh_token": "refresh_token_123"
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Mock JWT decode
+    mocker.patch("jwt.decode", return_value={
+        "sub": "user123",
+        "name": "John Doe",
+        "sid": "session123"
+    })
+
+    # Act
+    result = await client.login_with_custom_token_exchange(
+        LoginWithCustomTokenExchangeOptions(
+            subject_token="custom-token",
+            subject_token_type="urn:acme:mcp-token",
+            audience="https://api.example.com"
+        )
+    )
+
+    # Assert
+    assert result.state_data is not None
+    assert result.state_data["user"]["sub"] == "user123"
+    assert result.state_data["user"]["name"] == "John Doe"
+    assert result.state_data["id_token"] == id_token
+    assert result.state_data["refresh_token"] == "refresh_token_123"
+    assert len(result.state_data["token_sets"]) == 1
+    assert result.state_data["token_sets"][0]["access_token"] == "exchanged_token"
+    assert result.state_data["internal"]["sid"] == "session123"
+
+    # Verify state was stored
+    mock_state_store.set.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_login_with_custom_token_exchange_no_id_token(mocker):
+    """Test login when no ID token is returned."""
+    # Setup
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock token exchange response without ID token
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "exchanged_token",
+        "token_type": "Bearer",
+        "expires_in": 3600
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act
+    result = await client.login_with_custom_token_exchange(
+        LoginWithCustomTokenExchangeOptions(
+            subject_token="custom-token",
+            subject_token_type="urn:acme:mcp-token"
+        )
+    )
+
+    # Assert - user should be None, but session should be created
+    assert result.state_data["user"] is None
+    assert result.state_data["id_token"] is None
+    assert len(result.state_data["token_sets"]) == 1
+    assert "sid" in result.state_data["internal"]
+
+    # Verify state was stored
+    mock_state_store.set.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_login_with_custom_token_exchange_failure_propagates(mocker):
+    """Test that token exchange failures are propagated."""
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    # Mock 401 error
+    mock_response = MagicMock()
+    mock_response.status_code = 401
+    mock_response.json.return_value = {
+        "error": "unauthorized",
+        "error_description": "Invalid credentials"
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    # Act & Assert
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.login_with_custom_token_exchange(
+            LoginWithCustomTokenExchangeOptions(
+                subject_token="invalid-token",
+                subject_token_type="urn:acme:mcp-token"
+            )
+        )
+    assert exc.value.code == "unauthorized"

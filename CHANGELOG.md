@@ -1,5 +1,13 @@
 # Change Log
 
+## [1.0.0b8](https://github.com/auth0/auth0-server-python/tree/1.0.0b8) (2026-02-06)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b7...1.0.0b8)
+
+**Added**
+- feat: Add Custom Token Exchange support [\#70](https://github.com/auth0/auth0-server-python/pull/70) ([subhankarmaiti](https://github.com/subhankarmaiti))
+
+- feat: FGI-1575 Add ability to manage a users connected accounts [\#60](https://github.com/auth0/auth0-server-python/pull/60) ([sam-muncke](https://github.com/sam-muncke))
+
 ## [1.0.0.b7](https://github.com/auth0/auth0-server-python/tree/1.0.0b7) (2026-01-06)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b6...1.0.0b7)
 
