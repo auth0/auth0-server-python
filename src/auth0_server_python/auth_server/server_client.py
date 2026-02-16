@@ -11,10 +11,8 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 import jwt
-from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_types import (
-    MfaRequirements,
     CompleteConnectAccountRequest,
     CompleteConnectAccountResponse,
     ConnectAccountOptions,
@@ -34,7 +32,6 @@ from auth0_server_python.error import (
     AccessTokenForConnectionErrorCode,
     ApiError,
     BackchannelLogoutError,
-    MfaRequiredError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     PollingApiError,
@@ -95,7 +92,6 @@ class ServerClient(Generic[TStoreOptions]):
         self._client_id = client_id
         self._client_secret = client_secret
         self._redirect_uri = redirect_uri
-        self._secret = secret
         self._default_authorization_params = authorization_params or {}
         self._pushed_authorization_requests = pushed_authorization_requests  # store the flag
 
@@ -112,19 +108,6 @@ class ServerClient(Generic[TStoreOptions]):
         )
 
         self._my_account_client = MyAccountClient(domain=domain)
-
-        # Initialize MFA client
-        self._mfa_client = MfaClient(
-            domain=self._domain,
-            client_id=self._client_id,
-            client_secret=self._client_secret,
-            secret=self._secret
-        )
-
-    @property
-    def mfa(self) -> MfaClient:
-        """Access the MFA client for multi-factor authentication operations."""
-        return self._mfa_client
 
     async def _fetch_oidc_metadata(self, domain: str) -> dict:
         metadata_url = f"https://{domain}/.well-known/openid-configuration"
@@ -666,24 +649,6 @@ class ServerClient(Generic[TStoreOptions]):
 
             return token_endpoint_response["access_token"]
         except Exception as e:
-            # Check for mfa_required error from token refresh
-            if isinstance(e, ApiError) and e.code == "mfa_required":
-                raw_mfa_token = getattr(e, "mfa_token", None)
-                mfa_requirements = getattr(e, "mfa_requirements", None)
-
-                if raw_mfa_token:
-                    encrypted_token = self._mfa_client.encrypt_mfa_token(
-                        raw_mfa_token=raw_mfa_token,
-                        audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
-                        scope=merged_scope or "",
-                        mfa_requirements=mfa_requirements
-                    )
-                    raise MfaRequiredError(
-                        "Multifactor authentication required",
-                        mfa_token=encrypted_token,
-                        mfa_requirements=mfa_requirements
-                    )
-
             if isinstance(e, AccessTokenError):
                 raise
             raise AccessTokenError(
@@ -1271,23 +1236,8 @@ class ServerClient(Generic[TStoreOptions]):
 
                 if response.status_code != 200:
                     error_data = response.json()
-                    error_code = error_data.get("error", "refresh_token_error")
-
-                    # Preserve mfa_required details for upstream handling
-                    if error_code == "mfa_required":
-                        error = ApiError(
-                            error_code,
-                            error_data.get("error_description", "MFA required")
-                        )
-                        error.mfa_token = error_data.get("mfa_token")
-                        mfa_requirements_data = error_data.get("mfa_requirements")
-                        error.mfa_requirements = None
-                        if mfa_requirements_data:
-                            error.mfa_requirements = MfaRequirements(**mfa_requirements_data)
-                        raise error
-
                     raise ApiError(
-                        error_code,
+                        error_data.get("error", "refresh_token_error"),
                         error_data.get("error_description",
                                        "Failed to exchange refresh token")
                     )
