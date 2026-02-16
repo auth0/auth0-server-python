@@ -2,7 +2,6 @@
 from typing import Optional
 
 import httpx
-
 from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
 from auth0_server_python.auth_types import (
     CompleteConnectAccountRequest,

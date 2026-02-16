@@ -5,7 +5,6 @@ Tests for MfaClient — MFA API operations.
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from auth0_server_python.auth_server.mfa_client import DEFAULT_MFA_TOKEN_TTL, MfaClient
 from auth0_server_python.auth_types import (
     AuthenticatorResponse,

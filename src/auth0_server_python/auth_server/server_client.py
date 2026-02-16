@@ -11,10 +11,6 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 import jwt
-from authlib.integrations.base_client.errors import OAuthError
-from authlib.integrations.httpx_client import AsyncOAuth2Client
-from pydantic import ValidationError
-
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_types import (
@@ -54,6 +50,9 @@ from auth0_server_python.error import (
     StartLinkUserError,
 )
 from auth0_server_python.utils import PKCE, URL, State
+from authlib.integrations.base_client.errors import OAuthError
+from authlib.integrations.httpx_client import AsyncOAuth2Client
+from pydantic import ValidationError
 
 # Generic type for store options
 TStoreOptions = TypeVar('TStoreOptions')
