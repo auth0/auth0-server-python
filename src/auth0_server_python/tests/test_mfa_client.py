@@ -239,6 +239,28 @@ class TestEnrollAuthenticator:
         assert result.oob_channel == "email"
 
     @pytest.mark.asyncio
+    async def test_enroll_push_auth0_channel_success(self, mocker):
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "authenticator_type": "oob",
+            "oob_channel": "auth0",
+            "oob_code": "oob_push_123",
+            "binding_method": "prompt",
+            "recovery_codes": ["rc1", "rc2"]
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        result = await client.enroll_authenticator({
+            "mfa_token": "tok",
+            "authenticator_types": ["oob"],
+            "oob_channels": ["auth0"]
+        })
+        assert isinstance(result, OobEnrollmentResponse)
+        assert result.oob_channel == "auth0"
+
+    @pytest.mark.asyncio
     async def test_enroll_api_error(self, mocker):
         client = _make_client()
         response = AsyncMock()
@@ -379,6 +401,68 @@ class TestChallengeAuthenticator:
             })
         assert "Token expired" in str(exc.value)
 
+    @pytest.mark.asyncio
+    async def test_challenge_expired_mfa_token(self, mocker):
+        """When Auth0 returns expired_token for an expired mfa_token."""
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 401
+        response.json = MagicMock(return_value={
+            "error": "expired_token",
+            "error_description": "mfa_token is expired"
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        with pytest.raises(MfaChallengeError) as exc:
+            await client.challenge_authenticator({
+                "mfa_token": "expired_tok",
+                "challenge_type": "otp"
+            })
+        assert "mfa_token is expired" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_challenge_email_with_authenticator_id(self, mocker):
+        """Challenge an email authenticator with a specific authenticator_id."""
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "challenge_type": "oob",
+            "oob_code": "oob_email_challenge_123",
+            "binding_method": "prompt"
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        result = await client.challenge_authenticator({
+            "mfa_token": "tok",
+            "challenge_type": "oob",
+            "authenticator_id": "email|dev_Fvx38nHufsGL5lWI"
+        })
+        assert result.challenge_type == "oob"
+        assert result.oob_code == "oob_email_challenge_123"
+        assert result.binding_method == "prompt"
+
+    @pytest.mark.asyncio
+    async def test_challenge_sms_with_authenticator_id(self, mocker):
+        """Challenge an SMS authenticator with a specific authenticator_id."""
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "challenge_type": "oob",
+            "oob_code": "oob_sms_challenge_456",
+            "binding_method": "prompt"
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        result = await client.challenge_authenticator({
+            "mfa_token": "tok",
+            "challenge_type": "oob",
+            "authenticator_id": "sms|dev_h1uXXoVjQ5BpU9iQ"
+        })
+        assert result.challenge_type == "oob"
+        assert result.oob_code == "oob_sms_challenge_456"
+
 
 # ── verify ───────────────────────────────────────────────────────────────────
 
@@ -445,6 +529,115 @@ class TestVerify:
         with pytest.raises(MfaVerifyError) as exc:
             await client.verify({"mfa_token": "tok"})
         assert "No verification credential" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_verify_sends_mfa_token_as_form_data(self, mocker):
+        """Verify that mfa_token is sent as form_data, not as Authorization header."""
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "access_token": "at",
+            "token_type": "Bearer",
+            "expires_in": 3600
+        })
+
+        captured_request = {}
+
+        async def mock_post(self_client, url, **kwargs):
+            captured_request["url"] = url
+            captured_request["kwargs"] = kwargs
+            return response
+
+        mocker.patch("httpx.AsyncClient.post", new=mock_post)
+
+        await client.verify({
+            "mfa_token": "my_mfa_token",
+            "otp": "123456"
+        })
+
+        # Verify: mfa_token in form data body, NOT in Authorization header
+        assert "data" in captured_request["kwargs"]
+        form_data = captured_request["kwargs"]["data"]
+        assert form_data["mfa_token"] == "my_mfa_token"
+        assert "Content-Type" in captured_request["kwargs"].get("headers", {})
+        assert captured_request["kwargs"]["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+        # Should NOT use auth= parameter (no BearerAuth)
+        assert "auth" not in captured_request["kwargs"]
+
+    @pytest.mark.asyncio
+    async def test_verify_expired_mfa_token(self, mocker):
+        """When Auth0 returns expired_token for an expired mfa_token."""
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 401
+        response.json = MagicMock(return_value={
+            "error": "expired_token",
+            "error_description": "mfa_token is expired"
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        with pytest.raises(MfaVerifyError) as exc:
+            await client.verify({"mfa_token": "expired_tok", "otp": "123456"})
+        assert "mfa_token is expired" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_verify_invalid_challenge_type(self, mocker):
+        """When Auth0 returns invalid_request for an unsupported challenge type."""
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 400
+        response.json = MagicMock(return_value={
+            "error": "invalid_request",
+            "error_description": "Invalid challenge type"
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        with pytest.raises(MfaVerifyError) as exc:
+            await client.verify({"mfa_token": "tok", "recovery_code": "ABCD-1234"})
+        assert "Invalid challenge type" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_verify_response_includes_recovery_code(self, mocker):
+        """When MFA verification returns a new recovery_code (e.g., after recovery code use)."""
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "access_token": "new_at",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "recovery_code": "NEW-RECOVERY-CODE-XYZ"
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        result = await client.verify({
+            "mfa_token": "tok",
+            "recovery_code": "OLD-RECOVERY-CODE"
+        })
+        assert isinstance(result, MfaVerifyResponse)
+        assert result.recovery_code == "NEW-RECOVERY-CODE-XYZ"
+
+    @pytest.mark.asyncio
+    async def test_verify_push_oob_success(self, mocker):
+        """Verify with OOB code from push notification challenge."""
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "access_token": "push_at",
+            "token_type": "Bearer",
+            "expires_in": 3600
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        result = await client.verify({
+            "mfa_token": "tok",
+            "oob_code": "oob_push_code",
+            "binding_code": ""
+        })
+        assert isinstance(result, MfaVerifyResponse)
+        assert result.access_token == "push_at"
 
     @pytest.mark.asyncio
     async def test_verify_wrong_code_raises(self, mocker):

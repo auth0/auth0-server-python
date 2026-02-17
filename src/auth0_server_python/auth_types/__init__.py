@@ -530,6 +530,8 @@ class MfaVerifyResponse(BaseModel):
     id_token: Optional[str] = None
     refresh_token: Optional[str] = None
     scope: Optional[str] = None
+    audience: Optional[str] = None
+    recovery_code: Optional[str] = None
 
 
 # MFA Requirements
