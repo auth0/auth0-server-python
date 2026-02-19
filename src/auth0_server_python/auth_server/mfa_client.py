@@ -212,45 +212,6 @@ class MfaClient:
                 f"Unexpected error enrolling authenticator: {str(e)}"
             )
 
-    async def delete_authenticator(
-        self,
-        options: dict[str, Any]
-    ) -> None:
-        """
-        Deletes an enrolled MFA authenticator.
-
-        Args:
-            options: Dict containing 'authenticator_id' and 'mfa_token'.
-
-        Raises:
-            MfaDeleteAuthenticatorError: When deletion fails.
-        """
-        mfa_token = options["mfa_token"]
-        authenticator_id = options["authenticator_id"]
-        url = f"{self._base_url}/mfa/authenticators/{authenticator_id}"
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.delete(
-                    url,
-                    auth=BearerAuth(mfa_token),
-                    headers={"Content-Type": "application/json"}
-                )
-
-                if response.status_code != 204:
-                    error_data = response.json()
-                    raise MfaDeleteAuthenticatorError(
-                        error_data.get("error_description", "Failed to delete authenticator"),
-                        error_data
-                    )
-
-        except MfaDeleteAuthenticatorError:
-            raise
-        except Exception as e:
-            raise MfaDeleteAuthenticatorError(
-                f"Unexpected error deleting authenticator: {str(e)}"
-            )
-
     async def challenge_authenticator(
         self,
         options: dict[str, Any]

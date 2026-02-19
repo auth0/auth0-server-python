@@ -298,51 +298,6 @@ class TestEnrollAuthenticator:
 
 # ── delete_authenticator ─────────────────────────────────────────────────────
 
-class TestDeleteAuthenticator:
-    @pytest.mark.asyncio
-    async def test_delete_authenticator_success(self, mocker):
-        client = _make_client()
-        response = AsyncMock()
-        response.status_code = 204
-        mocker.patch("httpx.AsyncClient.delete", new_callable=AsyncMock, return_value=response)
-
-        result = await client.delete_authenticator({
-            "mfa_token": "tok",
-            "authenticator_id": "auth|123"
-        })
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_delete_authenticator_api_error(self, mocker):
-        client = _make_client()
-        response = AsyncMock()
-        response.status_code = 404
-        response.json = MagicMock(return_value={
-            "error": "not_found",
-            "error_description": "Authenticator not found"
-        })
-        mocker.patch("httpx.AsyncClient.delete", new_callable=AsyncMock, return_value=response)
-
-        with pytest.raises(MfaDeleteAuthenticatorError) as exc:
-            await client.delete_authenticator({
-                "mfa_token": "tok",
-                "authenticator_id": "auth|invalid"
-            })
-        assert "Authenticator not found" in str(exc.value)
-
-    @pytest.mark.asyncio
-    async def test_delete_authenticator_unexpected_error(self, mocker):
-        client = _make_client()
-        mocker.patch("httpx.AsyncClient.delete", new_callable=AsyncMock, side_effect=Exception("timeout"))
-
-        with pytest.raises(MfaDeleteAuthenticatorError) as exc:
-            await client.delete_authenticator({
-                "mfa_token": "tok",
-                "authenticator_id": "auth|123"
-            })
-        assert "timeout" in str(exc.value)
-
-
 # ── challenge_authenticator ──────────────────────────────────────────────────
 
 class TestChallengeAuthenticator:
