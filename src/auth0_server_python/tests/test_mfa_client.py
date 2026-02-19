@@ -189,7 +189,7 @@ class TestEnrollAuthenticator:
 
         result = await client.enroll_authenticator({
             "mfa_token": "tok",
-            "authenticator_types": ["otp"]
+            "factor_type": "otp"
         })
         assert isinstance(result, OtpEnrollmentResponse)
         assert result.secret == "JBSWY3DPEHPK3PXP"
@@ -210,8 +210,7 @@ class TestEnrollAuthenticator:
 
         result = await client.enroll_authenticator({
             "mfa_token": "tok",
-            "authenticator_types": ["oob"],
-            "oob_channels": ["sms"],
+            "factor_type": "sms",
             "phone_number": "+1234567890"
         })
         assert isinstance(result, OobEnrollmentResponse)
@@ -231,8 +230,7 @@ class TestEnrollAuthenticator:
 
         result = await client.enroll_authenticator({
             "mfa_token": "tok",
-            "authenticator_types": ["oob"],
-            "oob_channels": ["email"],
+            "factor_type": "email",
             "email": "user@example.com"
         })
         assert isinstance(result, OobEnrollmentResponse)
@@ -254,8 +252,7 @@ class TestEnrollAuthenticator:
 
         result = await client.enroll_authenticator({
             "mfa_token": "tok",
-            "authenticator_types": ["oob"],
-            "oob_channels": ["auth0"]
+            "factor_type": "sms"
         })
         assert isinstance(result, OobEnrollmentResponse)
         assert result.oob_channel == "auth0"
@@ -274,7 +271,7 @@ class TestEnrollAuthenticator:
         with pytest.raises(MfaEnrollmentError) as exc:
             await client.enroll_authenticator({
                 "mfa_token": "tok",
-                "authenticator_types": ["otp"]
+                "factor_type": "otp"
             })
         assert "Bad enrollment request" in str(exc.value)
 
@@ -291,9 +288,9 @@ class TestEnrollAuthenticator:
         with pytest.raises(MfaEnrollmentError) as exc:
             await client.enroll_authenticator({
                 "mfa_token": "tok",
-                "authenticator_types": ["unknown_type"]
+                "factor_type": "unknown"
             })
-        assert "Unexpected authenticator type" in str(exc.value)
+        assert "Unsupported factor_type" in str(exc.value)
 
 
 # ── delete_authenticator ─────────────────────────────────────────────────────
@@ -313,7 +310,7 @@ class TestChallengeAuthenticator:
 
         result = await client.challenge_authenticator({
             "mfa_token": "tok",
-            "challenge_type": "otp"
+            "factor_type": "otp"
         })
         assert isinstance(result, ChallengeResponse)
         assert result.challenge_type == "otp"
@@ -332,7 +329,7 @@ class TestChallengeAuthenticator:
 
         result = await client.challenge_authenticator({
             "mfa_token": "tok",
-            "challenge_type": "oob",
+            "factor_type": "sms",
             "authenticator_id": "auth|456"
         })
         assert result.challenge_type == "oob"
@@ -352,7 +349,7 @@ class TestChallengeAuthenticator:
         with pytest.raises(MfaChallengeError) as exc:
             await client.challenge_authenticator({
                 "mfa_token": "tok",
-                "challenge_type": "otp"
+                "factor_type": "otp"
             })
         assert "Token expired" in str(exc.value)
 
@@ -371,7 +368,7 @@ class TestChallengeAuthenticator:
         with pytest.raises(MfaChallengeError) as exc:
             await client.challenge_authenticator({
                 "mfa_token": "expired_tok",
-                "challenge_type": "otp"
+                "factor_type": "otp"
             })
         assert "mfa_token is expired" in str(exc.value)
 
@@ -390,7 +387,7 @@ class TestChallengeAuthenticator:
 
         result = await client.challenge_authenticator({
             "mfa_token": "tok",
-            "challenge_type": "oob",
+            "factor_type": "email",
             "authenticator_id": "email|dev_Fvx38nHufsGL5lWI"
         })
         assert result.challenge_type == "oob"
@@ -412,7 +409,7 @@ class TestChallengeAuthenticator:
 
         result = await client.challenge_authenticator({
             "mfa_token": "tok",
-            "challenge_type": "oob",
+            "factor_type": "sms",
             "authenticator_id": "sms|dev_h1uXXoVjQ5BpU9iQ"
         })
         assert result.challenge_type == "oob"

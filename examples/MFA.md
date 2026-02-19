@@ -173,7 +173,7 @@ Enroll an OTP authenticator (Google Authenticator, Microsoft Authenticator, etc.
 try:
     enrollment = await server_client.mfa.enroll_authenticator({
         "mfa_token": mfa_token,
-        "authenticator_types": "otp"
+        "factor_type": "otp"
     })
     
     # Display QR code to user
@@ -192,8 +192,7 @@ Enroll an SMS authenticator:
 try:
     enrollment = await server_client.mfa.enroll_authenticator({
         "mfa_token": mfa_token,
-        "authenticator_types": "sms",
-        "oob_channels": "sms",
+        "factor_type": "sms",
         "phone_number": "+12025551234"  # E.164 format
     })
     
@@ -213,8 +212,7 @@ Enroll a voice call authenticator:
 try:
     enrollment = await server_client.mfa.enroll_authenticator({
         "mfa_token": mfa_token,
-        "authenticator_types": "voice",
-        "oob_channels": "voice",
+        "factor_type": "voice",
         "phone_number": "+12025551234"  # E.164 format
     })
     
@@ -233,8 +231,7 @@ Enroll an email authenticator:
 try:
     enrollment = await server_client.mfa.enroll_authenticator({
         "mfa_token": mfa_token,
-        "authenticator_types": "email",
-        "oob_channels": "email",
+        "factor_type": "email",
         "email": "user@example.com"
     })
     
@@ -255,7 +252,7 @@ After enrolling an authenticator, or when the user has existing authenticators, 
 try:
     challenge = await server_client.mfa.challenge_authenticator({
         "mfa_token": mfa_token,
-        "challenge_type": "oob",
+        "factor_type": "sms",
         "authenticator_id": "sms|dev_xxx"
     })
     
@@ -273,7 +270,7 @@ except Exception as error:
 try:
     challenge = await server_client.mfa.challenge_authenticator({
         "mfa_token": mfa_token,
-        "challenge_type": "oob",
+        "factor_type": "email",
         "authenticator_id": "email|dev_xxx"
     })
     
@@ -293,7 +290,7 @@ except Exception as error:
 try:
     challenge = await server_client.mfa.challenge_authenticator({
         "mfa_token": mfa_token,
-        "challenge_type": "otp",
+        "factor_type": "otp",
         "authenticator_id": "otp|dev_xxx"
     })
     
@@ -443,7 +440,7 @@ async def handle_mfa_enrollment_flow(server_client, mfa_token):
         # User selects OTP
         enrollment = await server_client.mfa.enroll_authenticator({
             "mfa_token": mfa_token,
-            "authenticator_types": "otp"
+            "factor_type": "otp"
         })
         
         # Display QR code to user
@@ -491,11 +488,9 @@ async def handle_mfa_challenge_flow(server_client, mfa_token):
         selected_auth = authenticators[selected_index]
         
         # Initiate challenge
-        challenge_type = "otp" if selected_auth.authenticator_type == "otp" else "oob"
-        
         challenge = await server_client.mfa.challenge_authenticator({
             "mfa_token": mfa_token,
-            "challenge_type": challenge_type,
+            "factor_type": selected_auth.authenticator_type,
             "authenticator_id": selected_auth.id
         })
         
@@ -597,7 +592,7 @@ async def handle_mfa_with_error_handling(server_client):
             # Initiate challenge
             challenge = await server_client.mfa.challenge_authenticator({
                 "mfa_token": mfa_token,
-                "challenge_type": "oob",
+                "factor_type": "sms",
                 "authenticator_id": authenticators[0].id
             })
         except ApiError as challenge_error:
