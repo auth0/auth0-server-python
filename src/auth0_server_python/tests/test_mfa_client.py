@@ -16,7 +16,6 @@ from auth0_server_python.auth_types import (
 )
 from auth0_server_python.error import (
     MfaChallengeError,
-    MfaDeleteAuthenticatorError,
     MfaEnrollmentError,
     MfaListAuthenticatorsError,
     MfaRequiredError,

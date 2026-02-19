@@ -21,7 +21,6 @@ from auth0_server_python.auth_types import (
 from auth0_server_python.encryption.encrypt import decrypt, encrypt
 from auth0_server_python.error import (
     MfaChallengeError,
-    MfaDeleteAuthenticatorError,
     MfaEnrollmentError,
     MfaListAuthenticatorsError,
     MfaRequiredError,
@@ -415,8 +414,9 @@ class MfaClient:
                 - 'scope': str (optional) - Scope for token_set
                 - 'store_options': dict (optional) - Store-specific options
         """
-        from auth0_server_python.auth_types import TokenSet, StateData
         import time
+
+        from auth0_server_python.auth_types import StateData, TokenSet
 
         audience = options.get("audience")
         scope = options.get("scope")
