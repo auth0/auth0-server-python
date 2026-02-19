@@ -19,6 +19,7 @@ from auth0_server_python.auth_types import (
     ListConnectedAccountsResponse,
     LoginWithCustomTokenExchangeOptions,
     LogoutOptions,
+    MfaRequirements,
     TransactionData,
 )
 from auth0_server_python.error import (
@@ -28,6 +29,7 @@ from auth0_server_python.error import (
     CustomTokenExchangeError,
     CustomTokenExchangeErrorCode,
     InvalidArgumentError,
+    MfaRequiredError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     PollingApiError,
@@ -2824,3 +2826,188 @@ async def test_login_with_custom_token_exchange_failure_propagates(mocker):
             )
         )
     assert exc.value.code == "unauthorized"
+
+
+# ── MFA Integration Tests ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_server_client_mfa_property():
+    """
+    The ServerClient should expose an 'mfa' property returning an MfaClient instance.
+    """
+    from auth0_server_python.auth_server.mfa_client import MfaClient
+
+    mock_secret = "a-test-secret-with-enough-length"
+    mock_store = MagicMock()
+    mock_store.get = AsyncMock(return_value=None)
+    mock_store.set = AsyncMock()
+    mock_store.delete = AsyncMock()
+
+    # Patch OIDC metadata
+    import auth0_server_python.auth_server.server_client as sc_mod
+
+    original_fetch = sc_mod.ServerClient._fetch_oidc_metadata
+
+    async def _fake_fetch(self, domain):
+        return {
+            "authorization_endpoint": f"https://{domain}/authorize",
+            "token_endpoint": f"https://{domain}/oauth/token",
+            "end_session_endpoint": f"https://{domain}/v2/logout",
+            "backchannel_logout_supported": True,
+        }
+
+    sc_mod.ServerClient._fetch_oidc_metadata = _fake_fetch
+    try:
+        client = ServerClient(
+            domain="auth0.local",
+            client_id="cid",
+            client_secret="csecret",
+            secret=mock_secret,
+            transaction_store=mock_store,
+            state_store=mock_store,
+        )
+        assert isinstance(client.mfa, MfaClient)
+    finally:
+        sc_mod.ServerClient._fetch_oidc_metadata = original_fetch
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_mfa_required(mocker):
+    """
+    When get_token_by_refresh_token returns an mfa_required error,
+    get_access_token should raise MfaRequiredError with an encrypted mfa_token.
+    """
+    mock_secret = "a-test-secret-with-enough-length"
+    mock_store = MagicMock()
+    mock_store.get = AsyncMock(return_value=None)
+    mock_store.set = AsyncMock()
+    mock_store.delete = AsyncMock()
+
+    import auth0_server_python.auth_server.server_client as sc_mod
+
+    original_fetch = sc_mod.ServerClient._fetch_oidc_metadata
+
+    async def _fake_fetch(self, domain):
+        return {
+            "authorization_endpoint": f"https://{domain}/authorize",
+            "token_endpoint": f"https://{domain}/oauth/token",
+            "end_session_endpoint": f"https://{domain}/v2/logout",
+            "backchannel_logout_supported": True,
+        }
+
+    sc_mod.ServerClient._fetch_oidc_metadata = _fake_fetch
+    try:
+        client = ServerClient(
+            domain="auth0.local",
+            client_id="cid",
+            client_secret="csecret",
+            secret=mock_secret,
+            transaction_store=mock_store,
+            state_store=mock_store,
+        )
+
+        # Simulate state with a refresh_token and expired access token
+        mock_store.get = AsyncMock(return_value={
+            "refresh_token": "rt_123",
+            "token_sets": [
+                {
+                    "audience": "default",
+                    "access_token": "expired_at",
+                    "expires_at": 0,
+                }
+            ]
+        })
+
+        # Simulate mfa_required ApiError from token refresh
+        mfa_err = ApiError(
+            code="mfa_required",
+            message="Multifactor authentication required",
+        )
+        mfa_err.mfa_token = "raw_mfa_token_xyz"
+        mfa_err.mfa_requirements = None
+
+        mocker.patch.object(client, "get_token_by_refresh_token",
+                           new_callable=AsyncMock, side_effect=mfa_err)
+
+        with pytest.raises(MfaRequiredError) as exc:
+            await client.get_access_token()
+
+        assert exc.value.mfa_token is not None
+        assert exc.value.mfa_token != "raw_mfa_token_xyz"  # encrypted
+    finally:
+        sc_mod.ServerClient._fetch_oidc_metadata = original_fetch
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
+    """
+    When get_token_by_refresh_token returns mfa_required with enroll requirements,
+    get_access_token should raise MfaRequiredError with mfa_requirements containing enroll.
+    """
+    mock_secret = "a-test-secret-with-enough-length"
+    mock_store = MagicMock()
+    mock_store.get = AsyncMock(return_value=None)
+    mock_store.set = AsyncMock()
+    mock_store.delete = AsyncMock()
+
+    import auth0_server_python.auth_server.server_client as sc_mod
+
+    original_fetch = sc_mod.ServerClient._fetch_oidc_metadata
+
+    async def _fake_fetch(self, domain):
+        return {
+            "authorization_endpoint": f"https://{domain}/authorize",
+            "token_endpoint": f"https://{domain}/oauth/token",
+            "end_session_endpoint": f"https://{domain}/v2/logout",
+            "backchannel_logout_supported": True,
+        }
+
+    sc_mod.ServerClient._fetch_oidc_metadata = _fake_fetch
+    try:
+        client = ServerClient(
+            domain="auth0.local",
+            client_id="cid",
+            client_secret="csecret",
+            secret=mock_secret,
+            transaction_store=mock_store,
+            state_store=mock_store,
+        )
+
+        # Simulate state with a refresh_token and expired access token
+        mock_store.get = AsyncMock(return_value={
+            "refresh_token": "rt_123",
+            "token_sets": [
+                {
+                    "audience": "default",
+                    "access_token": "expired_at",
+                    "expires_at": 0,
+                }
+            ]
+        })
+
+        # Simulate mfa_required with enroll requirements
+        mfa_err = ApiError(
+            code="mfa_required",
+            message="Multifactor authentication required",
+        )
+        mfa_err.mfa_token = "raw_mfa_token_enroll"
+        mfa_err.mfa_requirements = MfaRequirements(
+            enroll=[
+                {"type": "otp"},
+                {"type": "phone"},
+                {"type": "push-notification"}
+            ]
+        )
+
+        mocker.patch.object(client, "get_token_by_refresh_token",
+                           new_callable=AsyncMock, side_effect=mfa_err)
+
+        with pytest.raises(MfaRequiredError) as exc:
+            await client.get_access_token()
+
+        assert exc.value.mfa_token is not None
+        assert exc.value.mfa_token != "raw_mfa_token_enroll"  # encrypted
+        assert exc.value.mfa_requirements is not None
+    finally:
+        sc_mod.ServerClient._fetch_oidc_metadata = original_fetch

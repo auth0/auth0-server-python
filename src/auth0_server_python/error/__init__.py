@@ -2,7 +2,7 @@
 Error classes for the auth0-server-python SDK.
 These exceptions provide specific error types for different failure scenarios.
 """
-from typing import Optional
+from typing import Any, Optional
 
 
 class Auth0Error(Exception):
@@ -184,3 +184,95 @@ class CustomTokenExchangeErrorCode:
     MISSING_ACTOR_TOKEN_TYPE = "missing_actor_token_type"
     TOKEN_EXCHANGE_FAILED = "token_exchange_failed"
     INVALID_RESPONSE = "invalid_response"
+
+
+# =============================================================================
+# MFA Error Classes
+# =============================================================================
+
+class MfaApiError(Auth0Error):
+    """Base class for MFA API errors."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        cause: Optional[dict[str, Any]] = None
+    ):
+        super().__init__(message)
+        self.code = code
+        self.cause = cause
+
+
+class MfaListAuthenticatorsError(MfaApiError):
+    """Error thrown when listing authenticators fails."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__("mfa_list_authenticators_error", message, cause)
+
+
+class MfaEnrollmentError(MfaApiError):
+    """Error thrown when enrolling an authenticator fails."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__("mfa_enrollment_error", message, cause)
+
+
+class MfaDeleteAuthenticatorError(MfaApiError):
+    """Error thrown when deleting an authenticator fails."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__("mfa_delete_authenticator_error", message, cause)
+
+
+class MfaChallengeError(MfaApiError):
+    """Error thrown when initiating an MFA challenge fails."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__("mfa_challenge_error", message, cause)
+
+
+class MfaVerifyError(MfaApiError):
+    """Error thrown when MFA verification fails."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__("mfa_verify_error", message, cause)
+
+
+class MfaRequiredError(Auth0Error):
+    """
+    Error thrown when MFA step-up is required during token refresh.
+
+    Contains an encrypted mfa_token that can be passed to MfaClient methods.
+    This error is raised in get_access_token() when the token endpoint returns
+    'mfa_required'.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        mfa_token: str,
+        mfa_requirements=None,
+        cause: Optional[Exception] = None
+    ):
+        super().__init__(message)
+        self.code = "mfa_required"
+        self.mfa_token = mfa_token
+        self.mfa_requirements = mfa_requirements
+        self.cause = cause
+
+
+class MfaTokenExpiredError(Auth0Error):
+    """Error thrown when the encrypted MFA token has expired."""
+
+    def __init__(self):
+        super().__init__("The MFA token has expired.")
+        self.code = "mfa_token_expired"
+
+
+class MfaTokenInvalidError(Auth0Error):
+    """Error thrown when the encrypted MFA token is invalid or tampered."""
+
+    def __init__(self):
+        super().__init__("The MFA token is invalid.")
+        self.code = "mfa_token_invalid"
