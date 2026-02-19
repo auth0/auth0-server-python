@@ -30,6 +30,9 @@ The Auth0 MFA API allows you to manage multi-factor authentication for users in 
     - [Verify with OOB (SMS or Email)](#verify-with-oob-sms-or-email)
     - [Verify with OTP](#verify-with-otp)
     - [Verify with Recovery Code](#verify-with-recovery-code)
+  - [Session Persistence](#session-persistence)
+    - [Automatic Session Update](#automatic-session-update)
+    - [Manual Session Update](#manual-session-update)
   - [Complete MFA Flow Examples](#complete-mfa-flow-examples)
     - [Enrollment Flow](#enrollment-flow)
     - [Challenge Flow](#challenge-flow)
@@ -311,20 +314,26 @@ try:
     verify_response = await server_client.mfa.verify({
         "mfa_token": mfa_token,
         "oob_code": challenge.oob_code,
-        "binding_code": "123456"  # Code user received via SMS/Email
+        "binding_code": "123456",  # Code user received via SMS/Email
+        "persist": True,  # Persist tokens to session store
+        "audience": "https://api.example.com",  # Required when persist=True
+        "scope": "openid profile email"  # Optional scope
     })
     
     access_token = verify_response.access_token
     id_token = verify_response.id_token
-    token_type = verify_response.token_type
     
     print(f"MFA verification successful!")
     print(f"Access Token: {access_token}")
     print(f"ID Token: {id_token}")
+    print("Tokens have been persisted to session store")
     
 except Exception as error:
     print(f"Verification failed: {error}")
 ```
+
+> [!NOTE]
+> Setting `persist=True` automatically updates the session store with the new tokens, similar to nextjs-auth0 and auth0-spa-js SDKs. This eliminates the need for manual token management after MFA verification.
 
 ### Verify with OTP
 
@@ -332,13 +341,16 @@ except Exception as error:
 try:
     verify_response = await server_client.mfa.verify({
         "mfa_token": mfa_token,
-        "otp": "123456"  # 6-digit code from authenticator app
+        "otp": "123456",  # 6-digit code from authenticator app
+        "persist": True,  # Persist tokens to session store
+        "audience": "https://api.example.com",  # Required when persist=True
+        "scope": "openid profile email"
     })
     
     access_token = verify_response.access_token
-    id_token = verify_response.id_token
     
     print("MFA verification successful!")
+    print("Tokens have been persisted to session store")
     
 except Exception as error:
     print(f"Invalid OTP code: {error}")
@@ -352,15 +364,62 @@ Recovery codes can be used to complete MFA verification without initiating a cha
 try:
     verify_response = await server_client.mfa.verify({
         "mfa_token": mfa_token,
-        "recovery_code": "XXXX-XXXX-XXXX"  # One of the recovery codes
+        "recovery_code": "XXXX-XXXX-XXXX",  # One of the recovery codes
+        "persist": True,  # Persist tokens to session store
+        "audience": "https://api.example.com"  # Required when persist=True
     })
     
     access_token = verify_response.access_token
     
     print("MFA verification successful using recovery code!")
+    print("Tokens have been persisted to session store")
     
 except Exception as error:
     print(f"Verification failed: {error}")
+```
+
+## Session Persistence
+
+By default, `verify()` returns tokens without persisting them to the session store. However, you can automatically persist tokens by setting `persist=True`, similar to how nextjs-auth0 and auth0-spa-js handle MFA.
+
+### Automatic Session Update
+
+When you set `persist=True`, the SDK will:
+1. Update the session's `access_token` for the specified audience
+2. Update the session's `id_token` if present
+3. Add the token to the `token_sets` array with expiration information
+
+```python
+verify_response = await server_client.mfa.verify({
+    "mfa_token": mfa_token,
+    "otp": "123456",
+    "persist": True,  # Enable automatic persistence
+    "audience": "https://api.example.com",  # Required when persist=True
+    "scope": "openid profile email"  # Optional
+})
+
+# Tokens are now available in the session store
+# User can call server_client.get_user() to access updated session
+user = await server_client.get_user()
+```
+
+### Manual Session Update
+
+If you prefer to manage session updates yourself:
+
+```python
+verify_response = await server_client.mfa.verify({
+    "mfa_token": mfa_token,
+    "otp": "123456"
+    # persist=False (default)
+})
+
+# Handle token storage manually if needed
+access_token = verify_response.access_token
+id_token = verify_response.id_token
+
+# Store tokens in your application's session management
+await my_session_store.update_tokens(access_token, id_token)
 ```
 
 ## Complete MFA Flow Examples
@@ -396,10 +455,14 @@ async def handle_mfa_enrollment_flow(server_client, mfa_token):
         # Verify enrollment
         verify_response = await server_client.mfa.verify({
             "mfa_token": mfa_token,
-            "otp": user_code
+            "otp": user_code,
+            "persist": True,
+            "audience": "https://api.example.com",
+            "scope": "openid profile email"
         })
         
         print("MFA enrollment successful!")
+        print("Tokens have been persisted to session store")
         return verify_response.access_token
         
     except Exception as error:
@@ -441,17 +504,24 @@ async def handle_mfa_challenge_flow(server_client, mfa_token):
             user_code = input("Enter 6-digit code from authenticator: ")
             verify_response = await server_client.mfa.verify({
                 "mfa_token": mfa_token,
-                "otp": user_code
+                "otp": user_code,
+                "persist": True,
+                "audience": "https://api.example.com",
+                "scope": "openid profile email"
             })
         else:
             user_code = input(f"Enter code from {selected_auth.authenticator_type}: ")
             verify_response = await server_client.mfa.verify({
                 "mfa_token": mfa_token,
                 "oob_code": challenge.oob_code,
-                "binding_code": user_code
+                "binding_code": user_code,
+                "persist": True,
+                "audience": "https://api.example.com",
+                "scope": "openid profile email"
             })
         
         print("MFA verification successful!")
+        print("Tokens have been persisted to session store")
         return verify_response.access_token
         
     except Exception as error:

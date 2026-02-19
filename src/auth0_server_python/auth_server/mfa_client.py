@@ -50,13 +50,17 @@ class MfaClient:
         domain: str,
         client_id: str,
         client_secret: str,
-        secret: str
+        secret: str,
+        state_store=None,
+        state_identifier: str = "_a0_session"
     ):
         self._domain = domain
         self._base_url = f"https://{domain}"
         self._client_id = client_id
         self._client_secret = client_secret
         self._secret = secret
+        self._state_store = state_store
+        self._state_identifier = state_identifier
 
     # ============================================================================
     # MFA TOKEN ENCRYPTION / DECRYPTION
@@ -283,6 +287,10 @@ class MfaClient:
                 - 'otp': OTP code
                 - 'oob_code' + 'binding_code': OOB verification
                 - 'recovery_code': Recovery code
+                - 'persist': bool (optional, default=False) - Persist tokens to state store
+                - 'audience': str (optional, required if persist=True) - Audience for token_set
+                - 'scope': str (optional) - Scope for token_set
+                - 'store_options': dict (optional) - Store-specific options
 
         Returns:
             MfaVerifyResponse with access_token, token_type, etc.
@@ -348,11 +356,99 @@ class MfaClient:
                     )
 
                 token_response = response.json()
-                return MfaVerifyResponse(**token_response)
+                verify_response = MfaVerifyResponse(**token_response)
+
+                # Persist tokens to state store if requested
+                if options.get("persist") and self._state_store:
+                    await self._persist_mfa_tokens(
+                        verify_response=verify_response,
+                        options=options
+                    )
+
+                return verify_response
 
         except (MfaVerifyError, MfaRequiredError):
             raise
         except Exception as e:
             raise MfaVerifyError(
                 f"Unexpected error during MFA verification: {str(e)}"
+            )
+
+    async def _persist_mfa_tokens(
+        self,
+        verify_response: MfaVerifyResponse,
+        options: dict[str, Any]
+    ) -> None:
+        """
+        Persist MFA verification tokens to the state store.
+
+        Updates the session with the new access_token and id_token from MFA verification.
+
+        Args:
+            verify_response: The response from verify() containing tokens
+            options: Dict containing:
+                - 'audience': str - Audience for token_set
+                - 'scope': str (optional) - Scope for token_set
+                - 'store_options': dict (optional) - Store-specific options
+        """
+        from auth0_server_python.auth_types import TokenSet, StateData
+        import time
+
+        audience = options.get("audience")
+        scope = options.get("scope")
+        store_options = options.get("store_options")
+
+        if not audience:
+            raise MfaVerifyError(
+                "audience is required when persist=True"
+            )
+
+        try:
+            # Get existing state
+            state_data = await self._state_store.get(
+                self._state_identifier,
+                store_options
+            )
+
+            if not state_data:
+                raise MfaVerifyError(
+                    "No existing session found to update with MFA tokens"
+                )
+
+            # Parse state data
+            existing_state = StateData(**state_data) if isinstance(state_data, dict) else state_data
+
+            # Update id_token if present
+            if verify_response.id_token:
+                existing_state.id_token = verify_response.id_token
+
+            # Create token_set for the access_token
+            expires_in = verify_response.get("expires_in", 86400)  # Default 24 hours
+            expires_at = int(time.time()) + expires_in
+
+            new_token_set = TokenSet(
+                audience=audience,
+                access_token=verify_response.access_token,
+                scope=scope,
+                expires_at=expires_at
+            )
+
+            # Add to token_sets, replacing any existing token_set for this audience
+            existing_state.token_sets = [
+                ts for ts in existing_state.token_sets if ts.audience != audience
+            ]
+            existing_state.token_sets.append(new_token_set)
+
+            # Persist updated state
+            await self._state_store.set(
+                self._state_identifier,
+                existing_state.model_dump() if hasattr(existing_state, 'model_dump') else existing_state,
+                options=store_options
+            )
+
+        except MfaVerifyError:
+            raise
+        except Exception as e:
+            raise MfaVerifyError(
+                f"Failed to persist MFA tokens to state store: {str(e)}"
             )

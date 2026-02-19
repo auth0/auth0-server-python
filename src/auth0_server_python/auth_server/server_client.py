@@ -131,7 +131,9 @@ class ServerClient(Generic[TStoreOptions]):
             domain=self._domain,
             client_id=self._client_id,
             client_secret=self._client_secret,
-            secret=self._secret
+            secret=self._secret,
+            state_store=self._state_store,
+            state_identifier=self._state_identifier
         )
 
     @property
