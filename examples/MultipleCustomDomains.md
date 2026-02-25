@@ -1,14 +1,12 @@
-# Multiple Custom Domains (MCD) Guide
+# Multiple Custom Domains (MCD)
 
-This guide explains how to implement Multiple Custom Domain (MCD) support using the Auth0 Python SDKs.
-
-## What is MCD?
-
-Multiple Custom Domains (MCD) allows your application to use multiple custom domains configured on the same Auth0 tenant, each serving a different branded experience from a single application codebase.
+MCD lets you resolve the Auth0 domain per request while keeping a single `ServerClient` instance. This is useful when your application uses multiple custom domains configured on the same Auth0 tenant.
 
 **Example:**
 - `https://acme.yourapp.com` → Custom domain: `auth.acme.com`
 - `https://globex.yourapp.com` → Custom domain: `auth.globex.com`
+
+MCD is enabled by providing a **domain resolver function** instead of a static domain string.
 
 ## Configuration Methods
 
@@ -101,6 +99,8 @@ async def domain_resolver(context: DomainResolverContext) -> str:
     # Look up in mapping
     return DOMAIN_MAP.get(hostname, DEFAULT_DOMAIN)
 ```
+
+> **Note:** In resolver mode, the SDK builds the `redirect_uri` dynamically from the resolved domain. You do not need to set it per request. If you override `redirect_uri` in `authorization_params`, the SDK uses your value as-is.
 
 ## Resolver Patterns
 
@@ -270,3 +270,67 @@ async def domain_resolver(context: DomainResolverContext) -> str:
 **Exceptions raised by your resolver:**
 - Automatically wrapped in `DomainResolverError`
 - Original exception accessible via `.original_error`
+
+## Session Behavior in Resolver Mode
+
+In resolver mode, sessions are bound to the domain that created them. On each request, the SDK compares the session's stored domain against the current resolved domain:
+
+- `get_user()` and `get_session()` return `None` on domain mismatch.
+- `get_access_token()` raises `AccessTokenError` on domain mismatch.
+- Token refresh uses the session's stored domain, not the current request domain.
+
+> **Warning:** If you switch from a static domain string to a resolver function, existing sessions that do not include a stored domain continue to work — the SDK treats the absent domain field as valid. New sessions will store the resolved domain automatically. Once old sessions expire, all sessions will be domain-aware.
+
+## Discovery Cache
+
+The SDK caches OIDC metadata and JWKS per domain in memory (LRU eviction, 600-second TTL, up to 100 domains). This avoids repeated network calls when serving multiple domains. The cache is shared across all requests to the same `ServerClient` instance.
+
+## Security Best Practices
+
+### Use an Allowlist in Your Resolver
+
+The SDK passes request headers to your domain resolver via `DomainResolverContext`. These headers come directly from the HTTP request and can be spoofed by an attacker (e.g., `Host: evil.com` or `X-Forwarded-Host: evil.com`).
+
+The SDK uses the resolved domain to fetch OIDC metadata and JWKS. If an attacker can influence the resolved domain, they could point the SDK at an OIDC provider they control.
+
+**Always use a mapping or allowlist — never construct domains from raw header values:**
+
+```python
+# Safe: allowlist lookup — unknown hosts fall back to default
+DOMAIN_MAP = {
+    "acme.myapp.com": "auth.acme.com",
+    "globex.myapp.com": "auth.globex.com",
+}
+
+async def domain_resolver(context: DomainResolverContext) -> str:
+    host = context.request_headers.get("host", "").split(":")[0]
+    return DOMAIN_MAP.get(host, DEFAULT_DOMAIN)
+```
+
+```python
+# Risky: constructs domain from raw input — attacker can influence resolved domain
+async def domain_resolver(context: DomainResolverContext) -> str:
+    host = context.request_headers.get("host", "").split(":")[0]
+    tenant = host.split(".")[0]
+    return f"{tenant}.auth0.com"  # attacker sends Host: evil.myapp.com → evil.auth0.com
+```
+
+### Trust Forwarded Headers Only Behind a Proxy
+
+If your application is directly exposed to the internet (not behind a reverse proxy), do not trust `x-forwarded-host` or `x-forwarded-proto` — any client can set these headers.
+
+Only use forwarded headers when your application runs behind a trusted reverse proxy (nginx, AWS ALB, Cloudflare, etc.) that sets these headers and strips any client-provided values.
+
+```python
+# Only trust x-forwarded-host if behind a trusted proxy
+async def domain_resolver(context: DomainResolverContext) -> str:
+    headers = context.request_headers or {}
+
+    if BEHIND_TRUSTED_PROXY:
+        host = headers.get("x-forwarded-host") or headers.get("host", "")
+    else:
+        host = headers.get("host", "")
+
+    host = host.split(":")[0]
+    return DOMAIN_MAP.get(host, DEFAULT_DOMAIN)
+```

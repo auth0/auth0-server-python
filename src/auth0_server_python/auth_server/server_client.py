@@ -60,6 +60,8 @@ from pydantic import ValidationError
 
 # Generic type for store options
 TStoreOptions = TypeVar('TStoreOptions')
+# redirect_uri is intentionally excluded — in MCD mode it is built
+# dynamically from the resolved domain at login time.
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
                              "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
 
@@ -162,6 +164,7 @@ class ServerClient(Generic[TStoreOptions]):
         Normalize domain for comparison and URL construction.
         Handles cases with/without https:// scheme.
         """
+        domain = domain.lower()
         if domain.startswith('https://'):
             return domain
         elif domain.startswith('http://'):
@@ -193,6 +196,61 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Remove trailing slash
         return issuer.rstrip('/')
+
+    async def _resolve_current_domain(self, store_options=None) -> str:
+        """Resolve domain from resolver function or return static domain."""
+        if self._domain_resolver:
+            context = build_domain_resolver_context(store_options)
+            try:
+                resolved = await self._domain_resolver(context)
+                return validate_resolved_domain_value(resolved)
+            except DomainResolverError:
+                raise
+            except Exception as e:
+                raise DomainResolverError(
+                    f"Domain resolver function raised an exception: {str(e)}",
+                    original_error=e
+                )
+        return self._domain
+
+    async def _verify_and_decode_jwt(
+        self, token: str, jwks: dict, audience: str | None = None
+    ) -> dict:
+        """
+        Find signing key in JWKS by kid and decode JWT.
+
+        Verifies signature but disables built-in issuer validation
+        (callers perform normalized issuer comparison separately).
+
+        Args:
+            token: The JWT to verify and decode
+            jwks: The JWKS dict containing signing keys
+            audience: Optional expected audience claim
+
+        Returns:
+            Decoded claims dictionary
+
+        Raises:
+            ValueError: If no matching key found in JWKS for the token's kid
+        """
+        unverified_header = jwt.get_unverified_header(token)
+        kid = unverified_header.get("kid")
+
+        signing_key = None
+        for key in jwks.get("keys", []):
+            if key.get("kid") == kid:
+                signing_key = jwt.PyJWK.from_dict(key)
+                break
+
+        if not signing_key:
+            raise ValueError(f"No matching key found in JWKS for kid: {kid}")
+
+        decode_options = {"verify_signature": True, "verify_iss": False}
+        kwargs = {"algorithms": ["RS256"], "options": decode_options}
+        if audience:
+            kwargs["audience"] = audience
+
+        return jwt.decode(token, signing_key.key, **kwargs)
 
     async def _fetch_oidc_metadata(self, domain: str) -> dict:
         """Fetch OIDC metadata from domain."""
@@ -362,21 +420,7 @@ class ServerClient(Generic[TStoreOptions]):
         options = options or StartInteractiveLoginOptions()
 
         # Resolve domain (static or dynamic)
-        if self._domain_resolver:
-            # Build context and call developer's resolver
-            context = build_domain_resolver_context(store_options)
-            try:
-                resolved = await self._domain_resolver(context)
-                origin_domain = validate_resolved_domain_value(resolved)
-            except DomainResolverError:
-                raise
-            except Exception as e:
-                raise DomainResolverError(
-                    f"Domain resolver function raised an exception: {str(e)}",
-                    original_error=e
-                )
-        else:
-            origin_domain = self._domain
+        origin_domain = await self._resolve_current_domain(store_options)
 
         # Fetch OIDC metadata from resolved domain
         try:
@@ -552,7 +596,6 @@ class ServerClient(Generic[TStoreOptions]):
             # Raise a custom error (or handle it as appropriate)
             raise ApiError(
                 "token_error", f"Token exchange failed: {str(e)}", e)
-        print(f"Token Response : {token_response}")
 
         # Use the userinfo field from the token_response for user claims
         user_info = token_response.get("userinfo")
@@ -567,30 +610,8 @@ class ServerClient(Generic[TStoreOptions]):
 
             # Decode and verify ID token with signature verification enabled
             try:
-                # Get the signing key from JWKS
-                unverified_header = jwt.get_unverified_header(id_token)
-                kid = unverified_header.get("kid")
-
-                # Find the key with matching kid
-                signing_key = None
-                for key in jwks.get("keys", []):
-                    if key.get("kid") == kid:
-                        signing_key = jwt.PyJWK.from_dict(key)
-                        break
-
-                if not signing_key:
-                    raise ApiError(
-                        "jwks_key_not_found",
-                        f"No matching key found in JWKS for kid: {kid}"
-                    )
-
-                # Decode with signature
-                claims = jwt.decode(
-                    id_token,
-                    signing_key.key,
-                    algorithms=["RS256"],
-                    audience=self._client_id,
-                    options={"verify_signature": True, "verify_iss": False}
+                claims = await self._verify_and_decode_jwt(
+                    id_token, jwks, audience=self._client_id
                 )
 
                 # Custom normalized issuer validation
@@ -603,6 +624,8 @@ class ServerClient(Generic[TStoreOptions]):
                     )
 
                 user_claims = UserClaims.parse_obj(claims)
+            except ValueError as e:
+                raise ApiError("jwks_key_not_found", str(e))
             except jwt.InvalidSignatureError as e:
                 raise ApiError(
                     "invalid_signature",
@@ -693,17 +716,7 @@ class ServerClient(Generic[TStoreOptions]):
         if state_data:
             # Validate session domain matches current request domain
             if self._domain_resolver:
-                context = build_domain_resolver_context(store_options)
-                try:
-                    resolved = await self._domain_resolver(context)
-                    current_domain = validate_resolved_domain_value(resolved)
-                except DomainResolverError:
-                    raise
-                except Exception as e:
-                    raise DomainResolverError(
-                        f"Domain resolver function raised an exception: {str(e)}",
-                        original_error=e
-                    )
+                current_domain = await self._resolve_current_domain(store_options)
                 session_domain = getattr(state_data, 'domain', None)
 
                 if session_domain and session_domain != current_domain:
@@ -730,17 +743,7 @@ class ServerClient(Generic[TStoreOptions]):
         if state_data:
             # Validate session domain matches current request domain
             if self._domain_resolver:
-                context = build_domain_resolver_context(store_options)
-                try:
-                    resolved = await self._domain_resolver(context)
-                    current_domain = validate_resolved_domain_value(resolved)
-                except DomainResolverError:
-                    raise
-                except Exception as e:
-                    raise DomainResolverError(
-                        f"Domain resolver function raised an exception: {str(e)}",
-                        original_error=e
-                    )
+                current_domain = await self._resolve_current_domain(store_options)
                 session_domain = getattr(state_data, 'domain', None)
 
                 if session_domain and session_domain != current_domain:
@@ -765,20 +768,7 @@ class ServerClient(Generic[TStoreOptions]):
         await self._state_store.delete(self._state_identifier, store_options)
 
         # Resolve domain dynamically for MCD support
-        if self._domain_resolver:
-            context = build_domain_resolver_context(store_options)
-            try:
-                resolved = await self._domain_resolver(context)
-                domain = validate_resolved_domain_value(resolved)
-            except DomainResolverError:
-                raise
-            except Exception as e:
-                raise DomainResolverError(
-                    f"Domain resolver function raised an exception: {str(e)}",
-                    original_error=e
-                )
-        else:
-            domain = self._domain
+        domain = await self._resolve_current_domain(store_options)
 
         # Use the URL helper to create the logout URL.
         logout_url = URL.create_logout_url(
@@ -802,42 +792,45 @@ class ServerClient(Generic[TStoreOptions]):
             raise BackchannelLogoutError("Missing logout token")
 
         try:
-            # Fetch JWKS for signature verification
-            jwks = await self._get_jwks_cached(self._domain)
-
-            # Decode and verify logout token with signature verification enabled
-            try:
-                # Get the signing key from JWKS
-                unverified_header = jwt.get_unverified_header(logout_token)
-                kid = unverified_header.get("kid")
-
-                # Find the key with matching kid
-                signing_key = None
-                for key in jwks.get("keys", []):
-                    if key.get("kid") == kid:
-                        signing_key = jwt.PyJWK.from_dict(key)
-                        break
-
-                if not signing_key:
-                    raise BackchannelLogoutError(
-                        f"No matching key found in JWKS for kid: {kid}"
+            # Determine domain for JWKS fetch and issuer validation
+            if self._domain_resolver:
+                try:
+                    unverified = jwt.decode(
+                        logout_token, algorithms=["RS256"],
+                        options={"verify_signature": False}
                     )
+                    token_issuer = unverified.get("iss", "")
+                    parsed = urlparse(token_issuer)
+                    domain = parsed.hostname
+                    if not domain:
+                        raise BackchannelLogoutError(
+                            "Cannot determine domain: logout token has no valid issuer"
+                        )
+                except BackchannelLogoutError:
+                    raise
+                except Exception as e:
+                    raise BackchannelLogoutError(
+                        f"Failed to extract domain from logout token: {str(e)}"
+                    )
+            else:
+                domain = self._domain
 
-                claims = jwt.decode(
-                    logout_token,
-                    signing_key.key,
-                    algorithms=["RS256"],
-                    options={"verify_signature": True, "verify_iss": False}
-                )
+            # Fetch JWKS and verify logout token
+            jwks = await self._get_jwks_cached(domain)
+
+            try:
+                claims = await self._verify_and_decode_jwt(logout_token, jwks)
 
                 # Normalized issuer validation
                 token_issuer = claims.get("iss", "")
-                expected_issuer = self._normalize_domain(self._domain)
+                expected_issuer = self._normalize_domain(domain)
                 if self._normalize_issuer(token_issuer) != self._normalize_issuer(expected_issuer):
                     raise BackchannelLogoutError(
                         f"Logout token issuer mismatch. Token issuer: {token_issuer}, Expected: {expected_issuer}. "
                         f"Ensure your Auth0 domain is configured correctly."
                     )
+            except ValueError as e:
+                raise BackchannelLogoutError(str(e))
             except jwt.InvalidSignatureError as e:
                 raise BackchannelLogoutError(
                     f"Logout token signature verification failed: {str(e)}"
@@ -894,17 +887,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Validate session domain matches current request domain
         if state_data and self._domain_resolver:
-            context = build_domain_resolver_context(store_options)
-            try:
-                resolved = await self._domain_resolver(context)
-                current_domain = validate_resolved_domain_value(resolved)
-            except DomainResolverError:
-                raise
-            except Exception as e:
-                raise DomainResolverError(
-                    f"Domain resolver function raised an exception: {str(e)}",
-                    original_error=e
-                )
+            current_domain = await self._resolve_current_domain(store_options)
             session_domain = getattr(state_data, 'domain', None)
 
             if session_domain and session_domain != current_domain:
@@ -999,11 +982,10 @@ class ServerClient(Generic[TStoreOptions]):
             # Use session domain if provided, otherwise fallback to static domain
             domain = options.get("domain") or self._domain
 
-            # Ensure we have the OIDC metadata from the correct domain
-            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
-                self._oauth.metadata = await self._get_oidc_metadata_cached(domain)
+            # Fetch OIDC metadata from the correct domain
+            metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -1374,11 +1356,10 @@ class ServerClient(Generic[TStoreOptions]):
             raise MissingRequiredArgumentError("auth_req_id")
 
         try:
-            # Ensure we have the OIDC metadata
-            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
-                self._oauth.metadata = await self._get_oidc_metadata_cached(self._domain)
+            # Fetch OIDC metadata
+            metadata = await self._get_oidc_metadata_cached(self._domain)
 
-            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -1766,11 +1747,10 @@ class ServerClient(Generic[TStoreOptions]):
             # Use session domain if provided, otherwise fallback to static domain
             domain = options.get("domain") or self._domain
 
-            # Ensure we have OIDC metadata from the correct domain
-            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
-                self._oauth.metadata = await self._get_oidc_metadata_cached(domain)
+            # Fetch OIDC metadata from the correct domain
+            metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -2103,11 +2083,10 @@ class ServerClient(Generic[TStoreOptions]):
             if not isinstance(options, CustomTokenExchangeOptions):
                 options = CustomTokenExchangeOptions(**options)
 
-            # Ensure we have OIDC metadata
-            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
-                self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+            # Fetch OIDC metadata
+            metadata = await self._get_oidc_metadata_cached(self._domain)
 
-            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
                 raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
 

@@ -1416,7 +1416,11 @@ async def test_backchannel_authentication_grant_success(mocker):
         secret="some-secret"
     )
     # Mock OIDC metadata
-    client._oauth.metadata = {"token_endpoint": "https://auth0.local/token"}
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
+    )
 
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
@@ -1450,7 +1454,11 @@ async def test_backchannel_authentication_grant_error_response(mocker):
         client_secret="client_secret",
         secret="some-secret"
     )
-    client._oauth.metadata = {"token_endpoint": "https://auth0.local/token"}
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
+    )
 
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
@@ -1477,7 +1485,11 @@ async def test_backchannel_authentication_grant_json_decode_error(mocker):
         client_secret="client_secret",
         secret="some-secret"
     )
-    client._oauth.metadata = {"token_endpoint": "https://auth0.local/token"}
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
+    )
 
     # Mock httpx.AsyncClient.post to return a response whose .json() raises JSONDecodeError
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
@@ -1502,9 +1514,9 @@ async def test_get_token_for_connection_success(mocker):
     )
 
     mocker.patch.object(
-        client._oauth,
-        "metadata",
-        {"token_endpoint": "https://auth0.local/token"}
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
     )
 
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
@@ -1549,9 +1561,9 @@ async def test_get_token_for_connection_exchange_failed(mocker):
     )
 
     mocker.patch.object(
-        client._oauth,
-        "metadata",
-        {"token_endpoint": "https://auth0.local/token"}
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
     )
 
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
@@ -1587,9 +1599,9 @@ async def test_get_token_by_refresh_token_success(mocker):
     )
 
     mocker.patch.object(
-        client._oauth,
-        "metadata",
-        {"token_endpoint": "https://auth0.local/token"}
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
     )
 
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
@@ -1631,9 +1643,9 @@ async def test_get_token_by_refresh_token_exchange_failed(mocker):
     )
 
     mocker.patch.object(
-        client._oauth,
-        "metadata",
-        {"token_endpoint": "https://auth0.local/token"}
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
     )
 
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
@@ -3066,7 +3078,7 @@ async def test_jwks_caching():
 
 @pytest.mark.asyncio
 async def test_jwks_cache_size_limit():
-    """Test JWKS cache enforces max size limit with FIFO eviction."""
+    """Test JWKS cache enforces max size limit with LRU eviction."""
     client = ServerClient(
         domain="tenant.auth0.com",
         client_id="test_client",
