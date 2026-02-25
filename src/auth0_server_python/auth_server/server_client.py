@@ -214,7 +214,7 @@ class ServerClient(Generic[TStoreOptions]):
         return self._domain
 
     async def _verify_and_decode_jwt(
-        self, token: str, jwks: dict, audience: str | None = None
+        self, token: str, jwks: dict, audience: Optional[str] = None
     ) -> dict:
         """
         Find signing key in JWKS by kid and decode JWT.
