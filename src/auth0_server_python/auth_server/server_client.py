@@ -893,7 +893,7 @@ class ServerClient(Generic[TStoreOptions]):
             if session_domain and session_domain != current_domain:
                 # Session created with different domain - reject for security
                 raise AccessTokenError(
-                    AccessTokenErrorCode.MISSING_REFRESH_TOKEN,
+                    AccessTokenErrorCode.DOMAIN_MISMATCH,
                     "Session domain mismatch. User needs to re-authenticate with the current domain."
                 )
 
@@ -1443,6 +1443,11 @@ class ServerClient(Generic[TStoreOptions]):
                 "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
             )
 
+        # Resolve domain for MCD
+        origin_domain = await self._resolve_current_domain(store_options)
+        metadata = await self._get_oidc_metadata_cached(origin_domain)
+        origin_issuer = metadata.get('issuer')
+
         # Generate PKCE and state for security
         code_verifier = PKCE.generate_code_verifier()
         state = PKCE.generate_random_string(32)
@@ -1460,7 +1465,9 @@ class ServerClient(Generic[TStoreOptions]):
         # Store transaction data
         transaction_data = TransactionData(
             code_verifier=code_verifier,
-            app_state=options.get("app_state")
+            app_state=options.get("app_state"),
+            origin_domain=origin_domain,
+            origin_issuer=origin_issuer,
         )
 
         await self._transaction_store.set(
@@ -1517,6 +1524,11 @@ class ServerClient(Generic[TStoreOptions]):
                 "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
             )
 
+        # Resolve domain for MCD
+        origin_domain = await self._resolve_current_domain(store_options)
+        metadata = await self._get_oidc_metadata_cached(origin_domain)
+        origin_issuer = metadata.get('issuer')
+
         # Generate PKCE and state for security
         code_verifier = PKCE.generate_code_verifier()
         state = PKCE.generate_random_string(32)
@@ -1533,7 +1545,9 @@ class ServerClient(Generic[TStoreOptions]):
         # Store transaction data
         transaction_data = TransactionData(
             code_verifier=code_verifier,
-            app_state=options.get("app_state")
+            app_state=options.get("app_state"),
+            origin_domain=origin_domain,
+            origin_issuer=origin_issuer,
         )
 
         await self._transaction_store.set(
@@ -1686,6 +1700,16 @@ class ServerClient(Generic[TStoreOptions]):
             state_data_dict = state_data.dict()
         else:
             state_data_dict = state_data or {}
+
+        # In MCD mode, verify session domain matches current domain
+        if self._domain_resolver:
+            current_domain = await self._resolve_current_domain(store_options)
+            session_domain = state_data_dict.get("domain")
+            if session_domain and session_domain != current_domain:
+                raise AccessTokenForConnectionError(
+                    AccessTokenForConnectionErrorCode.DOMAIN_MISMATCH,
+                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                )
 
         # Find existing connection token
         connection_token_set = None

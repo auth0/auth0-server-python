@@ -183,6 +183,7 @@ class AccessTokenErrorCode:
     REFRESH_TOKEN_ERROR = "refresh_token_error"
     AUTH_REQ_ID_ERROR = "auth_req_id_error"
     INCORRECT_AUDIENCE = "incorrect_audience"
+    DOMAIN_MISMATCH = "domain_mismatch"
 
 
 class AccessTokenForConnectionErrorCode:
@@ -191,6 +192,7 @@ class AccessTokenForConnectionErrorCode:
     FAILED_TO_RETRIEVE = "failed_to_retrieve"
     API_ERROR = "api_error"
     FETCH_ERROR = "retrieval_error"
+    DOMAIN_MISMATCH = "domain_mismatch"
 
 
 class CustomTokenExchangeError(Auth0Error):
