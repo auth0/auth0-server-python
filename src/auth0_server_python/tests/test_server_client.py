@@ -24,7 +24,10 @@ from auth0_server_python.auth_types import (
     TransactionData,
 )
 from auth0_server_python.error import (
+    AccessTokenError,
+    AccessTokenErrorCode,
     AccessTokenForConnectionError,
+    AccessTokenForConnectionErrorCode,
     ApiError,
     BackchannelLogoutError,
     ConfigurationError,
@@ -251,6 +254,98 @@ async def test_complete_link_user_returns_app_state(mocker):
 
 
 @pytest.mark.asyncio
+async def test_start_link_user_stores_origin_domain_in_mcd(mocker):
+    """Test that start_link_user stores origin_domain in transaction in MCD mode."""
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "id_token": "existing_id_token",
+        "user": {"sub": "user123"}
+    }
+
+    captured_transaction = None
+    async def capture_tx(identifier, transaction_data, options=None):
+        nonlocal captured_transaction
+        captured_transaction = transaction_data
+
+    mock_tx_store = AsyncMock()
+    mock_tx_store.set = AsyncMock(side_effect=capture_tx)
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant1.auth0.com/",
+        "authorization_endpoint": "https://tenant1.auth0.com/authorize",
+        "token_endpoint": "https://tenant1.auth0.com/oauth/token"
+    })
+    mocker.patch.object(client, "_build_link_user_url", return_value="https://tenant1.auth0.com/authorize?...")
+
+    await client.start_link_user(
+        options={"connection": "google-oauth2"},
+        store_options={"request": {}}
+    )
+
+    assert captured_transaction is not None
+    assert captured_transaction.origin_domain == "tenant1.auth0.com"
+    assert captured_transaction.origin_issuer == "https://tenant1.auth0.com/"
+
+
+@pytest.mark.asyncio
+async def test_start_unlink_user_stores_origin_domain_in_mcd(mocker):
+    """Test that start_unlink_user stores origin_domain in transaction in MCD mode."""
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "id_token": "existing_id_token",
+        "user": {"sub": "user123"}
+    }
+
+    captured_transaction = None
+    async def capture_tx(identifier, transaction_data, options=None):
+        nonlocal captured_transaction
+        captured_transaction = transaction_data
+
+    mock_tx_store = AsyncMock()
+    mock_tx_store.set = AsyncMock(side_effect=capture_tx)
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant1.auth0.com/",
+        "authorization_endpoint": "https://tenant1.auth0.com/authorize",
+        "token_endpoint": "https://tenant1.auth0.com/oauth/token"
+    })
+    mocker.patch.object(client, "_build_unlink_user_url", return_value="https://tenant1.auth0.com/authorize?...")
+
+    await client.start_unlink_user(
+        options={"connection": "google-oauth2"},
+        store_options={"request": {}}
+    )
+
+    assert captured_transaction is not None
+    assert captured_transaction.origin_domain == "tenant1.auth0.com"
+    assert captured_transaction.origin_issuer == "https://tenant1.auth0.com/"
+
+
+@pytest.mark.asyncio
 async def test_login_backchannel_stores_access_token(mocker):
     mock_transaction_store = AsyncMock()
     mock_state_store = AsyncMock()
@@ -374,6 +469,36 @@ async def test_get_session_none():
 
     session_data = await client.get_session()
     assert session_data is None
+
+
+@pytest.mark.asyncio
+async def test_get_session_domain_mismatch_returns_none():
+    """Test that get_session returns None on domain mismatch in MCD mode."""
+    session_data = StateData(
+        user={"sub": "user123"},
+        domain="tenant1.auth0.com",
+        token_sets=[],
+        internal={"sid": "123", "created_at": int(time.time())}
+    )
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant2.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    session = await client.get_session(store_options={"request": {}})
+    assert session is None
+
 
 @pytest.mark.asyncio
 async def test_get_access_token_from_store():
@@ -784,6 +909,41 @@ async def test_get_access_token_from_store_returns_minimum_matching_scopes(mocke
     assert token == "minimum_scope_token"
     get_refresh_token_mock.assert_not_awaited()
 
+
+@pytest.mark.asyncio
+async def test_get_access_token_domain_mismatch_raises_error():
+    """Test that get_access_token raises AccessTokenError on domain mismatch."""
+    session_data = StateData(
+        user={"sub": "user123"},
+        domain="tenant1.auth0.com",
+        token_sets=[{
+            "audience": "default",
+            "access_token": "token123",
+            "expires_at": int(time.time()) + 500
+        }],
+        internal={"sid": "123", "created_at": int(time.time())}
+    )
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant2.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    with pytest.raises(AccessTokenError) as exc:
+        await client.get_access_token(store_options={"request": {}})
+    assert exc.value.code == AccessTokenErrorCode.DOMAIN_MISMATCH
+
+
 @pytest.mark.asyncio
 async def test_get_access_token_for_connection_cached():
     mock_state_store = AsyncMock()
@@ -826,6 +986,47 @@ async def test_get_access_token_for_connection_no_refresh():
     with pytest.raises(AccessTokenForConnectionError) as exc:
         await client.get_access_token_for_connection({"connection": "my_connection"})
     assert "A refresh token was not found" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_for_connection_domain_mismatch():
+    """Test that get_access_token_for_connection raises error on domain mismatch."""
+    session_data = StateData(
+        user={"sub": "user123"},
+        domain="tenant1.auth0.com",
+        token_sets=[],
+        connection_token_sets=[{
+            "connection": "my_connection",
+            "audience": "default",
+            "access_token": "conn_token",
+            "login_hint": "hint",
+            "expires_at": int(time.time()) + 500
+        }],
+        internal={"sid": "123", "created_at": int(time.time())}
+    )
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant2.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    with pytest.raises(AccessTokenForConnectionError) as exc:
+        await client.get_access_token_for_connection(
+            {"connection": "my_connection"},
+            store_options={"request": {}}
+        )
+    assert exc.value.code == AccessTokenForConnectionErrorCode.DOMAIN_MISMATCH
+
 
 @pytest.mark.asyncio
 async def test_logout():
@@ -912,6 +1113,92 @@ async def test_handle_backchannel_logout_ok(mocker):
         {"sub": "user_sub", "sid": "session_id_123"},
         None
     )
+
+
+@pytest.mark.asyncio
+async def test_backchannel_logout_mcd_known_domain(mocker):
+    """Test that backchannel logout works in MCD mode when domain is in cache."""
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    # Pre-populate the discovery cache (simulates a prior login)
+    client._discovery_cache["tenant1.auth0.com"] = {
+        "metadata": {
+            "issuer": "https://tenant1.auth0.com/",
+            "jwks_uri": "https://tenant1.auth0.com/.well-known/jwks.json"
+        },
+        "jwks": {"keys": [{"kty": "RSA", "kid": "test-key"}]},
+        "expires_at": time.time() + 600
+    }
+
+    # Mock the unverified decode to extract issuer
+    mocker.patch("jwt.decode", return_value={
+        "iss": "https://tenant1.auth0.com/",
+        "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
+        "sub": "user123",
+        "sid": "session123"
+    })
+
+    mocker.patch.object(
+        client, "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "iss": "https://tenant1.auth0.com/",
+        "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
+        "sub": "user123",
+        "sid": "session123"
+    })
+
+    await client.handle_backchannel_logout("some_logout_token")
+
+    mock_state_store.delete_by_logout_token.assert_awaited_once_with(
+        {"sub": "user123", "sid": "session123"},
+        None
+    )
+
+
+@pytest.mark.asyncio
+async def test_backchannel_logout_mcd_unknown_domain_rejected(mocker):
+    """Test that backchannel logout rejects unknown domains in MCD mode (SSRF protection)."""
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        state_store=AsyncMock(),
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    # Discovery cache is empty — no prior logins
+    assert len(client._discovery_cache) == 0
+
+    # Mock unverified decode — attacker's token has evil issuer
+    mocker.patch("jwt.decode", return_value={
+        "iss": "https://evil.internal.server/",
+        "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
+        "sub": "user123",
+        "sid": "session123"
+    })
+
+    with pytest.raises(BackchannelLogoutError) as exc:
+        await client.handle_backchannel_logout("crafted_logout_token")
+    assert "Unknown domain" in str(exc.value)
+    assert "evil.internal.server" in str(exc.value)
+
 
 # Test For AuthLib Helpers
 
@@ -3614,6 +3901,66 @@ async def test_domain_resolver_error_on_non_string_type():
 
     with pytest.raises(DomainResolverError, match="must return a string"):
         await client.start_interactive_login(store_options={"request": MagicMock()})
+
+
+@pytest.mark.asyncio
+async def test_sync_callable_as_domain_resolver_raises_error():
+    """Test that a non-async (sync) callable raises DomainResolverError.
+
+    The SDK always awaits the resolver, so sync callables are not supported.
+    Domain resolvers must be async functions.
+    """
+    def sync_resolver(context):
+        return "tenant1.auth0.com"
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = StateData(
+        user={"sub": "user123"},
+        domain="tenant1.auth0.com",
+        token_sets=[],
+        internal={"sid": "123", "created_at": int(time.time())}
+    )
+
+    client = ServerClient(
+        domain=sync_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    with pytest.raises(DomainResolverError):
+        await client.get_user(store_options={"request": {}})
+
+
+@pytest.mark.asyncio
+async def test_resolver_returns_domain_with_scheme_prefix():
+    """Test that domain resolver returning 'https://domain' works with session matching."""
+    async def resolver_with_scheme(context):
+        return "https://tenant1.auth0.com"
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = StateData(
+        user={"sub": "user123"},
+        domain="https://tenant1.auth0.com",
+        token_sets=[],
+        internal={"sid": "123", "created_at": int(time.time())}
+    )
+
+    client = ServerClient(
+        domain=resolver_with_scheme,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    user = await client.get_user(store_options={"request": {}})
+    assert user is not None
+    assert user["sub"] == "user123"
+
 
 # =============================================================================
 # MCD Tests : Domain-specific Session Management Tests
