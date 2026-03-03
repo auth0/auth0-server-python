@@ -573,8 +573,8 @@ class ServerClient(Generic[TStoreOptions]):
         if not code:
             raise MissingRequiredArgumentError("code")
 
-        # Get origin domain and issuer from transaction
-        origin_domain = transaction_data.origin_domain
+        # Get origin domain and issuer from transactiondata, or resolve domain if not present (resolver mode)
+        origin_domain = transaction_data.origin_domain or await self._resolve_current_domain(store_options)
         origin_issuer = transaction_data.origin_issuer
 
         # Fetch metadata from the origin domain
@@ -714,17 +714,19 @@ class ServerClient(Generic[TStoreOptions]):
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if state_data:
-            # Validate session domain matches current request domain
-            if self._domain_resolver:
-                current_domain = await self._resolve_current_domain(store_options)
-                session_domain = getattr(state_data, 'domain', None)
-
-                if session_domain and session_domain != current_domain:
-                    # Session created with different domain - reject for security
-                    return None
-
+            # Domain check should work for both Pydantic models and plain dicts
             if hasattr(state_data, "dict") and callable(state_data.dict):
                 state_data = state_data.dict()
+
+            # In resolver mode, reject sessions without domain or with mismatched domain
+            if self._domain_resolver:
+                session_domain = state_data.get('domain')
+                if not session_domain:
+                    return None
+                current_domain = await self._resolve_current_domain(store_options)
+                if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
+                    return None
+
             return state_data.get("user")
         return None
 
@@ -741,17 +743,19 @@ class ServerClient(Generic[TStoreOptions]):
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if state_data:
-            # Validate session domain matches current request domain
-            if self._domain_resolver:
-                current_domain = await self._resolve_current_domain(store_options)
-                session_domain = getattr(state_data, 'domain', None)
-
-                if session_domain and session_domain != current_domain:
-                    # Session created with different domain - reject for security
-                    return None
-
+            # Domain check should work for both Pydantic models and plain dicts
             if hasattr(state_data, "dict") and callable(state_data.dict):
                 state_data = state_data.dict()
+
+            # In resolver mode, reject sessions without domain or with mismatched domain
+            if self._domain_resolver:
+                session_domain = state_data.get('domain')
+                if not session_domain:
+                    return None
+                current_domain = await self._resolve_current_domain(store_options)
+                if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
+                    return None
+
             session_data = {k: v for k, v in state_data.items()
                             if k != "internal"}
             return session_data
@@ -890,13 +894,22 @@ class ServerClient(Generic[TStoreOptions]):
         """
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
-        # Validate session domain matches current request domain
-        if state_data and self._domain_resolver:
-            current_domain = await self._resolve_current_domain(store_options)
-            session_domain = getattr(state_data, 'domain', None)
+        # Domain check should work for both Pydantic models and plain dicts
+        if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
+            state_data_dict = state_data.dict()
+        else:
+            state_data_dict = state_data or {}
 
-            if session_domain and session_domain != current_domain:
-                # Session created with different domain - reject for security
+        # In resolver mode, reject sessions without domain or with mismatched domain
+        if state_data and self._domain_resolver:
+            session_domain = state_data_dict.get('domain')
+            if not session_domain:
+                raise AccessTokenError(
+                    AccessTokenErrorCode.MISSING_SESSION_DOMAIN,
+                    "Session is missing domain. User needs to re-authenticate."
+                )
+            current_domain = await self._resolve_current_domain(store_options)
+            if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
                 raise AccessTokenError(
                     AccessTokenErrorCode.DOMAIN_MISMATCH,
                     "Session domain mismatch. User needs to re-authenticate with the current domain."
@@ -909,11 +922,6 @@ class ServerClient(Generic[TStoreOptions]):
             audience = auth_params.get("audience", None)
 
         merged_scope = self._merge_scope_with_defaults(scope, audience)
-
-        if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
-            state_data_dict = state_data.dict()
-        else:
-            state_data_dict = state_data or {}
 
         # Find matching token set
         token_set = None
@@ -1127,7 +1135,7 @@ class ServerClient(Generic[TStoreOptions]):
             "binding_message": options.get("binding_message"),
             "login_hint": options.get("login_hint"),
             "authorization_params": options.get("authorization_params"),
-        })
+        }, store_options=store_options)
 
         existing_state_data = await self._state_store.get(self._state_identifier, store_options)
 
@@ -1140,6 +1148,10 @@ class ServerClient(Generic[TStoreOptions]):
             token_endpoint_response
         )
 
+        # Store domain for MCD session
+        domain = await self._resolve_current_domain(store_options)
+        state_data["domain"] = domain
+
         await self._state_store.set(self._state_identifier, state_data, store_options)
 
         result = {
@@ -1149,7 +1161,8 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def backchannel_authentication(
         self,
-        options: dict[str, Any]
+        options: dict[str, Any],
+        store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
         Performs backchannel authentication with Auth0.
@@ -1174,7 +1187,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             ApiError: If the backchannel authentication fails
         """
-        backchannel_data = await self.initiate_backchannel_authentication(options)
+        backchannel_data = await self.initiate_backchannel_authentication(options, store_options=store_options)
         auth_req_id = backchannel_data.get("auth_req_id")
         expires_in = backchannel_data.get(
             "expires_in", 120)  # Default to 2 minutes
@@ -1188,7 +1201,7 @@ class ServerClient(Generic[TStoreOptions]):
         while time.time() < end_time:
             # Make token request
             try:
-                token_response = await self.backchannel_authentication_grant(auth_req_id)
+                token_response = await self.backchannel_authentication_grant(auth_req_id, store_options=store_options)
                 return token_response
 
             except Exception as e:
@@ -1213,7 +1226,8 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def initiate_backchannel_authentication(
             self,
-            options: dict[str, Any]
+            options: dict[str, Any],
+            store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
         Start backchannel authentication with Auth0.
@@ -1266,16 +1280,16 @@ class ServerClient(Generic[TStoreOptions]):
                     )
 
         try:
-            # Fetch OpenID Connect metadata if not already fetched
-            if not hasattr(self, '_oauth_metadata'):
-                self._oauth_metadata = await self._get_oidc_metadata_cached(self._domain)
+            # Resolve domain
+            domain = await self._resolve_current_domain(store_options)
+            metadata = await self._get_oidc_metadata_cached(domain)
 
             # Get the issuer from metadata
-            issuer = self._oauth_metadata.get(
-                "issuer") or f"https://{self._domain}/"
+            issuer = metadata.get(
+                "issuer") or f"https://{domain}/"
 
             # Get backchannel authentication endpoint
-            backchannel_endpoint = self._oauth_metadata.get(
+            backchannel_endpoint = metadata.get(
                 "backchannel_authentication_endpoint")
             if not backchannel_endpoint:
                 raise ApiError(
@@ -1344,12 +1358,17 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
-    async def backchannel_authentication_grant(self, auth_req_id: str) -> dict[str, Any]:
+    async def backchannel_authentication_grant(
+        self,
+        auth_req_id: str,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
         """
         Retrieves a token by exchanging an auth_req_id.
 
         Args:
             auth_req_id (str): The authentication request ID obtained from bc-authorize
+            store_options: Optional options used to pass to the Transaction and State Store.
 
         Raises:
             AccessTokenError: If there was an issue requesting the access token.
@@ -1361,8 +1380,9 @@ class ServerClient(Generic[TStoreOptions]):
             raise MissingRequiredArgumentError("auth_req_id")
 
         try:
-            # Fetch OIDC metadata
-            metadata = await self._get_oidc_metadata_cached(self._domain)
+            # Resolve domain (supports MCD mode)
+            domain = await self._resolve_current_domain(store_options)
+            metadata = await self._get_oidc_metadata_cached(domain)
 
             token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
@@ -1450,6 +1470,19 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Resolve domain for MCD
         origin_domain = await self._resolve_current_domain(store_options)
+
+        # In resolver mode, reject sessions without domain or with mismatched domain
+        if self._domain_resolver:
+            session_domain = state_data.get('domain') if isinstance(state_data, dict) else getattr(state_data, 'domain', None)
+            if not session_domain:
+                raise StartLinkUserError(
+                    "Session is missing domain. User needs to re-authenticate."
+                )
+            if self._normalize_issuer(session_domain) != self._normalize_issuer(origin_domain):
+                raise StartLinkUserError(
+                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                )
+
         metadata = await self._get_oidc_metadata_cached(origin_domain)
         origin_issuer = metadata.get('issuer')
 
@@ -1464,7 +1497,8 @@ class ServerClient(Generic[TStoreOptions]):
             id_token=state_data["id_token"],
             code_verifier=code_verifier,
             state=state,
-            authorization_params=options.get("authorization_params")
+            authorization_params=options.get("authorization_params"),
+            domain=origin_domain
         )
 
         # Store transaction data
@@ -1531,6 +1565,19 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Resolve domain for MCD
         origin_domain = await self._resolve_current_domain(store_options)
+
+        # In resolver mode, reject sessions without domain or with mismatched domain
+        if self._domain_resolver:
+            session_domain = state_data.get('domain') if isinstance(state_data, dict) else getattr(state_data, 'domain', None)
+            if not session_domain:
+                raise StartLinkUserError(
+                    "Session is missing domain. User needs to re-authenticate."
+                )
+            if self._normalize_issuer(session_domain) != self._normalize_issuer(origin_domain):
+                raise StartLinkUserError(
+                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                )
+
         metadata = await self._get_oidc_metadata_cached(origin_domain)
         origin_issuer = metadata.get('issuer')
 
@@ -1544,7 +1591,8 @@ class ServerClient(Generic[TStoreOptions]):
             id_token=state_data["id_token"],
             code_verifier=code_verifier,
             state=state,
-            authorization_params=options.get("authorization_params")
+            authorization_params=options.get("authorization_params"),
+            domain=origin_domain
         )
 
         # Store transaction data
@@ -1594,19 +1642,20 @@ class ServerClient(Generic[TStoreOptions]):
         code_verifier: str,
         state: str,
         connection_scope: Optional[str] = None,
-        authorization_params: Optional[dict[str, Any]] = None
+        authorization_params: Optional[dict[str, Any]] = None,
+        domain: Optional[str] = None
     ) -> str:
         """Build a URL for linking user accounts"""
         # Generate code challenge from verifier
         code_challenge = PKCE.generate_code_challenge(code_verifier)
 
-        # Get metadata if not already fetched
-        if not hasattr(self, '_oauth_metadata'):
-            self._oauth_metadata = await self._get_oidc_metadata_cached(self._domain)
+        # Use provided domain or fall back to static domain
+        resolved_domain = domain or self._domain
+        metadata = await self._get_oidc_metadata_cached(resolved_domain)
 
         # Get authorization endpoint
-        auth_endpoint = self._oauth_metadata.get("authorization_endpoint",
-                                                 f"https://{self._domain}/authorize")
+        auth_endpoint = metadata.get("authorization_endpoint",
+                                     f"https://{resolved_domain}/authorize")
 
         # Build params
         params = {
@@ -1637,19 +1686,20 @@ class ServerClient(Generic[TStoreOptions]):
         id_token: str,
         code_verifier: str,
         state: str,
-        authorization_params: Optional[dict[str, Any]] = None
+        authorization_params: Optional[dict[str, Any]] = None,
+        domain: Optional[str] = None
     ) -> str:
         """Build a URL for unlinking user accounts"""
         # Generate code challenge from verifier
         code_challenge = PKCE.generate_code_challenge(code_verifier)
 
-        # Get metadata if not already fetched
-        if not hasattr(self, '_oauth_metadata'):
-            self._oauth_metadata = await self._get_oidc_metadata_cached(self._domain)
+        # Use provided domain or fall back to static domain
+        resolved_domain = domain or self._domain
+        metadata = await self._get_oidc_metadata_cached(resolved_domain)
 
         # Get authorization endpoint
-        auth_endpoint = self._oauth_metadata.get("authorization_endpoint",
-                                                 f"https://{self._domain}/authorize")
+        auth_endpoint = metadata.get("authorization_endpoint",
+                                     f"https://{resolved_domain}/authorize")
 
         # Build params
         params = {
@@ -1706,11 +1756,16 @@ class ServerClient(Generic[TStoreOptions]):
         else:
             state_data_dict = state_data or {}
 
-        # In MCD mode, verify session domain matches current domain
+        # In resolver mode, reject sessions without domain or with mismatched domain
         if self._domain_resolver:
-            current_domain = await self._resolve_current_domain(store_options)
             session_domain = state_data_dict.get("domain")
-            if session_domain and session_domain != current_domain:
+            if not session_domain:
+                raise AccessTokenForConnectionError(
+                    AccessTokenForConnectionErrorCode.MISSING_SESSION_DOMAIN,
+                    "Session is missing domain. User needs to re-authenticate."
+                )
+            current_domain = await self._resolve_current_domain(store_options)
+            if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
                 raise AccessTokenForConnectionError(
                     AccessTokenForConnectionErrorCode.DOMAIN_MISMATCH,
                     "Session domain mismatch. User needs to re-authenticate with the current domain."
@@ -2073,7 +2128,8 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def custom_token_exchange(
         self,
-        options: CustomTokenExchangeOptions
+        options: CustomTokenExchangeOptions,
+        store_options: Optional[dict[str, Any]] = None
     ) -> TokenExchangeResponse:
         """
         Exchanges a custom token for Auth0 tokens using RFC 8693.
@@ -2083,6 +2139,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Args:
             options: Configuration for the token exchange
+            store_options: Optional options used to pass to the Transaction and State Store.
 
         Returns:
             TokenExchangeResponse containing access_token and metadata
@@ -2112,8 +2169,9 @@ class ServerClient(Generic[TStoreOptions]):
             if not isinstance(options, CustomTokenExchangeOptions):
                 options = CustomTokenExchangeOptions(**options)
 
-            # Fetch OIDC metadata
-            metadata = await self._get_oidc_metadata_cached(self._domain)
+            # Resolve domain
+            domain = await self._resolve_current_domain(store_options)
+            metadata = await self._get_oidc_metadata_cached(domain)
 
             token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
@@ -2241,7 +2299,7 @@ class ServerClient(Generic[TStoreOptions]):
                 authorization_params=options.authorization_params
             )
 
-            token_response = await self.custom_token_exchange(exchange_options)
+            token_response = await self.custom_token_exchange(exchange_options, store_options=store_options)
 
             # Extract user claims from ID token if present
             user_claims = None
@@ -2263,12 +2321,16 @@ class ServerClient(Generic[TStoreOptions]):
                 expires_at=int(time.time()) + token_response.expires_in
             )
 
+            # Resolve domain for session storage
+            domain = await self._resolve_current_domain(store_options)
+
             # Construct state data
             state_data = StateData(
                 user=user_claims,
                 id_token=token_response.id_token,
                 refresh_token=token_response.refresh_token,
                 token_sets=[token_set],
+                domain=domain,
                 internal={
                     "sid": sid,
                     "created_at": int(time.time())

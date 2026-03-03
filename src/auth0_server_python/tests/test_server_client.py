@@ -262,7 +262,8 @@ async def test_start_link_user_stores_origin_domain_in_mcd(mocker):
     mock_state_store = AsyncMock()
     mock_state_store.get.return_value = {
         "id_token": "existing_id_token",
-        "user": {"sub": "user123"}
+        "user": {"sub": "user123"},
+        "domain": "tenant1.auth0.com"
     }
 
     captured_transaction = None
@@ -308,7 +309,8 @@ async def test_start_unlink_user_stores_origin_domain_in_mcd(mocker):
     mock_state_store = AsyncMock()
     mock_state_store.get.return_value = {
         "id_token": "existing_id_token",
-        "user": {"sub": "user123"}
+        "user": {"sub": "user123"},
+        "domain": "tenant1.auth0.com"
     }
 
     captured_transaction = None
@@ -498,6 +500,148 @@ async def test_get_session_domain_mismatch_returns_none():
 
     session = await client.get_session(store_options={"request": {}})
     assert session is None
+
+
+@pytest.mark.asyncio
+async def test_get_session_domain_mismatch_with_dict_state():
+    """Test domain mismatch works when state store returns plain dict (stateless cookie store)."""
+    session_data = {
+        "user": {"sub": "user123"},
+        "domain": "tenant1.auth0.com",
+        "token_sets": [],
+        "internal": {"sid": "123", "created_at": int(time.time())}
+    }
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant2.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    session = await client.get_session(store_options={"request": {}})
+    assert session is None
+
+
+@pytest.mark.asyncio
+async def test_get_user_domain_mismatch_with_dict_state():
+    """Test domain mismatch works when state store returns plain dict (stateless cookie store)."""
+    session_data = {
+        "user": {"sub": "user123", "name": "Test User"},
+        "domain": "tenant1.auth0.com",
+        "token_sets": [],
+        "internal": {"sid": "123", "created_at": int(time.time())}
+    }
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant2.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    user = await client.get_user(store_options={"request": {}})
+    assert user is None
+
+
+@pytest.mark.asyncio
+async def test_get_user_legacy_session_rejected_in_resolver_mode():
+    """Test that sessions without domain field are rejected in resolver mode."""
+    session_data = {
+        "user": {"sub": "user123", "name": "Test User"},
+        # No "domain" field — legacy session created before MCD was enabled
+    }
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    user = await client.get_user(store_options={"request": {}})
+    assert user is None
+
+
+@pytest.mark.asyncio
+async def test_get_session_legacy_session_rejected_in_resolver_mode():
+    """Test that sessions without domain field are rejected in resolver mode."""
+    session_data = {
+        "user": {"sub": "user123"},
+        "token_sets": [],
+        "internal": {"sid": "123", "created_at": int(time.time())}
+        # No "domain" field — legacy session
+    }
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    session = await client.get_session(store_options={"request": {}})
+    assert session is None
+
+
+@pytest.mark.asyncio
+async def test_get_user_domain_normalization():
+    """Test that domain comparison is case-insensitive and normalizes schemes."""
+    session_data = {
+        "user": {"sub": "user123", "name": "Test User"},
+        "domain": "Tenant1.Auth0.Com"  # Mixed case
+    }
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"  # Lowercase
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    user = await client.get_user(store_options={"request": {}})
+    assert user is not None
+    assert user["sub"] == "user123"
 
 
 @pytest.mark.asyncio
@@ -945,6 +1089,40 @@ async def test_get_access_token_domain_mismatch_raises_error():
 
 
 @pytest.mark.asyncio
+async def test_get_access_token_domain_mismatch_with_dict_state():
+    """Test domain mismatch works when state store returns plain dict (stateless cookie store)."""
+    session_data = {
+        "user": {"sub": "user123"},
+        "domain": "tenant1.auth0.com",
+        "token_sets": [{
+            "audience": "default",
+            "access_token": "token123",
+            "expires_at": int(time.time()) + 500
+        }],
+        "internal": {"sid": "123", "created_at": int(time.time())}
+    }
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant2.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    with pytest.raises(AccessTokenError) as exc:
+        await client.get_access_token(store_options={"request": {}})
+    assert exc.value.code == AccessTokenErrorCode.DOMAIN_MISMATCH
+
+
+@pytest.mark.asyncio
 async def test_get_access_token_for_connection_cached():
     mock_state_store = AsyncMock()
     mock_state_store.get.return_value = {
@@ -1026,6 +1204,172 @@ async def test_get_access_token_for_connection_domain_mismatch():
             store_options={"request": {}}
         )
     assert exc.value.code == AccessTokenForConnectionErrorCode.DOMAIN_MISMATCH
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_legacy_session_rejected_in_resolver_mode():
+    """Test that sessions without domain field raise MISSING_SESSION_DOMAIN in resolver mode."""
+    session_data = {
+        "user": {"sub": "user123"},
+        "token_sets": [{
+            "audience": "default",
+            "access_token": "token123",
+            "expires_at": int(time.time()) + 500
+        }],
+        "internal": {"sid": "123", "created_at": int(time.time())}
+        # No "domain" field — legacy session
+    }
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    with pytest.raises(AccessTokenError) as exc:
+        await client.get_access_token(store_options={"request": {}})
+    assert exc.value.code == AccessTokenErrorCode.MISSING_SESSION_DOMAIN
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_for_connection_legacy_session_rejected():
+    """Test that sessions without domain field raise MISSING_SESSION_DOMAIN in resolver mode."""
+    session_data = {
+        "user": {"sub": "user123"},
+        "connection_token_sets": [{
+            "connection": "my_connection",
+            "access_token": "conn_token",
+            "expires_at": int(time.time()) + 500
+        }],
+        "internal": {"sid": "123", "created_at": int(time.time())}
+        # No "domain" field — legacy session
+    }
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    with pytest.raises(AccessTokenForConnectionError) as exc:
+        await client.get_access_token_for_connection(
+            {"connection": "my_connection"},
+            store_options={"request": {}}
+        )
+    assert exc.value.code == AccessTokenForConnectionErrorCode.MISSING_SESSION_DOMAIN
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_for_connection_domain_mismatch_with_dict_state():
+    """Test domain mismatch works when state store returns plain dict (stateless cookie store)."""
+    session_data = {
+        "user": {"sub": "user123"},
+        "domain": "tenant1.auth0.com",
+        "connection_token_sets": [{
+            "connection": "my_connection",
+            "access_token": "conn_token",
+            "expires_at": int(time.time()) + 500
+        }],
+        "internal": {"sid": "123", "created_at": int(time.time())}
+    }
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = session_data
+
+    async def domain_resolver(context):
+        return "tenant2.auth0.com"
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    with pytest.raises(AccessTokenForConnectionError) as exc:
+        await client.get_access_token_for_connection(
+            {"connection": "my_connection"},
+            store_options={"request": {}}
+        )
+    assert exc.value.code == AccessTokenForConnectionErrorCode.DOMAIN_MISMATCH
+
+
+@pytest.mark.asyncio
+async def test_start_link_user_rejects_legacy_session_in_resolver_mode(mocker):
+    """Test that start_link_user rejects sessions without domain in resolver mode."""
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "id_token": "existing_id_token",
+        "user": {"sub": "user123"}
+        # No "domain" field — legacy session
+    }
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    with pytest.raises(StartLinkUserError):
+        await client.start_link_user(
+            options={"connection": "google-oauth2"},
+            store_options={"request": {}}
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_unlink_user_rejects_legacy_session_in_resolver_mode(mocker):
+    """Test that start_unlink_user rejects sessions without domain in resolver mode."""
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "id_token": "existing_id_token",
+        "user": {"sub": "user123"}
+        # No "domain" field — legacy session
+    }
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    with pytest.raises(StartLinkUserError):
+        await client.start_unlink_user(
+            options={"connection": "google-oauth2"},
+            store_options={"request": {}}
+        )
 
 
 @pytest.mark.asyncio

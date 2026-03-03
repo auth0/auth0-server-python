@@ -100,7 +100,37 @@ async def domain_resolver(context: DomainResolverContext) -> str:
     return DOMAIN_MAP.get(hostname, DEFAULT_DOMAIN)
 ```
 
-> **Note:** In resolver mode, the SDK builds the `redirect_uri` dynamically from the resolved domain. You do not need to set it per request. If you override `redirect_uri` in `authorization_params`, the SDK uses your value as-is.
+## Passing store_options
+
+In resolver mode, pass `store_options` to each SDK call so the resolver can inspect the
+current request and select the correct domain. If `store_options` are omitted, the resolver
+receives empty context (`request_url=None`, `request_headers=None`).
+
+All public SDK methods that interact with sessions or Auth0 endpoints accept `store_options`.
+Here is an example using `get_user()`:
+
+```python
+# In your route handler, pass the framework request via store_options
+store_options = {"request": request, "response": response}
+
+# The SDK calls your domain_resolver with a DomainResolverContext
+# built from the request in store_options
+user = await client.get_user(store_options=store_options)
+```
+
+The same pattern applies to `get_session()`, `get_access_token()`, `start_interactive_login()`,
+`logout()`, and all other session-aware methods.
+
+## Redirect URI Requirements
+
+In resolver mode, the SDK does not infer `redirect_uri` from the request. You must provide it
+explicitly:
+
+- Set a default `redirect_uri` when constructing `ServerClient`, or
+- Pass `redirect_uri` in `authorization_params` for each login call.
+
+Framework wrappers like `auth0-fastapi` handle this automatically by constructing the
+`redirect_uri` from the incoming request's host and scheme.
 
 ## Resolver Patterns
 
@@ -273,13 +303,17 @@ async def domain_resolver(context: DomainResolverContext) -> str:
 
 ## Session Behavior in Resolver Mode
 
-In resolver mode, sessions are bound to the domain that created them. On each request, the SDK compares the session's stored domain against the current resolved domain:
+In resolver mode, sessions are bound to the domain that created them. On each request, the SDK compares the session's stored domain against the current resolved domain. If the domain is missing or does not match:
 
-- `get_user()` and `get_session()` return `None` on domain mismatch.
-- `get_access_token()` raises `AccessTokenError` on domain mismatch.
+- `get_user()` and `get_session()` return `None`.
+- `get_access_token()` raises `AccessTokenError` (code `MISSING_SESSION_DOMAIN` if the session has no stored domain, `DOMAIN_MISMATCH` if the domains differ).
+- `get_access_token_for_connection()` raises `AccessTokenForConnectionError` (same codes as above).
+- `start_link_user()` and `start_unlink_user()` raise `StartLinkUserError`.
 - Token refresh uses the session's stored domain, not the current request domain.
 
-> **Warning:** If you switch from a static domain string to a resolver function, existing sessions that do not include a stored domain continue to work — the SDK treats the absent domain field as valid. New sessions will store the resolved domain automatically. Once old sessions expire, all sessions will be domain-aware.
+> **Warning:** If you switch from a static domain string to a resolver function, existing sessions that do not include a stored domain are treated as **missing sessions**. The SDK cannot verify which domain originally created the session, so users will need to re-authenticate. New sessions store the resolved domain automatically.
+
+> **Note:** If a login was started before the switch to resolver mode and completes after, the SDK falls back to the current resolved domain for token exchange. The resulting session will store the resolved domain and work normally going forward.
 
 ## Discovery Cache
 
