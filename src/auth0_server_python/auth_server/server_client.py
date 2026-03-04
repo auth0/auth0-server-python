@@ -6,7 +6,8 @@ Handles authentication flows, token management, and user sessions.
 import asyncio
 import json
 import time
-from typing import Any, Generic, Optional, TypeVar
+from collections import OrderedDict
+from typing import Any, Callable, Generic, Optional, TypeVar, Union
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
@@ -38,8 +39,10 @@ from auth0_server_python.error import (
     AccessTokenForConnectionErrorCode,
     ApiError,
     BackchannelLogoutError,
+    ConfigurationError,
     CustomTokenExchangeError,
     CustomTokenExchangeErrorCode,
+    DomainResolverError,
     InvalidArgumentError,
     MissingRequiredArgumentError,
     MissingTransactionError,
@@ -47,13 +50,19 @@ from auth0_server_python.error import (
     StartLinkUserError,
 )
 from auth0_server_python.utils import PKCE, URL, State
+from auth0_server_python.utils.helpers import (
+    build_domain_resolver_context,
+    validate_resolved_domain_value,
+)
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import ValidationError
 
 # Generic type for store options
 TStoreOptions = TypeVar('TStoreOptions')
-INTERNAL_AUTHORIZE_PARAMS = ["client_id", "redirect_uri", "response_type",
+# redirect_uri is intentionally excluded — in MCD mode it is built
+# dynamically from the resolved domain at login time.
+INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
                              "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
 
 
@@ -70,9 +79,9 @@ class ServerClient(Generic[TStoreOptions]):
 
     def __init__(
         self,
-        domain: str,
-        client_id: str,
-        client_secret: str,
+        domain: Union[str, Callable[[Optional[dict[str, Any]]], str]] = None,
+        client_id: str = None,
+        client_secret: str = None,
         redirect_uri: Optional[str] = None,
         secret: str = None,
         transaction_store=None,
@@ -80,13 +89,13 @@ class ServerClient(Generic[TStoreOptions]):
         transaction_identifier: str = "_a0_tx",
         state_identifier: str = "_a0_session",
         authorization_params: Optional[dict[str, Any]] = None,
-        pushed_authorization_requests: bool = False
+        pushed_authorization_requests: bool = False,
     ):
         """
         Initialize the Auth0 server client.
 
         Args:
-            domain: Auth0 domain (e.g., 'your-tenant.auth0.com')
+            domain: Auth0 domain - either a static string (e.g., 'tenant.auth0.com') or a callable that resolves domain dynamically.
             client_id: Auth0 client ID
             client_secret: Auth0 client secret
             redirect_uri: Default redirect URI for authentication
@@ -96,12 +105,35 @@ class ServerClient(Generic[TStoreOptions]):
             transaction_identifier: Identifier for transaction data
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
+            pushed_authorization_requests: Whether to use Pushed Authorization Requests
         """
         if not secret:
             raise MissingRequiredArgumentError("secret")
 
-        # Store configuration
-        self._domain = domain
+        if domain is None:
+            raise ConfigurationError(
+                "Domain is required"
+            )
+
+        # Validate domain type
+        if not isinstance(domain, str) and not callable(domain):
+            raise ConfigurationError(
+                f"Domain must be either a string or a callable function. "
+                f"Got {type(domain).__name__} instead."
+            )
+
+        # Determine if domain is static string or dynamic callable
+        if callable(domain):
+            self._domain = None
+            self._domain_resolver = domain
+        else:
+            # Validate static domain string
+            domain_str = str(domain)
+            if not domain_str or domain_str.strip() == "":
+                raise ConfigurationError("Domain cannot be empty.")
+            self._domain = domain_str
+            self._domain_resolver = None
+
         self._client_id = client_id
         self._client_secret = client_secret
         self._redirect_uri = redirect_uri
@@ -122,13 +154,247 @@ class ServerClient(Generic[TStoreOptions]):
 
         self._my_account_client = MyAccountClient(domain=domain)
 
+        # Unified cache for OIDC metadata and JWKS per domain (LRU eviction + TTL)
+        self._discovery_cache: OrderedDict[str, dict] = OrderedDict()
+        self._cache_ttl = 600     # 10 mins. TTL
+        self._cache_max_entries = 100 # Max 100 domains
+
+    def _normalize_domain(self, domain: str) -> str:
+        """
+        Normalize domain for comparison and URL construction.
+        Handles cases with/without https:// scheme.
+        """
+        domain = domain.lower()
+        if domain.startswith('https://'):
+            return domain
+        elif domain.startswith('http://'):
+            return domain.replace('http://', 'https://')
+        else:
+            return f'https://{domain}'
+
+    def _normalize_issuer(self, issuer: str) -> str:
+        """
+        Normalize issuer URL for comparison.
+
+        Args:
+            issuer: The issuer URL to normalize
+
+        Returns:
+            Normalized issuer URL (lowercase)
+        """
+        if not issuer:
+            return issuer
+
+        # Lowercase first for case-insensitive comparison and scheme detection
+        issuer = issuer.lower()
+
+        # Ensure https:// prefix
+        if issuer.startswith('http://'):
+            issuer = issuer.replace('http://', 'https://', 1)
+        elif not issuer.startswith('https://'):
+            issuer = f'https://{issuer}'
+
+        # Remove trailing slash
+        return issuer.rstrip('/')
+
+    async def _resolve_current_domain(self, store_options=None) -> str:
+        """Resolve domain from resolver function or return static domain."""
+        if self._domain_resolver:
+            context = build_domain_resolver_context(store_options)
+            try:
+                resolved = await self._domain_resolver(context)
+                return validate_resolved_domain_value(resolved)
+            except DomainResolverError:
+                raise
+            except Exception as e:
+                raise DomainResolverError(
+                    f"Domain resolver function raised an exception: {str(e)}",
+                    original_error=e
+                )
+        return self._domain
+
+    async def _verify_and_decode_jwt(
+        self, token: str, jwks: dict, audience: Optional[str] = None
+    ) -> dict:
+        """
+        Find signing key in JWKS by kid and decode JWT.
+
+        Verifies signature but disables built-in issuer validation
+        (callers perform normalized issuer comparison separately).
+
+        Args:
+            token: The JWT to verify and decode
+            jwks: The JWKS dict containing signing keys
+            audience: Optional expected audience claim
+
+        Returns:
+            Decoded claims dictionary
+
+        Raises:
+            ValueError: If no matching key found in JWKS for the token's kid
+        """
+        unverified_header = jwt.get_unverified_header(token)
+        kid = unverified_header.get("kid")
+
+        signing_key = None
+        for key in jwks.get("keys", []):
+            if key.get("kid") == kid:
+                signing_key = jwt.PyJWK.from_dict(key)
+                break
+
+        if not signing_key:
+            raise ValueError(f"No matching key found in JWKS for kid: {kid}")
+
+        decode_options = {"verify_signature": True, "verify_iss": False}
+        kwargs = {"algorithms": ["RS256"], "options": decode_options}
+        if audience:
+            kwargs["audience"] = audience
+
+        return jwt.decode(token, signing_key.key, **kwargs)
+
     async def _fetch_oidc_metadata(self, domain: str) -> dict:
-        """Fetch OpenID Connect discovery metadata from the Auth0 domain."""
-        metadata_url = f"https://{domain}/.well-known/openid-configuration"
+        """Fetch OIDC metadata from domain."""
+        normalized_domain = self._normalize_domain(domain)
+        metadata_url = f"{normalized_domain}/.well-known/openid-configuration"
         async with httpx.AsyncClient() as client:
             response = await client.get(metadata_url)
             response.raise_for_status()
             return response.json()
+
+    def _purge_expired_cache_entries(self):
+        """Purge all expired entries from the discovery cache."""
+        now = time.time()
+        expired = [k for k, v in self._discovery_cache.items() if v["expires_at"] <= now]
+        for k in expired:
+            del self._discovery_cache[k]
+
+    def _ensure_cache_capacity(self):
+        """Evict least recently used entry if cache is at capacity."""
+        if len(self._discovery_cache) >= self._cache_max_entries:
+            self._discovery_cache.popitem(last=False)
+
+    async def _get_oidc_metadata_cached(self, domain: str) -> dict:
+        """
+        Get OIDC metadata with caching (LRU eviction + TTL).
+
+        Uses a unified cache shared with JWKS when metadata expires,
+        the corresponding JWKS is also invalidated.
+
+        Args:
+            domain: Auth0 domain
+
+        Returns:
+            OIDC metadata document
+        """
+        now = time.time()
+
+        # Check cache
+        if domain in self._discovery_cache:
+            cached = self._discovery_cache[domain]
+            if cached["expires_at"] > now:
+                self._discovery_cache.move_to_end(domain)
+                return cached["metadata"]
+            # Expired — remove entire entry (metadata + jwks)
+            del self._discovery_cache[domain]
+
+        # Cache miss/expired - fetch fresh
+        metadata = await self._fetch_oidc_metadata(domain)
+
+        # Purge expired entries and ensure capacity
+        self._purge_expired_cache_entries()
+        self._ensure_cache_capacity()
+
+        # Store in cache with jwks=None (lazily populated when needed)
+        self._discovery_cache[domain] = {
+            "metadata": metadata,
+            "jwks": None,
+            "expires_at": now + self._cache_ttl
+        }
+
+        return metadata
+
+    async def _fetch_jwks(self, jwks_uri: str) -> dict:
+        """
+        Fetch JWKS (JSON Web Key Set) from jwks_uri.
+
+        Args:
+            jwks_uri: The JWKS endpoint URL
+
+        Returns:
+            JWKS document containing public keys
+
+        Raises:
+            ApiError: If JWKS fetch fails
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(jwks_uri)
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            raise ApiError("jwks_fetch_error", f"Failed to fetch JWKS from {jwks_uri}", e)
+
+    async def _get_jwks_cached(self, domain: str, metadata: dict = None) -> dict:
+        """
+        Get JWKS with caching using OIDC discovery (LRU eviction + TTL).
+
+        Uses a unified cache shared with metadata — JWKS is lazily populated
+        on first access and invalidated when the cache entry expires.
+
+        Args:
+            domain: Auth0 domain
+            metadata: Optional OIDC metadata (if already fetched)
+
+        Returns:
+            JWKS document
+
+        Raises:
+            ApiError: If JWKS fetch fails or jwks_uri missing from metadata
+        """
+        now = time.time()
+
+        # Check cache — entry exists, not expired, and jwks already fetched
+        if domain in self._discovery_cache:
+            cached = self._discovery_cache[domain]
+            if cached["expires_at"] > now:
+                if cached["jwks"] is not None:
+                    self._discovery_cache.move_to_end(domain)
+                    return cached["jwks"]
+                # Entry valid but jwks not yet fetched — use cached metadata
+                metadata = cached["metadata"]
+            else:
+                # Expired — remove entire entry
+                del self._discovery_cache[domain]
+
+        # Get metadata if not available from cache or parameter
+        if not metadata:
+            metadata = await self._get_oidc_metadata_cached(domain)
+
+        jwks_uri = metadata.get('jwks_uri')
+        if not jwks_uri:
+            raise ApiError(
+                "missing_jwks_uri",
+                f"OIDC metadata for {domain} does not contain jwks_uri. Provider may be non-RFC-compliant."
+            )
+
+        # Fetch JWKS
+        jwks = await self._fetch_jwks(jwks_uri)
+
+        # Update existing cache entry with jwks (entry created by _get_oidc_metadata_cached)
+        if domain in self._discovery_cache:
+            self._discovery_cache[domain]["jwks"] = jwks
+            self._discovery_cache.move_to_end(domain)
+        else:
+            # Edge case: entry was evicted between metadata and jwks fetch
+            self._purge_expired_cache_entries()
+            self._ensure_cache_capacity()
+            self._discovery_cache[domain] = {
+                "metadata": metadata,
+                "jwks": jwks,
+                "expires_at": now + self._cache_ttl
+            }
+
+        return jwks
 
     # ============================================================================
     # INTERACTIVE LOGIN FLOW
@@ -146,11 +412,23 @@ class ServerClient(Generic[TStoreOptions]):
 
         Args:
             options: Configuration options for the login process
+            store_options: Store options containing request/response
 
         Returns:
             Authorization URL to redirect the user to
         """
         options = options or StartInteractiveLoginOptions()
+
+        # Resolve domain (static or dynamic)
+        origin_domain = await self._resolve_current_domain(store_options)
+
+        # Fetch OIDC metadata from resolved domain
+        try:
+            metadata = await self._get_oidc_metadata_cached(origin_domain)
+            origin_issuer = metadata.get('issuer')
+        except Exception as e:
+            raise ApiError("metadata_error",
+                           "Failed to fetch OIDC metadata", e)
 
         # Get effective authorization params (merge defaults with provided ones)
         auth_params = dict(self._default_authorization_params)
@@ -180,17 +458,20 @@ class ServerClient(Generic[TStoreOptions]):
         state = PKCE.generate_random_string(32)
         auth_params["state"] = state
 
-                #merge any requested scope with defaults
+        # Merge any requested scope with defaults
         requested_scope = options.authorization_params.get("scope", None) if options.authorization_params else None
         audience = auth_params.get("audience", None)
         merged_scope = self._merge_scope_with_defaults(requested_scope, audience)
         auth_params["scope"] = merged_scope
 
-        # Build the transaction data to store
+        # Build the transaction data to store with origin domain and issuer
         transaction_data = TransactionData(
             code_verifier=code_verifier,
             app_state=options.app_state,
             audience=audience,
+            origin_domain=origin_domain,
+            origin_issuer=origin_issuer,
+            redirect_uri=auth_params.get("redirect_uri"),
         )
 
         # Store the transaction data
@@ -199,11 +480,9 @@ class ServerClient(Generic[TStoreOptions]):
             transaction_data,
             options=store_options
         )
-        try:
-            self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
-        except Exception as e:
-            raise ApiError("metadata_error",
-                           "Failed to fetch OIDC metadata", e)
+
+        # Set metadata for OAuth client
+        self._oauth.metadata = metadata
         # If PAR is enabled, use the PAR endpoint
         if self._pushed_authorization_requests:
             par_endpoint = self._oauth.metadata.get(
@@ -294,34 +573,84 @@ class ServerClient(Generic[TStoreOptions]):
         if not code:
             raise MissingRequiredArgumentError("code")
 
-        if not self._oauth.metadata or "token_endpoint" not in self._oauth.metadata:
-            self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+        # Get origin domain and issuer from transactiondata, or resolve domain if not present (resolver mode)
+        origin_domain = transaction_data.origin_domain or await self._resolve_current_domain(store_options)
+        origin_issuer = transaction_data.origin_issuer
+
+        # Fetch metadata from the origin domain
+        metadata = await self._get_oidc_metadata_cached(origin_domain)
+        self._oauth.metadata = metadata
 
         # Exchange the code for tokens
+        # Use redirect_uri from transaction if available, otherwise fall back to default
+        token_redirect_uri = transaction_data.redirect_uri or self._redirect_uri
         try:
             token_endpoint = self._oauth.metadata["token_endpoint"]
             token_response = await self._oauth.fetch_token(
                 token_endpoint,
                 code=code,
                 code_verifier=transaction_data.code_verifier,
-                redirect_uri=self._redirect_uri,
+                redirect_uri=token_redirect_uri,
             )
         except OAuthError as e:
             # Raise a custom error (or handle it as appropriate)
             raise ApiError(
                 "token_error", f"Token exchange failed: {str(e)}", e)
 
-       # Use the userinfo field from the token_response for user claims
+        # Use the userinfo field from the token_response for user claims
         user_info = token_response.get("userinfo")
         user_claims = None
+        id_token = token_response.get("id_token")
+
         if user_info:
             user_claims = UserClaims.parse_obj(user_info)
-        else:
-            id_token = token_response.get("id_token")
-            if id_token:
-                claims = jwt.decode(id_token, options={
-                                    "verify_signature": False})
+        elif id_token:
+            # Fetch JWKS for signature verification
+            jwks = await self._get_jwks_cached(origin_domain, metadata)
+
+            # Decode and verify ID token with signature verification enabled
+            try:
+                claims = await self._verify_and_decode_jwt(
+                    id_token, jwks, audience=self._client_id
+                )
+
+                # Custom normalized issuer validation
+                token_issuer = claims.get("iss", "")
+                if self._normalize_issuer(token_issuer) != self._normalize_issuer(origin_issuer):
+                    raise ApiError(
+                        "invalid_issuer",
+                        f"ID token issuer mismatch. Token issuer: {token_issuer}, Expected: {origin_issuer}. "
+                        f"Ensure your Auth0 domain is configured correctly."
+                    )
+
                 user_claims = UserClaims.parse_obj(claims)
+            except ValueError as e:
+                raise ApiError("jwks_key_not_found", str(e))
+            except jwt.InvalidSignatureError as e:
+                raise ApiError(
+                    "invalid_signature",
+                    f"ID token signature verification failed. The token may have been tampered with or is from an untrusted source: {str(e)}",
+                    e
+                )
+            except jwt.InvalidAudienceError as e:
+                raise ApiError(
+                    "invalid_audience",
+                    f"ID token audience mismatch. Expected: {self._client_id}. Ensure your client_id is configured correctly: {str(e)}",
+                    e
+                )
+            except jwt.ExpiredSignatureError as e:
+                raise ApiError(
+                    "token_expired",
+                    f"ID token has expired: {str(e)}",
+                    e
+                )
+            except jwt.InvalidTokenError as e:
+                raise ApiError(
+                    "invalid_token",
+                    f"ID token verification failed: {str(e)}",
+                    e
+                )
+
 
         # Build a token set using the token response data
         token_set = TokenSet(
@@ -343,6 +672,7 @@ class ServerClient(Generic[TStoreOptions]):
             # might be None if not provided
             refresh_token=token_response.get("refresh_token"),
             token_sets=[token_set],
+            domain=origin_domain,
             internal={
                 "sid": sid,
                 "created_at": int(time.time())
@@ -384,8 +714,19 @@ class ServerClient(Generic[TStoreOptions]):
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if state_data:
+            # Domain check should work for both Pydantic models and plain dicts
             if hasattr(state_data, "dict") and callable(state_data.dict):
                 state_data = state_data.dict()
+
+            # In resolver mode, reject sessions without domain or with mismatched domain
+            if self._domain_resolver:
+                session_domain = state_data.get('domain')
+                if not session_domain:
+                    return None
+                current_domain = await self._resolve_current_domain(store_options)
+                if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
+                    return None
+
             return state_data.get("user")
         return None
 
@@ -402,8 +743,19 @@ class ServerClient(Generic[TStoreOptions]):
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if state_data:
+            # Domain check should work for both Pydantic models and plain dicts
             if hasattr(state_data, "dict") and callable(state_data.dict):
                 state_data = state_data.dict()
+
+            # In resolver mode, reject sessions without domain or with mismatched domain
+            if self._domain_resolver:
+                session_domain = state_data.get('domain')
+                if not session_domain:
+                    return None
+                current_domain = await self._resolve_current_domain(store_options)
+                if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
+                    return None
+
             session_data = {k: v for k, v in state_data.items()
                             if k != "internal"}
             return session_data
@@ -414,24 +766,26 @@ class ServerClient(Generic[TStoreOptions]):
         options: Optional[LogoutOptions] = None,
         store_options: Optional[dict[str, Any]] = None
     ) -> str:
-        """
-        Logs the user out and returns the Auth0 logout URL.
-
-        Args:
-            options: Logout options including return_to URL.
-            store_options: Optional options used to pass to the State Store.
-
-        Returns:
-            The Auth0 logout URL to redirect the user to.
-        """
         options = options or LogoutOptions()
 
-        # Delete the session from the state store
-        await self._state_store.delete(self._state_identifier, store_options)
+        if not self._domain_resolver:
+            await self._state_store.delete(self._state_identifier, store_options)
+            domain = self._domain
+        else:
+            # Resolver mode: delete session if domains match
+            domain = await self._resolve_current_domain(store_options)
+            state_data = await self._state_store.get(self._state_identifier, store_options)
 
-        # Use the URL helper to create the logout URL.
+            if state_data:
+                if hasattr(state_data, "dict") and callable(state_data.dict):
+                    state_data = state_data.dict()
+                session_domain = state_data.get("domain")
+                if session_domain and self._normalize_issuer(session_domain) == self._normalize_issuer(domain):
+                    await self._state_store.delete(self._state_identifier, store_options)
+
+        # Return logout URL for the current resolved domain
         logout_url = URL.create_logout_url(
-            self._domain, self._client_id, options.return_to)
+            domain, self._client_id, options.return_to)
 
         return logout_url
 
@@ -441,7 +795,7 @@ class ServerClient(Generic[TStoreOptions]):
         store_options: Optional[dict[str, Any]] = None
     ) -> None:
         """
-        Handles backchannel logout requests (OIDC Back-Channel Logout specification).
+        Handles backchannel logout requests.
 
         Args:
             logout_token: The logout token sent by Auth0
@@ -451,9 +805,58 @@ class ServerClient(Generic[TStoreOptions]):
             raise BackchannelLogoutError("Missing logout token")
 
         try:
-            # Decode the token without verification
-            claims = jwt.decode(logout_token, options={
-                                "verify_signature": False})
+            # Determine domain for JWKS fetch and issuer validation
+            if self._domain_resolver:
+                try:
+                    unverified = jwt.decode(
+                        logout_token, algorithms=["RS256"],
+                        options={"verify_signature": False}
+                    )
+                    token_issuer = unverified.get("iss", "")
+                    parsed = urlparse(token_issuer)
+                    domain = parsed.hostname
+                    if not domain:
+                        raise BackchannelLogoutError(
+                            "Cannot determine domain: logout token has no valid issuer"
+                        )
+                    if domain not in self._discovery_cache:
+                        raise BackchannelLogoutError(
+                            f"Unknown domain in logout token issuer: {domain}. "
+                            f"Only domains from active sessions are accepted."
+                        )
+                except BackchannelLogoutError:
+                    raise
+                except Exception as e:
+                    raise BackchannelLogoutError(
+                        f"Failed to extract domain from logout token: {str(e)}"
+                    )
+            else:
+                domain = self._domain
+
+            # Fetch JWKS and verify logout token
+            jwks = await self._get_jwks_cached(domain)
+
+            try:
+                claims = await self._verify_and_decode_jwt(logout_token, jwks, audience=self._client_id)
+
+                # Normalized issuer validation
+                token_issuer = claims.get("iss", "")
+                expected_issuer = self._normalize_domain(domain)
+                if self._normalize_issuer(token_issuer) != self._normalize_issuer(expected_issuer):
+                    raise BackchannelLogoutError(
+                        f"Logout token issuer mismatch. Token issuer: {token_issuer}, Expected: {expected_issuer}. "
+                        f"Ensure your Auth0 domain is configured correctly."
+                    )
+            except ValueError as e:
+                raise BackchannelLogoutError(str(e))
+            except jwt.InvalidSignatureError as e:
+                raise BackchannelLogoutError(
+                    f"Logout token signature verification failed: {str(e)}"
+                )
+            except jwt.InvalidTokenError as e:
+                raise BackchannelLogoutError(
+                    f"Logout token verification failed: {str(e)}"
+                )
 
             # Validate the token is a logout token
             events = claims.get("events", {})
@@ -467,9 +870,14 @@ class ServerClient(Generic[TStoreOptions]):
                 sid=claims.get("sid")
             )
 
-            await self._state_store.delete_by_logout_token(logout_claims.dict(), store_options)
+            # In resolver mode, include iss for issuer-scoped deletion
+            claims_dict = logout_claims.dict()
+            if self._domain_resolver:
+                claims_dict["iss"] = claims.get("iss")
 
-        except (jwt.JoseError, ValidationError) as e:
+            await self._state_store.delete_by_logout_token(claims_dict, store_options)
+
+        except (jwt.PyJWTError, ValidationError) as e:
             raise BackchannelLogoutError(
                 f"Error processing logout token: {str(e)}")
 
@@ -500,6 +908,27 @@ class ServerClient(Generic[TStoreOptions]):
         """
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
+        # Domain check should work for both Pydantic models and plain dicts
+        if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
+            state_data_dict = state_data.dict()
+        else:
+            state_data_dict = state_data or {}
+
+        # In resolver mode, reject sessions without domain or with mismatched domain
+        if state_data and self._domain_resolver:
+            session_domain = state_data_dict.get('domain')
+            if not session_domain:
+                raise AccessTokenError(
+                    AccessTokenErrorCode.MISSING_SESSION_DOMAIN,
+                    "Session is missing domain. User needs to re-authenticate."
+                )
+            current_domain = await self._resolve_current_domain(store_options)
+            if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
+                raise AccessTokenError(
+                    AccessTokenErrorCode.DOMAIN_MISMATCH,
+                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                )
+
         auth_params = self._default_authorization_params or {}
 
         # Get audience passed in on options or use defaults
@@ -507,11 +936,6 @@ class ServerClient(Generic[TStoreOptions]):
             audience = auth_params.get("audience", None)
 
         merged_scope = self._merge_scope_with_defaults(scope, audience)
-
-        if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
-            state_data_dict = state_data.dict()
-        else:
-            state_data_dict = state_data or {}
 
         # Find matching token set
         token_set = None
@@ -531,7 +955,12 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Get new token with refresh token
         try:
-            get_refresh_token_options = {"refresh_token": state_data_dict["refresh_token"]}
+            # Use session's domain for token refresh
+            session_domain = state_data_dict.get("domain") or self._domain
+            get_refresh_token_options = {
+                "refresh_token": state_data_dict["refresh_token"],
+                "domain": session_domain
+            }
             if audience:
                 get_refresh_token_options["audience"] = audience
 
@@ -557,6 +986,7 @@ class ServerClient(Generic[TStoreOptions]):
                 f"Failed to get token with refresh token: {str(e)}"
             )
 
+
     async def get_token_by_refresh_token(self, options: dict[str, Any]) -> dict[str, Any]:
         """
         Retrieves a token by exchanging a refresh token.
@@ -576,11 +1006,13 @@ class ServerClient(Generic[TStoreOptions]):
             raise MissingRequiredArgumentError("refresh_token")
 
         try:
-            # Ensure we have the OIDC metadata
-            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
-                self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+            # Use session domain if provided, otherwise fallback to static domain
+            domain = options.get("domain") or self._domain
 
-            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            # Fetch OIDC metadata from the correct domain
+            metadata = await self._get_oidc_metadata_cached(domain)
+
+            token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -717,7 +1149,7 @@ class ServerClient(Generic[TStoreOptions]):
             "binding_message": options.get("binding_message"),
             "login_hint": options.get("login_hint"),
             "authorization_params": options.get("authorization_params"),
-        })
+        }, store_options=store_options)
 
         existing_state_data = await self._state_store.get(self._state_identifier, store_options)
 
@@ -730,6 +1162,10 @@ class ServerClient(Generic[TStoreOptions]):
             token_endpoint_response
         )
 
+        # Store domain for MCD session
+        domain = await self._resolve_current_domain(store_options)
+        state_data["domain"] = domain
+
         await self._state_store.set(self._state_identifier, state_data, store_options)
 
         result = {
@@ -739,7 +1175,8 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def backchannel_authentication(
         self,
-        options: dict[str, Any]
+        options: dict[str, Any],
+        store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
         Performs backchannel authentication with Auth0.
@@ -764,7 +1201,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             ApiError: If the backchannel authentication fails
         """
-        backchannel_data = await self.initiate_backchannel_authentication(options)
+        backchannel_data = await self.initiate_backchannel_authentication(options, store_options=store_options)
         auth_req_id = backchannel_data.get("auth_req_id")
         expires_in = backchannel_data.get(
             "expires_in", 120)  # Default to 2 minutes
@@ -778,7 +1215,7 @@ class ServerClient(Generic[TStoreOptions]):
         while time.time() < end_time:
             # Make token request
             try:
-                token_response = await self.backchannel_authentication_grant(auth_req_id)
+                token_response = await self.backchannel_authentication_grant(auth_req_id, store_options=store_options)
                 return token_response
 
             except Exception as e:
@@ -803,7 +1240,8 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def initiate_backchannel_authentication(
             self,
-            options: dict[str, Any]
+            options: dict[str, Any],
+            store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
         Start backchannel authentication with Auth0.
@@ -856,16 +1294,16 @@ class ServerClient(Generic[TStoreOptions]):
                     )
 
         try:
-            # Fetch OpenID Connect metadata if not already fetched
-            if not hasattr(self, '_oauth_metadata'):
-                self._oauth_metadata = await self._fetch_oidc_metadata(self._domain)
+            # Resolve domain
+            domain = await self._resolve_current_domain(store_options)
+            metadata = await self._get_oidc_metadata_cached(domain)
 
             # Get the issuer from metadata
-            issuer = self._oauth_metadata.get(
-                "issuer") or f"https://{self._domain}/"
+            issuer = metadata.get(
+                "issuer") or f"https://{domain}/"
 
             # Get backchannel authentication endpoint
-            backchannel_endpoint = self._oauth_metadata.get(
+            backchannel_endpoint = metadata.get(
                 "backchannel_authentication_endpoint")
             if not backchannel_endpoint:
                 raise ApiError(
@@ -934,12 +1372,17 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
-    async def backchannel_authentication_grant(self, auth_req_id: str) -> dict[str, Any]:
+    async def backchannel_authentication_grant(
+        self,
+        auth_req_id: str,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
         """
         Retrieves a token by exchanging an auth_req_id.
 
         Args:
             auth_req_id (str): The authentication request ID obtained from bc-authorize
+            store_options: Optional options used to pass to the Transaction and State Store.
 
         Raises:
             AccessTokenError: If there was an issue requesting the access token.
@@ -951,11 +1394,11 @@ class ServerClient(Generic[TStoreOptions]):
             raise MissingRequiredArgumentError("auth_req_id")
 
         try:
-            # Ensure we have the OIDC metadata
-            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
-                self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+            # Resolve domain (supports MCD mode)
+            domain = await self._resolve_current_domain(store_options)
+            metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -1039,6 +1482,26 @@ class ServerClient(Generic[TStoreOptions]):
                 "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
             )
 
+        # Resolve domain for MCD
+        origin_domain = await self._resolve_current_domain(store_options)
+
+        # In resolver mode, reject sessions without domain or with mismatched domain
+        if self._domain_resolver:
+            if hasattr(state_data, "dict") and callable(state_data.dict):
+                state_data = state_data.dict()
+            session_domain = state_data.get('domain')
+            if not session_domain:
+                raise StartLinkUserError(
+                    "Session is missing domain. User needs to re-authenticate."
+                )
+            if self._normalize_issuer(session_domain) != self._normalize_issuer(origin_domain):
+                raise StartLinkUserError(
+                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                )
+
+        metadata = await self._get_oidc_metadata_cached(origin_domain)
+        origin_issuer = metadata.get('issuer')
+
         # Generate PKCE and state for security
         code_verifier = PKCE.generate_code_verifier()
         state = PKCE.generate_random_string(32)
@@ -1050,13 +1513,16 @@ class ServerClient(Generic[TStoreOptions]):
             id_token=state_data["id_token"],
             code_verifier=code_verifier,
             state=state,
-            authorization_params=options.get("authorization_params")
+            authorization_params=options.get("authorization_params"),
+            domain=origin_domain
         )
 
         # Store transaction data
         transaction_data = TransactionData(
             code_verifier=code_verifier,
-            app_state=options.get("app_state")
+            app_state=options.get("app_state"),
+            origin_domain=origin_domain,
+            origin_issuer=origin_issuer,
         )
 
         await self._transaction_store.set(
@@ -1113,6 +1579,26 @@ class ServerClient(Generic[TStoreOptions]):
                 "Unable to start the user linking process without a logged in user. Ensure to login using the SDK before starting the user linking process."
             )
 
+        # Resolve domain for MCD
+        origin_domain = await self._resolve_current_domain(store_options)
+
+        # In resolver mode, reject sessions without domain or with mismatched domain
+        if self._domain_resolver:
+            if hasattr(state_data, "dict") and callable(state_data.dict):
+                state_data = state_data.dict()
+            session_domain = state_data.get('domain')
+            if not session_domain:
+                raise StartLinkUserError(
+                    "Session is missing domain. User needs to re-authenticate."
+                )
+            if self._normalize_issuer(session_domain) != self._normalize_issuer(origin_domain):
+                raise StartLinkUserError(
+                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                )
+
+        metadata = await self._get_oidc_metadata_cached(origin_domain)
+        origin_issuer = metadata.get('issuer')
+
         # Generate PKCE and state for security
         code_verifier = PKCE.generate_code_verifier()
         state = PKCE.generate_random_string(32)
@@ -1123,13 +1609,16 @@ class ServerClient(Generic[TStoreOptions]):
             id_token=state_data["id_token"],
             code_verifier=code_verifier,
             state=state,
-            authorization_params=options.get("authorization_params")
+            authorization_params=options.get("authorization_params"),
+            domain=origin_domain
         )
 
         # Store transaction data
         transaction_data = TransactionData(
             code_verifier=code_verifier,
-            app_state=options.get("app_state")
+            app_state=options.get("app_state"),
+            origin_domain=origin_domain,
+            origin_issuer=origin_issuer,
         )
 
         await self._transaction_store.set(
@@ -1171,19 +1660,20 @@ class ServerClient(Generic[TStoreOptions]):
         code_verifier: str,
         state: str,
         connection_scope: Optional[str] = None,
-        authorization_params: Optional[dict[str, Any]] = None
+        authorization_params: Optional[dict[str, Any]] = None,
+        domain: Optional[str] = None
     ) -> str:
-        """Helper: Builds the authorization URL for linking user accounts."""
+        """Build a URL for linking user accounts"""
         # Generate code challenge from verifier
         code_challenge = PKCE.generate_code_challenge(code_verifier)
 
-        # Get metadata if not already fetched
-        if not hasattr(self, '_oauth_metadata'):
-            self._oauth_metadata = await self._fetch_oidc_metadata(self._domain)
+        # Use provided domain or fall back to static domain
+        resolved_domain = domain or self._domain
+        metadata = await self._get_oidc_metadata_cached(resolved_domain)
 
         # Get authorization endpoint
-        auth_endpoint = self._oauth_metadata.get("authorization_endpoint",
-                                                 f"https://{self._domain}/authorize")
+        auth_endpoint = metadata.get("authorization_endpoint",
+                                     f"https://{resolved_domain}/authorize")
 
         # Build params
         params = {
@@ -1214,19 +1704,20 @@ class ServerClient(Generic[TStoreOptions]):
         id_token: str,
         code_verifier: str,
         state: str,
-        authorization_params: Optional[dict[str, Any]] = None
+        authorization_params: Optional[dict[str, Any]] = None,
+        domain: Optional[str] = None
     ) -> str:
-        """Helper: Builds the authorization URL for unlinking user accounts."""
+        """Build a URL for unlinking user accounts"""
         # Generate code challenge from verifier
         code_challenge = PKCE.generate_code_challenge(code_verifier)
 
-        # Get metadata if not already fetched
-        if not hasattr(self, '_oauth_metadata'):
-            self._oauth_metadata = await self._fetch_oidc_metadata(self._domain)
+        # Use provided domain or fall back to static domain
+        resolved_domain = domain or self._domain
+        metadata = await self._get_oidc_metadata_cached(resolved_domain)
 
         # Get authorization endpoint
-        auth_endpoint = self._oauth_metadata.get("authorization_endpoint",
-                                                 f"https://{self._domain}/authorize")
+        auth_endpoint = metadata.get("authorization_endpoint",
+                                     f"https://{resolved_domain}/authorize")
 
         # Build params
         params = {
@@ -1283,6 +1774,21 @@ class ServerClient(Generic[TStoreOptions]):
         else:
             state_data_dict = state_data or {}
 
+        # In resolver mode, reject sessions without domain or with mismatched domain
+        if self._domain_resolver:
+            session_domain = state_data_dict.get("domain")
+            if not session_domain:
+                raise AccessTokenForConnectionError(
+                    AccessTokenForConnectionErrorCode.MISSING_SESSION_DOMAIN,
+                    "Session is missing domain. User needs to re-authenticate."
+                )
+            current_domain = await self._resolve_current_domain(store_options)
+            if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
+                raise AccessTokenForConnectionError(
+                    AccessTokenForConnectionErrorCode.DOMAIN_MISMATCH,
+                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                )
+
         # Find existing connection token
         connection_token_set = None
         if state_data_dict and len(state_data_dict["connection_token_sets"]) > 0:
@@ -1302,10 +1808,13 @@ class ServerClient(Generic[TStoreOptions]):
                 "A refresh token was not found but is required to be able to retrieve an access token for a connection."
             )
         # Get new token for connection
+        # Use session's domain for token exchange
+        session_domain = state_data_dict.get("domain") or self._domain
         token_endpoint_response = await self.get_token_for_connection({
             "connection": options.get("connection"),
             "login_hint": options.get("login_hint"),
-            "refresh_token": state_data_dict["refresh_token"]
+            "refresh_token": state_data_dict["refresh_token"],
+            "domain": session_domain
         })
 
         # Update state data with new token
@@ -1337,11 +1846,13 @@ class ServerClient(Generic[TStoreOptions]):
         REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "http://auth0.com/oauth/token-type/federated-connection-access-token"
         GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"
         try:
-            # Ensure we have OIDC metadata
-            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
-                self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+            # Use session domain if provided, otherwise fallback to static domain
+            domain = options.get("domain") or self._domain
 
-            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            # Fetch OIDC metadata from the correct domain
+            metadata = await self._get_oidc_metadata_cached(domain)
+
+            token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -1635,7 +2146,8 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def custom_token_exchange(
         self,
-        options: CustomTokenExchangeOptions
+        options: CustomTokenExchangeOptions,
+        store_options: Optional[dict[str, Any]] = None
     ) -> TokenExchangeResponse:
         """
         Exchanges a custom token for Auth0 tokens using RFC 8693.
@@ -1645,6 +2157,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Args:
             options: Configuration for the token exchange
+            store_options: Optional options used to pass to the Transaction and State Store.
 
         Returns:
             TokenExchangeResponse containing access_token and metadata
@@ -1674,11 +2187,11 @@ class ServerClient(Generic[TStoreOptions]):
             if not isinstance(options, CustomTokenExchangeOptions):
                 options = CustomTokenExchangeOptions(**options)
 
-            # Ensure we have OIDC metadata
-            if not hasattr(self._oauth, "metadata") or not self._oauth.metadata:
-                self._oauth.metadata = await self._fetch_oidc_metadata(self._domain)
+            # Resolve domain
+            domain = await self._resolve_current_domain(store_options)
+            metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = self._oauth.metadata.get("token_endpoint")
+            token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
                 raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
 
@@ -1804,7 +2317,7 @@ class ServerClient(Generic[TStoreOptions]):
                 authorization_params=options.authorization_params
             )
 
-            token_response = await self.custom_token_exchange(exchange_options)
+            token_response = await self.custom_token_exchange(exchange_options, store_options=store_options)
 
             # Extract user claims from ID token if present
             user_claims = None
@@ -1826,12 +2339,16 @@ class ServerClient(Generic[TStoreOptions]):
                 expires_at=int(time.time()) + token_response.expires_in
             )
 
+            # Resolve domain for session storage
+            domain = await self._resolve_current_domain(store_options)
+
             # Construct state data
             state_data = StateData(
                 user=user_claims,
                 id_token=token_response.id_token,
                 refresh_token=token_response.refresh_token,
                 token_sets=[token_set],
+                domain=domain,
                 internal={
                     "sid": sid,
                     "created_at": int(time.time())
