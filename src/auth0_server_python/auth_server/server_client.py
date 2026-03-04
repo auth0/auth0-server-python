@@ -768,13 +768,22 @@ class ServerClient(Generic[TStoreOptions]):
     ) -> str:
         options = options or LogoutOptions()
 
-        # Delete the session from the state store
-        await self._state_store.delete(self._state_identifier, store_options)
+        if not self._domain_resolver:
+            await self._state_store.delete(self._state_identifier, store_options)
+            domain = self._domain
+        else:
+            # Resolver mode: delete session if domains match
+            domain = await self._resolve_current_domain(store_options)
+            state_data = await self._state_store.get(self._state_identifier, store_options)
 
-        # Resolve domain dynamically for MCD support
-        domain = await self._resolve_current_domain(store_options)
+            if state_data:
+                if hasattr(state_data, "dict") and callable(state_data.dict):
+                    state_data = state_data.dict()
+                session_domain = state_data.get("domain")
+                if session_domain and self._normalize_issuer(session_domain) == self._normalize_issuer(domain):
+                    await self._state_store.delete(self._state_identifier, store_options)
 
-        # Use the URL helper to create the logout URL.
+        # Return logout URL for the current resolved domain
         logout_url = URL.create_logout_url(
             domain, self._client_id, options.return_to)
 
@@ -828,7 +837,7 @@ class ServerClient(Generic[TStoreOptions]):
             jwks = await self._get_jwks_cached(domain)
 
             try:
-                claims = await self._verify_and_decode_jwt(logout_token, jwks)
+                claims = await self._verify_and_decode_jwt(logout_token, jwks, audience=self._client_id)
 
                 # Normalized issuer validation
                 token_issuer = claims.get("iss", "")
@@ -861,7 +870,12 @@ class ServerClient(Generic[TStoreOptions]):
                 sid=claims.get("sid")
             )
 
-            await self._state_store.delete_by_logout_token(logout_claims.dict(), store_options)
+            # In resolver mode, include iss for issuer-scoped deletion
+            claims_dict = logout_claims.dict()
+            if self._domain_resolver:
+                claims_dict["iss"] = claims.get("iss")
+
+            await self._state_store.delete_by_logout_token(claims_dict, store_options)
 
         except (jwt.PyJWTError, ValidationError) as e:
             raise BackchannelLogoutError(
@@ -1473,7 +1487,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         # In resolver mode, reject sessions without domain or with mismatched domain
         if self._domain_resolver:
-            session_domain = state_data.get('domain') if isinstance(state_data, dict) else getattr(state_data, 'domain', None)
+            if hasattr(state_data, "dict") and callable(state_data.dict):
+                state_data = state_data.dict()
+            session_domain = state_data.get('domain')
             if not session_domain:
                 raise StartLinkUserError(
                     "Session is missing domain. User needs to re-authenticate."
@@ -1568,7 +1584,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         # In resolver mode, reject sessions without domain or with mismatched domain
         if self._domain_resolver:
-            session_domain = state_data.get('domain') if isinstance(state_data, dict) else getattr(state_data, 'domain', None)
+            if hasattr(state_data, "dict") and callable(state_data.dict):
+                state_data = state_data.dict()
+            session_domain = state_data.get('domain')
             if not session_domain:
                 raise StartLinkUserError(
                     "Session is missing domain. User needs to re-authenticate."

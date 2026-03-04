@@ -1445,7 +1445,7 @@ async def test_handle_backchannel_logout_ok(mocker):
     mock_signing_key = mocker.MagicMock()
     mock_signing_key.key = "mock_pem_key"
     mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
-    mocker.patch("jwt.decode", return_value={
+    mock_jwt_decode = mocker.patch("jwt.decode", return_value={
         "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
         "iss": "https://auth0.local",
         "sub": "user_sub",
@@ -1453,6 +1453,12 @@ async def test_handle_backchannel_logout_ok(mocker):
     })
 
     await client.handle_backchannel_logout("some_logout_token")
+
+    # Verify audience is passed to jwt.decode
+    call_kwargs = mock_jwt_decode.call_args[1]
+    assert call_kwargs["audience"] == "client_id"
+
+    # In static mode, iss should NOT be included
     mock_state_store.delete_by_logout_token.assert_awaited_once_with(
         {"sub": "user_sub", "sid": "session_id_123"},
         None
@@ -1498,7 +1504,7 @@ async def test_backchannel_logout_mcd_known_domain(mocker):
         return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
     )
 
-    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+    mock_verify = mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
         "iss": "https://tenant1.auth0.com/",
         "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
         "sub": "user123",
@@ -1507,8 +1513,14 @@ async def test_backchannel_logout_mcd_known_domain(mocker):
 
     await client.handle_backchannel_logout("some_logout_token")
 
+    # Verify audience is passed to JWT verification
+    mock_verify.assert_awaited_once()
+    call_kwargs = mock_verify.call_args[1]
+    assert call_kwargs["audience"] == "test_client"
+
+    # In resolver mode, iss should be included for issuer-scoped deletion
     mock_state_store.delete_by_logout_token.assert_awaited_once_with(
-        {"sub": "user123", "sid": "session123"},
+        {"sub": "user123", "sid": "session123", "iss": "https://tenant1.auth0.com/"},
         None
     )
 
@@ -4405,6 +4417,7 @@ async def test_logout_uses_current_domain(mocker):
         return current_domain
 
     mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {"domain": current_domain, "user": {"sub": "user1"}}
 
     client = ServerClient(
         domain=domain_resolver,
@@ -4420,6 +4433,8 @@ async def test_logout_uses_current_domain(mocker):
     # Verify logout URL uses current domain
     assert current_domain in logout_url
     assert logout_url.startswith(f"https://{current_domain}")
+    # Verify session was deleted (domains match)
+    mock_state_store.delete.assert_called_once()
 
 
 @pytest.mark.asyncio
