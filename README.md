@@ -145,6 +145,34 @@ print(response.access_token)
 
 For more details and examples, see [examples/CustomTokenExchange.md](examples/CustomTokenExchange.md).
 
+### 5. Multiple Custom Domains (MCD)
+
+For applications that use multiple custom domains on the same Auth0 tenant, pass a domain resolver function instead of a static domain string:
+
+```python
+from auth0_server_python.auth_server.server_client import ServerClient
+from auth0_server_python.auth_types import DomainResolverContext
+
+async def domain_resolver(context: DomainResolverContext) -> str:
+    host = context.request_headers.get('host', '').split(':')[0]
+    domain_map = {
+        "acme.yourapp.com": "acme.auth0.com",
+        "globex.yourapp.com": "globex.auth0.com",
+    }
+    return domain_map.get(host, "default.auth0.com")
+
+auth0 = ServerClient(
+    domain=domain_resolver,  # Callable enables MCD mode
+    client_id='<AUTH0_CLIENT_ID>',
+    client_secret='<AUTH0_CLIENT_SECRET>',
+    secret='<AUTH0_SECRET>',
+)
+```
+
+The SDK handles per-domain OIDC discovery, JWKS fetching, issuer validation, and session isolation automatically. Static string domains continue to work unchanged.
+
+For more details and examples, see [examples/MultipleCustomDomains.md](examples/MultipleCustomDomains.md).
+
 ## Feedback
 
 ### Contributing

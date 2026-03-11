@@ -96,7 +96,8 @@ class StateStore(AbstractDataStore[dict[str, Any]]):
         Delete sessions based on logout token claims.
 
         Args:
-            claims: Claims from the logout token
+            claims: Claims from the logout token (sub, sid, and optionally iss
+                    in MCD mode for issuer-scoped deletion)
             options: Additional operation-specific options
 
         Note:
