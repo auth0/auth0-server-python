@@ -303,17 +303,37 @@ async def domain_resolver(context: DomainResolverContext) -> str:
 
 ## Session Behavior in Resolver Mode
 
-In resolver mode, sessions are bound to the domain that created them. On each request, the SDK compares the session's stored domain against the current resolved domain. If the domain is missing or does not match:
+In resolver mode, sessions are bound to the domain that created them. On each request, the SDK compares the session's stored domain against the current resolved domain. If the domains do not match:
 
 - `get_user()` and `get_session()` return `None`.
-- `get_access_token()` raises `AccessTokenError` (code `MISSING_SESSION_DOMAIN` if the session has no stored domain, `DOMAIN_MISMATCH` if the domains differ).
+- `get_access_token()` raises `AccessTokenError` (code `MISSING_SESSION_DOMAIN` or `DOMAIN_MISMATCH`).
 - `get_access_token_for_connection()` raises `AccessTokenForConnectionError` (same codes as above).
 - `start_link_user()` and `start_unlink_user()` raise `StartLinkUserError`.
 - Token refresh uses the session's stored domain, not the current request domain.
 
-> **Warning:** If you switch from a static domain string to a resolver function, existing sessions that do not include a stored domain are treated as **missing sessions**. The SDK cannot verify which domain originally created the session, so users will need to re-authenticate. New sessions store the resolved domain automatically.
+All domain mismatch errors use the message: **"Session domain does not match the current domain."**
 
 > **Note:** If a login was started before the switch to resolver mode and completes after, the SDK falls back to the current resolved domain for token exchange. The resulting session will store the resolved domain and work normally going forward.
+
+## Legacy Sessions and Migration
+
+When moving from a static domain setup to resolver mode, existing sessions can continue
+to work if the resolver returns the same Auth0 domain that was used for those legacy sessions.
+
+The SDK uses a three-tier fallback to determine the session's domain:
+
+1. **`session.domain`** — new sessions created after MCD was enabled store this field.
+2. **Static domain** — if a static `domain` string was configured, it is used as a fallback.
+3. **User's issuer claim** — the hostname is extracted from the `iss` claim in the user's
+   ID token (e.g., `https://tenant.auth0.com/` yields `tenant.auth0.com`).
+
+This means legacy sessions created before MCD support will still work as long as the
+resolver returns a domain that matches one of the fallback values. In most cases, the
+issuer claim already matches the Auth0 domain, so no re-authentication is needed.
+
+If the resolver returns a different domain that does not match any tier, the SDK treats
+the session as belonging to another domain and the user will need to sign in again. This
+is intentional to keep sessions isolated per domain.
 
 ## Discovery Cache
 

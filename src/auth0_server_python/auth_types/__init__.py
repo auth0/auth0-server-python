@@ -90,8 +90,7 @@ class TransactionData(BaseModel):
     app_state: Optional[Any] = None
     auth_session: Optional[str] = None
     redirect_uri: Optional[str] = None
-    origin_domain: Optional[str] = None
-    origin_issuer: Optional[str] = None
+    domain: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model

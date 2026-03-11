@@ -124,6 +124,19 @@ class InvalidArgumentError(Auth0Error):
         self.argument = argument
 
 
+class IssuerValidationError(Auth0Error):
+    """
+    Error raised when token issuer validation fails.
+    This can happen when the issuer claim in a token does not match
+    the expected issuer for the configured domain.
+    """
+    code = "issuer_validation_error"
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.name = "IssuerValidationError"
+
+
 class BackchannelLogoutError(Auth0Error):
     """
     Error raised during backchannel logout processing.

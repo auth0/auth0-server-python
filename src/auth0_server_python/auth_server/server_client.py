@@ -44,6 +44,7 @@ from auth0_server_python.error import (
     CustomTokenExchangeErrorCode,
     DomainResolverError,
     InvalidArgumentError,
+    IssuerValidationError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     PollingApiError,
@@ -159,43 +160,23 @@ class ServerClient(Generic[TStoreOptions]):
         self._cache_ttl = 600     # 10 mins. TTL
         self._cache_max_entries = 100 # Max 100 domains
 
-    def _normalize_domain(self, domain: str) -> str:
+    def _normalize_url(self, value: str) -> str:
         """
-        Normalize domain for comparison and URL construction.
-        Handles cases with/without https:// scheme.
+        Normalize a URL-like value (domain or issuer) for comparison.
+        Ensures https:// scheme, lowercases, and strips trailing slashes.
         """
-        domain = domain.lower()
-        if domain.startswith('https://'):
-            return domain
-        elif domain.startswith('http://'):
-            return domain.replace('http://', 'https://')
+        if not value:
+            return value
+
+        value = value.lower()
+        if value.startswith('https://'):
+            pass
+        elif value.startswith('http://'):
+            value = value.replace('http://', 'https://')
         else:
-            return f'https://{domain}'
+            value = f'https://{value}'
 
-    def _normalize_issuer(self, issuer: str) -> str:
-        """
-        Normalize issuer URL for comparison.
-
-        Args:
-            issuer: The issuer URL to normalize
-
-        Returns:
-            Normalized issuer URL (lowercase)
-        """
-        if not issuer:
-            return issuer
-
-        # Lowercase first for case-insensitive comparison and scheme detection
-        issuer = issuer.lower()
-
-        # Ensure https:// prefix
-        if issuer.startswith('http://'):
-            issuer = issuer.replace('http://', 'https://', 1)
-        elif not issuer.startswith('https://'):
-            issuer = f'https://{issuer}'
-
-        # Remove trailing slash
-        return issuer.rstrip('/')
+        return value.rstrip('/')
 
     async def _resolve_current_domain(self, store_options=None) -> str:
         """Resolve domain from resolver function or return static domain."""
@@ -212,6 +193,35 @@ class ServerClient(Generic[TStoreOptions]):
                     original_error=e
                 )
         return self._domain
+
+    def _get_session_domain(self, state_data_dict: dict) -> Optional[str]:
+        """
+        Get session domain with 3-tier fallback for backward compatibility.
+
+        Legacy sessions created before MCD support may not have a 'domain' field.
+        Fallback chain matches JS SDK's #getSessionDomain:
+        1. state_data.domain — new sessions have this
+        2. self._domain — static domain (if configured)
+        3. Extract hostname from user.iss — derive from user's issuer claim
+        """
+        domain = state_data_dict.get('domain')
+        if domain:
+            return domain
+
+        if self._domain:
+            return self._domain
+
+        user = state_data_dict.get('user')
+        if isinstance(user, dict):
+            iss = user.get('iss')
+        else:
+            iss = getattr(user, 'iss', None) if user else None
+
+        if iss:
+            parsed = urlparse(iss)
+            return parsed.hostname
+
+        return None
 
     async def _verify_and_decode_jwt(
         self, token: str, jwks: dict, audience: Optional[str] = None
@@ -254,7 +264,7 @@ class ServerClient(Generic[TStoreOptions]):
 
     async def _fetch_oidc_metadata(self, domain: str) -> dict:
         """Fetch OIDC metadata from domain."""
-        normalized_domain = self._normalize_domain(domain)
+        normalized_domain = self._normalize_url(domain)
         metadata_url = f"{normalized_domain}/.well-known/openid-configuration"
         async with httpx.AsyncClient() as client:
             response = await client.get(metadata_url)
@@ -425,7 +435,6 @@ class ServerClient(Generic[TStoreOptions]):
         # Fetch OIDC metadata from resolved domain
         try:
             metadata = await self._get_oidc_metadata_cached(origin_domain)
-            origin_issuer = metadata.get('issuer')
         except Exception as e:
             raise ApiError("metadata_error",
                            "Failed to fetch OIDC metadata", e)
@@ -464,13 +473,12 @@ class ServerClient(Generic[TStoreOptions]):
         merged_scope = self._merge_scope_with_defaults(requested_scope, audience)
         auth_params["scope"] = merged_scope
 
-        # Build the transaction data to store with origin domain and issuer
+        # Build the transaction data to store with domain
         transaction_data = TransactionData(
             code_verifier=code_verifier,
             app_state=options.app_state,
             audience=audience,
-            origin_domain=origin_domain,
-            origin_issuer=origin_issuer,
+            domain=origin_domain,
             redirect_uri=auth_params.get("redirect_uri"),
         )
 
@@ -573,12 +581,12 @@ class ServerClient(Generic[TStoreOptions]):
         if not code:
             raise MissingRequiredArgumentError("code")
 
-        # Get origin domain and issuer from transactiondata, or resolve domain if not present (resolver mode)
-        origin_domain = transaction_data.origin_domain or await self._resolve_current_domain(store_options)
-        origin_issuer = transaction_data.origin_issuer
+        # Get domain from transaction, or resolve domain if not present (resolver mode)
+        origin_domain = transaction_data.domain or await self._resolve_current_domain(store_options)
 
-        # Fetch metadata from the origin domain
+        # Fetch metadata and derive issuer from the origin domain
         metadata = await self._get_oidc_metadata_cached(origin_domain)
+        origin_issuer = metadata.get('issuer')
         self._oauth.metadata = metadata
 
         # Exchange the code for tokens
@@ -616,12 +624,8 @@ class ServerClient(Generic[TStoreOptions]):
 
                 # Custom normalized issuer validation
                 token_issuer = claims.get("iss", "")
-                if self._normalize_issuer(token_issuer) != self._normalize_issuer(origin_issuer):
-                    raise ApiError(
-                        "invalid_issuer",
-                        f"ID token issuer mismatch. Token issuer: {token_issuer}, Expected: {origin_issuer}. "
-                        f"Ensure your Auth0 domain is configured correctly."
-                    )
+                if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
+                    raise IssuerValidationError("ID token issuer mismatch. Ensure your Auth0 domain is configured correctly.")
 
                 user_claims = UserClaims.parse_obj(claims)
             except ValueError as e:
@@ -718,13 +722,13 @@ class ServerClient(Generic[TStoreOptions]):
             if hasattr(state_data, "dict") and callable(state_data.dict):
                 state_data = state_data.dict()
 
-            # In resolver mode, reject sessions without domain or with mismatched domain
+            # In resolver mode, reject sessions with mismatched domain
             if self._domain_resolver:
-                session_domain = state_data.get('domain')
+                session_domain = self._get_session_domain(state_data)
                 if not session_domain:
                     return None
                 current_domain = await self._resolve_current_domain(store_options)
-                if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
+                if self._normalize_url(session_domain) != self._normalize_url(current_domain):
                     return None
 
             return state_data.get("user")
@@ -747,13 +751,13 @@ class ServerClient(Generic[TStoreOptions]):
             if hasattr(state_data, "dict") and callable(state_data.dict):
                 state_data = state_data.dict()
 
-            # In resolver mode, reject sessions without domain or with mismatched domain
+            # In resolver mode, reject sessions with mismatched domain
             if self._domain_resolver:
-                session_domain = state_data.get('domain')
+                session_domain = self._get_session_domain(state_data)
                 if not session_domain:
                     return None
                 current_domain = await self._resolve_current_domain(store_options)
-                if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
+                if self._normalize_url(session_domain) != self._normalize_url(current_domain):
                     return None
 
             session_data = {k: v for k, v in state_data.items()
@@ -779,8 +783,8 @@ class ServerClient(Generic[TStoreOptions]):
             if state_data:
                 if hasattr(state_data, "dict") and callable(state_data.dict):
                     state_data = state_data.dict()
-                session_domain = state_data.get("domain")
-                if session_domain and self._normalize_issuer(session_domain) == self._normalize_issuer(domain):
+                session_domain = self._get_session_domain(state_data)
+                if session_domain and self._normalize_url(session_domain) == self._normalize_url(domain):
                     await self._state_store.delete(self._state_identifier, store_options)
 
         # Return logout URL for the current resolved domain
@@ -841,11 +845,9 @@ class ServerClient(Generic[TStoreOptions]):
 
                 # Normalized issuer validation
                 token_issuer = claims.get("iss", "")
-                expected_issuer = self._normalize_domain(domain)
-                if self._normalize_issuer(token_issuer) != self._normalize_issuer(expected_issuer):
-                    raise BackchannelLogoutError(
-                        f"Logout token issuer mismatch. Token issuer: {token_issuer}, Expected: {expected_issuer}. "
-                        f"Ensure your Auth0 domain is configured correctly."
+                expected_issuer = self._normalize_url(domain)
+                if self._normalize_url(token_issuer) != self._normalize_url(expected_issuer):
+                    raise IssuerValidationError("Logout token issuer mismatch.Ensure your Auth0 domain is configured correctly."
                     )
             except ValueError as e:
                 raise BackchannelLogoutError(str(e))
@@ -914,19 +916,19 @@ class ServerClient(Generic[TStoreOptions]):
         else:
             state_data_dict = state_data or {}
 
-        # In resolver mode, reject sessions without domain or with mismatched domain
+        # In resolver mode, reject sessions with mismatched domain
         if state_data and self._domain_resolver:
-            session_domain = state_data_dict.get('domain')
+            session_domain = self._get_session_domain(state_data_dict)
             if not session_domain:
                 raise AccessTokenError(
                     AccessTokenErrorCode.MISSING_SESSION_DOMAIN,
-                    "Session is missing domain. User needs to re-authenticate."
+                    "Session domain does not match the current domain."
                 )
             current_domain = await self._resolve_current_domain(store_options)
-            if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
+            if self._normalize_url(session_domain) != self._normalize_url(current_domain):
                 raise AccessTokenError(
                     AccessTokenErrorCode.DOMAIN_MISMATCH,
-                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                    "Session domain does not match the current domain."
                 )
 
         auth_params = self._default_authorization_params or {}
@@ -1485,22 +1487,19 @@ class ServerClient(Generic[TStoreOptions]):
         # Resolve domain for MCD
         origin_domain = await self._resolve_current_domain(store_options)
 
-        # In resolver mode, reject sessions without domain or with mismatched domain
+        # In resolver mode, reject sessions with mismatched domain
         if self._domain_resolver:
             if hasattr(state_data, "dict") and callable(state_data.dict):
                 state_data = state_data.dict()
-            session_domain = state_data.get('domain')
+            session_domain = self._get_session_domain(state_data)
             if not session_domain:
                 raise StartLinkUserError(
-                    "Session is missing domain. User needs to re-authenticate."
+                    "Session domain does not match the current domain."
                 )
-            if self._normalize_issuer(session_domain) != self._normalize_issuer(origin_domain):
+            if self._normalize_url(session_domain) != self._normalize_url(origin_domain):
                 raise StartLinkUserError(
-                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                    "Session domain does not match the current domain."
                 )
-
-        metadata = await self._get_oidc_metadata_cached(origin_domain)
-        origin_issuer = metadata.get('issuer')
 
         # Generate PKCE and state for security
         code_verifier = PKCE.generate_code_verifier()
@@ -1521,8 +1520,7 @@ class ServerClient(Generic[TStoreOptions]):
         transaction_data = TransactionData(
             code_verifier=code_verifier,
             app_state=options.get("app_state"),
-            origin_domain=origin_domain,
-            origin_issuer=origin_issuer,
+            domain=origin_domain,
         )
 
         await self._transaction_store.set(
@@ -1582,22 +1580,19 @@ class ServerClient(Generic[TStoreOptions]):
         # Resolve domain for MCD
         origin_domain = await self._resolve_current_domain(store_options)
 
-        # In resolver mode, reject sessions without domain or with mismatched domain
+        # In resolver mode, reject sessions with mismatched domain
         if self._domain_resolver:
             if hasattr(state_data, "dict") and callable(state_data.dict):
                 state_data = state_data.dict()
-            session_domain = state_data.get('domain')
+            session_domain = self._get_session_domain(state_data)
             if not session_domain:
                 raise StartLinkUserError(
-                    "Session is missing domain. User needs to re-authenticate."
+                    "Session domain does not match the current domain."
                 )
-            if self._normalize_issuer(session_domain) != self._normalize_issuer(origin_domain):
+            if self._normalize_url(session_domain) != self._normalize_url(origin_domain):
                 raise StartLinkUserError(
-                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                    "Session domain does not match the current domain."
                 )
-
-        metadata = await self._get_oidc_metadata_cached(origin_domain)
-        origin_issuer = metadata.get('issuer')
 
         # Generate PKCE and state for security
         code_verifier = PKCE.generate_code_verifier()
@@ -1617,8 +1612,7 @@ class ServerClient(Generic[TStoreOptions]):
         transaction_data = TransactionData(
             code_verifier=code_verifier,
             app_state=options.get("app_state"),
-            origin_domain=origin_domain,
-            origin_issuer=origin_issuer,
+            domain=origin_domain,
         )
 
         await self._transaction_store.set(
@@ -1774,19 +1768,19 @@ class ServerClient(Generic[TStoreOptions]):
         else:
             state_data_dict = state_data or {}
 
-        # In resolver mode, reject sessions without domain or with mismatched domain
+        # In resolver mode, reject sessions with mismatched domain
         if self._domain_resolver:
-            session_domain = state_data_dict.get("domain")
+            session_domain = self._get_session_domain(state_data_dict)
             if not session_domain:
                 raise AccessTokenForConnectionError(
                     AccessTokenForConnectionErrorCode.MISSING_SESSION_DOMAIN,
-                    "Session is missing domain. User needs to re-authenticate."
+                    "Session domain does not match the current domain."
                 )
             current_domain = await self._resolve_current_domain(store_options)
-            if self._normalize_issuer(session_domain) != self._normalize_issuer(current_domain):
+            if self._normalize_url(session_domain) != self._normalize_url(current_domain):
                 raise AccessTokenForConnectionError(
                     AccessTokenForConnectionErrorCode.DOMAIN_MISMATCH,
-                    "Session domain mismatch. User needs to re-authenticate with the current domain."
+                    "Session domain does not match the current domain."
                 )
 
         # Find existing connection token

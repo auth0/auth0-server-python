@@ -35,6 +35,7 @@ from auth0_server_python.error import (
     CustomTokenExchangeErrorCode,
     DomainResolverError,
     InvalidArgumentError,
+    IssuerValidationError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     PollingApiError,
@@ -140,12 +141,11 @@ async def test_complete_interactive_login_no_transaction():
 @pytest.mark.asyncio
 async def test_complete_interactive_login_returns_app_state(mocker):
     mock_tx_store = AsyncMock()
-    # The stored transaction includes an appState with origin_domain and origin_issuer
+    # The stored transaction includes an appState with domain
     mock_tx_store.get.return_value = TransactionData(
         code_verifier="123",
         app_state={"foo": "bar"},
-        origin_domain="auth0.local",
-        origin_issuer="https://auth0.local/"
+        domain="auth0.local",
     )
 
     mock_state_store = AsyncMock()
@@ -254,8 +254,8 @@ async def test_complete_link_user_returns_app_state(mocker):
 
 
 @pytest.mark.asyncio
-async def test_start_link_user_stores_origin_domain_in_mcd(mocker):
-    """Test that start_link_user stores origin_domain in transaction in MCD mode."""
+async def test_start_link_user_stores_domain_in_mcd(mocker):
+    """Test that start_link_user stores domain in transaction in MCD mode."""
     async def domain_resolver(context):
         return "tenant1.auth0.com"
 
@@ -296,13 +296,12 @@ async def test_start_link_user_stores_origin_domain_in_mcd(mocker):
     )
 
     assert captured_transaction is not None
-    assert captured_transaction.origin_domain == "tenant1.auth0.com"
-    assert captured_transaction.origin_issuer == "https://tenant1.auth0.com/"
+    assert captured_transaction.domain == "tenant1.auth0.com"
 
 
 @pytest.mark.asyncio
-async def test_start_unlink_user_stores_origin_domain_in_mcd(mocker):
-    """Test that start_unlink_user stores origin_domain in transaction in MCD mode."""
+async def test_start_unlink_user_stores_domain_in_mcd(mocker):
+    """Test that start_unlink_user stores domain in transaction in MCD mode."""
     async def domain_resolver(context):
         return "tenant1.auth0.com"
 
@@ -343,8 +342,7 @@ async def test_start_unlink_user_stores_origin_domain_in_mcd(mocker):
     )
 
     assert captured_transaction is not None
-    assert captured_transaction.origin_domain == "tenant1.auth0.com"
-    assert captured_transaction.origin_issuer == "https://tenant1.auth0.com/"
+    assert captured_transaction.domain == "tenant1.auth0.com"
 
 
 @pytest.mark.asyncio
@@ -3835,8 +3833,7 @@ async def test_complete_login_issuer_validation_success(mocker):
     mock_tx_store = AsyncMock()
     mock_tx_store.get.return_value = TransactionData(
         code_verifier="123",
-        origin_domain="tenant.auth0.com",
-        origin_issuer="https://tenant.auth0.com/"
+        domain="tenant.auth0.com",
     )
 
     mock_state_store = AsyncMock()
@@ -3884,7 +3881,7 @@ async def test_complete_login_issuer_validation_success(mocker):
     # Mock jwt.decode with valid issuer
     mocker.patch("jwt.decode", return_value={
         "sub": "user123",
-        "iss": "https://tenant.auth0.com/",  # Matches origin_issuer
+        "iss": "https://tenant.auth0.com/",  # Matches metadata issuer
         "aud": "test_client"
     })
 
@@ -3897,12 +3894,11 @@ async def test_complete_login_issuer_validation_success(mocker):
 
 @pytest.mark.asyncio
 async def test_complete_login_issuer_mismatch_raises_error(mocker):
-    """Test that issuer mismatch in ID token raises ApiError."""
+    """Test that issuer mismatch in ID token raises IssuerValidationError."""
     mock_tx_store = AsyncMock()
     mock_tx_store.get.return_value = TransactionData(
         code_verifier="123",
-        origin_domain="tenant.auth0.com",
-        origin_issuer="https://tenant.auth0.com/"
+        domain="tenant.auth0.com",
     )
 
     mock_state_store = AsyncMock()
@@ -3956,17 +3952,17 @@ async def test_complete_login_issuer_mismatch_raises_error(mocker):
         "exp": 9999999999
     })
 
-    # Should raise ApiError with invalid_issuer code
-    with pytest.raises(ApiError) as exc_info:
+    # Should raise IssuerValidationError
+    with pytest.raises(IssuerValidationError) as exc_info:
         await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
 
-    assert exc_info.value.code == "invalid_issuer"
+    assert exc_info.value.code == "issuer_validation_error"
     assert "issuer mismatch" in str(exc_info.value).lower()
 
 
 @pytest.mark.asyncio
-async def test_normalize_domain_handles_different_schemes():
-    """Test that _normalize_domain handles various URL schemes correctly."""
+async def test_normalize_url_handles_different_schemes():
+    """Test that _normalize_url handles various URL schemes correctly."""
     client = ServerClient(
         domain="tenant.auth0.com",
         client_id="test_client",
@@ -3977,24 +3973,24 @@ async def test_normalize_domain_handles_different_schemes():
     )
 
     # Test domain without scheme
-    assert client._normalize_domain("auth0.com") == "https://auth0.com"
+    assert client._normalize_url("auth0.com") == "https://auth0.com"
 
     # Test domain with https scheme (should remain unchanged)
-    assert client._normalize_domain("https://auth0.com") == "https://auth0.com"
+    assert client._normalize_url("https://auth0.com") == "https://auth0.com"
 
     # Test domain with http scheme (should convert to https)
-    assert client._normalize_domain("http://auth0.com") == "https://auth0.com"
+    assert client._normalize_url("http://auth0.com") == "https://auth0.com"
 
-    # Test domain with trailing slash
-    assert client._normalize_domain("https://auth0.com/") == "https://auth0.com/"
+    # Test domain with trailing slash (should strip it)
+    assert client._normalize_url("https://auth0.com/") == "https://auth0.com"
 
 
 @pytest.mark.asyncio
-async def test_normalize_issuer_handles_edge_cases():
-    """Test that _normalize_issuer handles edge cases for robust issuer comparison.
+async def test_normalize_url_handles_edge_cases():
+    """Test that _normalize_url handles edge cases for robust URL comparison.
 
-    This test documents the edge cases that could cause issuer validation failures
-    with PyJWT's strict string comparison:
+    This test documents the edge cases that could cause validation failures
+    with strict string comparison:
     - Trailing slash differences
     - Case sensitivity
     - HTTP vs HTTPS schemes
@@ -4010,26 +4006,26 @@ async def test_normalize_issuer_handles_edge_cases():
     )
 
     # Test trailing slash normalization
-    assert client._normalize_issuer("https://auth0.com/") == "https://auth0.com"
-    assert client._normalize_issuer("https://auth0.com") == "https://auth0.com"
-    assert client._normalize_issuer("https://auth0.com/") == client._normalize_issuer("https://auth0.com")
+    assert client._normalize_url("https://auth0.com/") == "https://auth0.com"
+    assert client._normalize_url("https://auth0.com") == "https://auth0.com"
+    assert client._normalize_url("https://auth0.com/") == client._normalize_url("https://auth0.com")
 
     # Test case insensitivity
-    assert client._normalize_issuer("HTTPS://AUTH0.COM/") == "https://auth0.com"
-    assert client._normalize_issuer("Https://Auth0.Com") == "https://auth0.com"
-    assert client._normalize_issuer("HTTPS://AUTH0.COM/") == client._normalize_issuer("https://auth0.com")
+    assert client._normalize_url("HTTPS://AUTH0.COM/") == "https://auth0.com"
+    assert client._normalize_url("Https://Auth0.Com") == "https://auth0.com"
+    assert client._normalize_url("HTTPS://AUTH0.COM/") == client._normalize_url("https://auth0.com")
 
     # Test HTTP to HTTPS conversion
-    assert client._normalize_issuer("http://auth0.com") == "https://auth0.com"
-    assert client._normalize_issuer("HTTP://AUTH0.COM/") == "https://auth0.com"
+    assert client._normalize_url("http://auth0.com") == "https://auth0.com"
+    assert client._normalize_url("HTTP://AUTH0.COM/") == "https://auth0.com"
 
     # Test missing scheme
-    assert client._normalize_issuer("auth0.com") == "https://auth0.com"
-    assert client._normalize_issuer("AUTH0.COM/") == "https://auth0.com"
+    assert client._normalize_url("auth0.com") == "https://auth0.com"
+    assert client._normalize_url("AUTH0.COM/") == "https://auth0.com"
 
     # Test empty/None handling
-    assert client._normalize_issuer("") == ""
-    assert client._normalize_issuer(None) is None
+    assert client._normalize_url("") == ""
+    assert client._normalize_url(None) is None
 
 
 # =============================================================================
@@ -4324,13 +4320,12 @@ async def test_resolver_returns_domain_with_scheme_prefix():
 
 
 @pytest.mark.asyncio
-async def test_session_stores_origin_domain(mocker):
-    """Test that session stores origin domain from login (Requirement 5)."""
+async def test_session_stores_domain(mocker):
+    """Test that session stores domain from login (Requirement 5)."""
     mock_tx_store = AsyncMock()
     mock_tx_store.get.return_value = TransactionData(
         code_verifier="123",
-        origin_domain="tenant1.auth0.com",
-        origin_issuer="https://tenant1.auth0.com/"
+        domain="tenant1.auth0.com",
     )
 
     captured_state = None
@@ -4500,8 +4495,7 @@ async def test_domain_migration_new_sessions_use_new_domain(mocker):
     mock_tx_store = AsyncMock()
     mock_tx_store.get.return_value = TransactionData(
         code_verifier="123",
-        origin_domain=new_domain,
-        origin_issuer=f"https://{new_domain}/"
+        domain=new_domain,
     )
 
     captured_state = None
