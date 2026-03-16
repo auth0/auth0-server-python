@@ -22,14 +22,17 @@ The Auth0 MFA API allows you to manage multi-factor authentication for users in 
     - [Enrolling SMS](#enrolling-sms)
     - [Enrolling Voice](#enrolling-voice)
     - [Enrolling Email](#enrolling-email)
+    - [Enrolling Push Notification (Auth0 Guardian)](#enrolling-push-notification-auth0-guardian)
   - [Challenge](#challenge)
     - [Challenge with SMS](#challenge-with-sms)
     - [Challenge with Email](#challenge-with-email)
     - [Challenge with OTP](#challenge-with-otp)
+    - [Challenge with Push Notification](#challenge-with-push-notification)
   - [Verify](#verify)
     - [Verify with OOB (SMS or Email)](#verify-with-oob-sms-or-email)
     - [Verify with OTP](#verify-with-otp)
     - [Verify with Recovery Code](#verify-with-recovery-code)
+    - [Verify with Push Notification (Polling)](#verify-with-push-notification-polling)
   - [Session Persistence](#session-persistence)
     - [Automatic Session Update](#automatic-session-update)
     - [Manual Session Update](#manual-session-update)
@@ -63,7 +66,8 @@ When MFA is required during authentication, the error response contains an `mfa_
     "challenge": [
       { "type": "otp" },
       { "type": "sms" },
-      { "type": "email" }
+      { "type": "email" },
+      { "type": "auth0" }
     ]
   }
 }
@@ -82,7 +86,8 @@ When MFA is required during authentication, the error response contains an `mfa_
     "enroll": [
       { "type": "otp" },
       { "type": "sms" },
-      { "type": "email" }
+      { "type": "email" },
+      { "type": "auth0" }
     ]
   }
 }
@@ -137,10 +142,12 @@ except Exception as error:
 
 Each authenticator is an `AuthenticatorResponse` object with:
 - `id`: Authenticator identifier (e.g., `otp|dev_xxx`)
-- `authenticator_type`: Type of authenticator (`otp`, `sms`, `voice`, `email`)
+- `authenticator_type`: Type of authenticator (`otp`, `oob`, `recovery-code`)
 - `created_at`: Creation timestamp
 - `active`: Boolean indicating if authenticator is active
-- `oob_channels`: For OOB authenticators, the channels used (`sms`, `voice`, `email`)
+- `oob_channel`: For OOB authenticators, the channel used (`sms`, `voice`, `email`, `auth0`)
+- `phone_number`: For SMS/Voice authenticators, the enrolled phone number
+- `last_auth`: Last authentication timestamp (if available)
 
 ## Getting Enrollment Factors
 
@@ -242,6 +249,30 @@ except Exception as error:
     print(f"Email enrollment failed: {error}")
 ```
 
+### Enrolling Push Notification (Auth0 Guardian)
+
+Enroll a push notification authenticator using Auth0 Guardian:
+
+```python
+try:
+    enrollment = await server_client.mfa.enroll_authenticator({
+        "mfa_token": mfa_token,
+        "factor_type": "auth0"
+    })
+    
+    # Display Guardian QR code to user — they scan it with the Auth0 Guardian app
+    print(f"QR Code URI: {enrollment.barcode_uri}")  # otpauth://... for Guardian app
+    print(f"OOB Code: {enrollment.oob_code}")  # Used for polling verification status
+    
+    # After user scans the QR code, poll for approval (see Verify with Push Notification)
+    
+except Exception as error:
+    print(f"Push enrollment failed: {error}")
+```
+
+> [!NOTE]
+> The `barcode_uri` is returned in the `OobEnrollmentResponse` and should be rendered as a QR code for the user to scan with the Auth0 Guardian app. After scanning, poll for verification using the `oob_code`.
+
 ## Challenge
 
 After enrolling an authenticator, or when the user has existing authenticators, initiate a challenge:
@@ -300,6 +331,27 @@ except Exception as error:
     print(f"Challenge failed: {error}")
 ```
 
+### Challenge with Push Notification
+
+```python
+try:
+    challenge = await server_client.mfa.challenge_authenticator({
+        "mfa_token": mfa_token,
+        "factor_type": "auth0",
+        "authenticator_id": "auth0|dev_xxx"
+    })
+    
+    print(f"OOB Code: {challenge.oob_code}")
+    print(f"Challenge Expires In: {challenge.expires_in} seconds")
+    print("Push notification sent to user's device — poll for approval")
+    
+except Exception as error:
+    print(f"Challenge failed: {error}")
+```
+
+> [!NOTE]
+> Push notification challenges do not require a `binding_code` from the user. Instead, the user approves the notification on their device, and you poll the verify endpoint to check if they have approved.
+
 ## Verify
 
 Complete MFA verification with the challenge response:
@@ -320,6 +372,11 @@ try:
     access_token = verify_response.access_token
     id_token = verify_response.id_token
     
+    # Check for recovery code (returned on first-time enrollment)
+    if verify_response.recovery_code:
+        print(f"Recovery Code: {verify_response.recovery_code}")
+        print("Save this recovery code securely — it will only be shown once!")
+    
     print(f"MFA verification successful!")
     print(f"Access Token: {access_token}")
     print(f"ID Token: {id_token}")
@@ -331,6 +388,9 @@ except Exception as error:
 
 > [!NOTE]
 > Setting `persist=True` automatically updates the session store with the new tokens, similar to nextjs-auth0 and auth0-spa-js SDKs. This eliminates the need for manual token management after MFA verification.
+
+> [!TIP]
+> The `verify()` response may include a `recovery_code` field. This is returned when a user completes their first MFA enrollment, or when they verify using a recovery code (a new one is generated to replace the used code). Always check for this field and display it to the user.
 
 ### Verify with OTP
 
@@ -368,12 +428,66 @@ try:
     
     access_token = verify_response.access_token
     
+    # A new recovery code is generated after using one
+    if verify_response.recovery_code:
+        print(f"New Recovery Code: {verify_response.recovery_code}")
+        print("Save this new recovery code — the old one has been invalidated!")
+    
     print("MFA verification successful using recovery code!")
     print("Tokens have been persisted to session store")
     
 except Exception as error:
     print(f"Verification failed: {error}")
 ```
+
+### Verify with Push Notification (Polling)
+
+Push notification verification uses polling — the user approves on their device, and you repeatedly call `verify()` until approval or timeout:
+
+```python
+import asyncio
+
+async def poll_push_verification(server_client, mfa_token, oob_code, timeout=60):
+    """Poll for push notification approval."""
+    elapsed = 0
+    interval = 3  # Poll every 3 seconds
+    
+    while elapsed < timeout:
+        try:
+            verify_response = await server_client.mfa.verify({
+                "mfa_token": mfa_token,
+                "oob_code": oob_code
+                # No binding_code needed for push notifications
+            })
+            
+            # Success — user approved on their device
+            print("Push notification approved!")
+            
+            if verify_response.recovery_code:
+                print(f"Recovery Code: {verify_response.recovery_code}")
+            
+            return verify_response
+            
+        except Exception as error:
+            error_msg = str(error)
+            if "authorization_pending" in error_msg:
+                # User hasn't responded yet — keep polling
+                await asyncio.sleep(interval)
+                elapsed += interval
+            elif "slow_down" in error_msg:
+                # Rate limited — increase interval
+                interval = min(interval + 2, 10)
+                await asyncio.sleep(interval)
+                elapsed += interval
+            else:
+                # Actual error (expired, denied, etc.)
+                raise
+    
+    raise TimeoutError("Push notification timed out")
+```
+
+> [!NOTE]
+> When polling for push notification approval, the API returns an `authorization_pending` error until the user approves or denies the request. A `slow_down` error indicates you should increase the polling interval.
 
 ## Session Persistence
 
@@ -487,10 +601,17 @@ async def handle_mfa_challenge_flow(server_client, mfa_token):
         selected_index = int(input("Selection: ")) - 1
         selected_auth = authenticators[selected_index]
         
+        # Determine the correct factor_type for challenge
+        # OOB authenticators use their oob_channel as the factor_type
+        if selected_auth.authenticator_type == "oob":
+            factor_type = selected_auth.oob_channel  # "sms", "email", "voice", "auth0"
+        else:
+            factor_type = selected_auth.authenticator_type  # "otp", "recovery-code"
+        
         # Initiate challenge
         challenge = await server_client.mfa.challenge_authenticator({
             "mfa_token": mfa_token,
-            "factor_type": selected_auth.authenticator_type,
+            "factor_type": factor_type,
             "authenticator_id": selected_auth.id
         })
         
@@ -504,8 +625,13 @@ async def handle_mfa_challenge_flow(server_client, mfa_token):
                 "audience": "https://api.example.com",
                 "scope": "openid profile email"
             })
+        elif factor_type == "auth0":
+            # Push notification — poll for approval
+            verify_response = await poll_push_verification(
+                server_client, mfa_token, challenge.oob_code
+            )
         else:
-            user_code = input(f"Enter code from {selected_auth.authenticator_type}: ")
+            user_code = input(f"Enter code from {factor_type}: ")
             verify_response = await server_client.mfa.verify({
                 "mfa_token": mfa_token,
                 "oob_code": challenge.oob_code,
