@@ -154,7 +154,7 @@ class MfaClient:
 
         Args:
             options: Dict containing enrollment parameters.
-                Required: 'mfa_token', 'factor_type' (otp, sms, voice, email).
+                Required: 'mfa_token', 'factor_type' (otp, sms, voice, email, auth0).
                 Optional: 'phone_number', 'email'.
 
         Returns:
@@ -171,21 +171,21 @@ class MfaClient:
         if factor_type == "otp":
             authenticator_type = "otp"
             oob_channels = None
-        elif factor_type in ["sms", "voice", "email"]:
+        elif factor_type in ["sms", "voice", "email", "auth0"]:
             authenticator_type = "oob"
             oob_channels = factor_type
         else:
             raise MfaEnrollmentError(
-                f"Unsupported factor_type: {factor_type}. Supported types: otp, sms, voice, email"
+                f"Unsupported factor_type: {factor_type}. Supported types: otp, sms, voice, email, auth0"
             )
 
         # Build API request body
         body: dict[str, Any] = {
-            "authenticator_types": authenticator_type
+            "authenticator_types": [authenticator_type]
         }
 
         if oob_channels:
-            body["oob_channels"] = oob_channels
+            body["oob_channels"] = [oob_channels]
 
         if "phone_number" in options and options["phone_number"]:
             body["phone_number"] = options["phone_number"]
@@ -236,7 +236,7 @@ class MfaClient:
         Initiates an MFA challenge for user verification.
 
         Args:
-            options: Dict containing 'mfa_token', 'factor_type' (otp, sms, voice, email),
+            options: Dict containing 'mfa_token', 'factor_type' (otp, sms, voice, email, auth0),
                 and optionally 'authenticator_id'.
 
         Returns:
@@ -252,16 +252,17 @@ class MfaClient:
         # Map factor_type to Auth0 API challenge_type
         if factor_type == "otp":
             challenge_type = "otp"
-        elif factor_type in ["sms", "voice", "email"]:
+        elif factor_type in ["sms", "voice", "email", "auth0"]:
             challenge_type = "oob"
         else:
             raise MfaChallengeError(
-                f"Unsupported factor_type: {factor_type}. Supported types: otp, sms, voice, email"
+                f"Unsupported factor_type: {factor_type}. Supported types: otp, sms, voice, email, auth0"
             )
 
         body: dict[str, Any] = {
             "mfa_token": mfa_token,
             "client_id": self._client_id,
+            "client_secret": self._client_secret,
             "challenge_type": challenge_type
         }
 
@@ -337,7 +338,8 @@ class MfaClient:
         elif "oob_code" in options:
             body["grant_type"] = "http://auth0.com/oauth/grant-type/mfa-oob"
             body["oob_code"] = options["oob_code"]
-            body["binding_code"] = options.get("binding_code", "")
+            if options.get("binding_code"):
+                body["binding_code"] = options["binding_code"]
         elif "recovery_code" in options:
             body["grant_type"] = "http://auth0.com/oauth/grant-type/mfa-recovery-code"
             body["recovery_code"] = options["recovery_code"]

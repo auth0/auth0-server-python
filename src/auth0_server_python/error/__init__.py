@@ -218,13 +218,6 @@ class MfaEnrollmentError(MfaApiError):
         super().__init__("mfa_enrollment_error", message, cause)
 
 
-class MfaDeleteAuthenticatorError(MfaApiError):
-    """Error thrown when deleting an authenticator fails."""
-
-    def __init__(self, message: str, cause: Optional[dict] = None):
-        super().__init__("mfa_delete_authenticator_error", message, cause)
-
-
 class MfaChallengeError(MfaApiError):
     """Error thrown when initiating an MFA challenge fails."""
 

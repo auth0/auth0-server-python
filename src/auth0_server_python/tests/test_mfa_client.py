@@ -134,7 +134,7 @@ class TestListAuthenticators:
                 "id": "auth|456",
                 "authenticator_type": "oob",
                 "active": True,
-                "oob_channels": ["sms"]
+                "oob_channel": "sms"
             }
         ])
         mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
@@ -143,7 +143,7 @@ class TestListAuthenticators:
         assert len(result) == 2
         assert isinstance(result[0], AuthenticatorResponse)
         assert result[0].id == "auth|123"
-        assert result[1].oob_channels == ["sms"]
+        assert result[1].oob_channel == "sms"
 
     @pytest.mark.asyncio
     async def test_list_authenticators_api_error(self, mocker):

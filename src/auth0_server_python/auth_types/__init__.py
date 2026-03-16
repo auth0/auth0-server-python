@@ -415,8 +415,11 @@ class AuthenticatorResponse(BaseModel):
     authenticator_type: AuthenticatorType
     active: bool
     name: Optional[str] = None
-    oob_channels: Optional[list[OobChannel]] = None
+    oob_channel: Optional[OobChannel] = None
     type: Optional[str] = None
+    phone_number: Optional[str] = None
+    created_at: Optional[str] = None
+    last_auth: Optional[str] = None
 
 
 # Enrollment Options
@@ -462,7 +465,9 @@ class OobEnrollmentResponse(BaseModel):
     authenticator_type: Literal["oob"]
     oob_channel: OobChannel
     oob_code: Optional[str] = None
+    barcode_uri: Optional[str] = None
     binding_method: Optional[str] = None
+    recovery_codes: Optional[list[str]] = None
     id: Optional[str] = None
 
 
@@ -483,18 +488,13 @@ class ChallengeResponse(BaseModel):
     challenge_type: ChallengeType
     oob_code: Optional[str] = None
     binding_method: Optional[str] = None
+    expires_in: Optional[int] = None
 
 
-# List / Delete Options
+# List Options
 
 class ListAuthenticatorsOptions(BaseModel):
     """Options for listing MFA authenticators."""
-    mfa_token: str
-
-
-class DeleteAuthenticatorOptions(BaseModel):
-    """Options for deleting an MFA authenticator."""
-    authenticator_id: str
     mfa_token: str
 
 
