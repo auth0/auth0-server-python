@@ -823,11 +823,6 @@ class ServerClient(Generic[TStoreOptions]):
                         raise BackchannelLogoutError(
                             "Cannot determine domain: logout token has no valid issuer"
                         )
-                    if domain not in self._discovery_cache:
-                        raise BackchannelLogoutError(
-                            f"Unknown domain in logout token issuer: {domain}. "
-                            f"Only domains from active sessions are accepted."
-                        )
                 except BackchannelLogoutError:
                     raise
                 except Exception as e:

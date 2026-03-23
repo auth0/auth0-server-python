@@ -1523,37 +1523,6 @@ async def test_backchannel_logout_mcd_known_domain(mocker):
     )
 
 
-@pytest.mark.asyncio
-async def test_backchannel_logout_mcd_unknown_domain_rejected(mocker):
-    """Test that backchannel logout rejects unknown domains in MCD mode (SSRF protection)."""
-    async def domain_resolver(context):
-        return "tenant1.auth0.com"
-
-    client = ServerClient(
-        domain=domain_resolver,
-        client_id="test_client",
-        client_secret="test_secret",
-        state_store=AsyncMock(),
-        secret="test_secret_key_32_chars_long!!",
-    )
-
-    # Discovery cache is empty — no prior logins
-    assert len(client._discovery_cache) == 0
-
-    # Mock unverified decode — attacker's token has evil issuer
-    mocker.patch("jwt.decode", return_value={
-        "iss": "https://evil.internal.server/",
-        "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
-        "sub": "user123",
-        "sid": "session123"
-    })
-
-    with pytest.raises(BackchannelLogoutError) as exc:
-        await client.handle_backchannel_logout("crafted_logout_token")
-    assert "Unknown domain" in str(exc.value)
-    assert "evil.internal.server" in str(exc.value)
-
-
 # Test For AuthLib Helpers
 
 @pytest.mark.asyncio
