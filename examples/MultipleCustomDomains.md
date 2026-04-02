@@ -2,11 +2,15 @@
 
 MCD lets you resolve the Auth0 domain per request while keeping a single `ServerClient` instance. This is useful when your application uses multiple custom domains configured on the same Auth0 tenant.
 
+> **Important:** MCD supports multiple custom domains on a **single Auth0 tenant**. It does not support connecting to multiple Auth0 tenants from a single application. Each custom domain must belong to the same Auth0 tenant. Using domains from different Auth0 tenants is not supported and will result in authentication failures.
+
 **Example:**
-- `https://acme.yourapp.com` → Custom domain: `auth.acme.com`
-- `https://globex.yourapp.com` → Custom domain: `auth.globex.com`
+- `https://brand-1.yourapp.com` → Custom domain: `login.brand-1.com`
+- `https://brand-2.yourapp.com` → Custom domain: `login.brand-2.com`
 
 MCD is enabled by providing a **domain resolver function** instead of a static domain string.
+
+See [Security Best Practices](#security-best-practices) for important guidance on configuring your resolver safely.
 
 ## Configuration Methods
 
@@ -18,7 +22,7 @@ For applications with a single Auth0 domain:
 from auth0_server_python import ServerClient
 
 client = ServerClient(
-    domain="your-tenant.auth0.com",  # Static string
+    domain="login.yourapp.com",  # Static string
     client_id="your_client_id",
     client_secret="your_client_secret",
     secret="your_encryption_secret"
@@ -33,30 +37,30 @@ For MCD support, provide a domain resolver function that receives a `DomainResol
 from auth0_server_python import ServerClient
 from auth0_server_python.auth_types import DomainResolverContext
 
-# Map your app hostnames to Auth0 domains
+# Map your app hostnames to Auth0 custom domains
 DOMAIN_MAP = {
-    "acme.yourapp.com": "acme.auth0.com",
-    "globex.yourapp.com": "globex.auth0.com",
+    "brand-1.yourapp.com": "login.brand-1.com",
+    "brand-2.yourapp.com": "login.brand-2.com",
 }
-DEFAULT_DOMAIN = "default.auth0.com"
+DEFAULT_DOMAIN = "login.yourapp.com"
 
 async def domain_resolver(context: DomainResolverContext) -> str:
     """
     Resolve Auth0 domain based on request hostname.
-    
+
     Args:
         context: Contains request_url and request_headers
-        
+
     Returns:
-        Auth0 domain string (e.g., "acme.auth0.com")
+        Auth0 domain string (e.g., "login.brand-1.com")
     """
     # Extract hostname from request headers
     if not context.request_headers:
         return DEFAULT_DOMAIN
-    
+
     host = context.request_headers.get('host', DEFAULT_DOMAIN)
     host_without_port = host.split(':')[0]
-    
+
     # Look up Auth0 domain
     return DOMAIN_MAP.get(host_without_port, DEFAULT_DOMAIN)
 
@@ -74,11 +78,11 @@ The `DomainResolverContext` object provides request information to your resolver
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `request_url` | `Optional[str]` | Full request URL (e.g., "https://acme.yourapp.com/auth/login") |
+| `request_url` | `Optional[str]` | Full request URL (e.g., "https://brand-1.yourapp.com/auth/login") |
 | `request_headers` | `Optional[dict[str, str]]` | Request headers dictionary |
 
 **Common headers:**
-- `host`: Request hostname (e.g., "acme.yourapp.com")
+- `host`: Request hostname (e.g., "brand-1.yourapp.com")
 - `x-forwarded-host`: Original host when behind proxy/load balancer
 
 **Example usage:**
@@ -88,14 +92,14 @@ async def domain_resolver(context: DomainResolverContext) -> str:
     # Check if we have request headers
     if not context.request_headers:
         return DEFAULT_DOMAIN
-    
+
     # Use x-forwarded-host if behind proxy, otherwise use host
-    host = (context.request_headers.get('x-forwarded-host') or 
+    host = (context.request_headers.get('x-forwarded-host') or
             context.request_headers.get('host', ''))
-    
+
     # Remove port number if present
     hostname = host.split(':')[0].lower()
-    
+
     # Look up in mapping
     return DOMAIN_MAP.get(hostname, DEFAULT_DOMAIN)
 ```
@@ -132,6 +136,10 @@ explicitly:
 Framework wrappers like `auth0-fastapi` handle this automatically by constructing the
 `redirect_uri` from the incoming request's host and scheme.
 
+> **Note:** In resolver mode, MCD needs an ID token in the callback so the SDK can validate
+> the `iss` claim. The `openid` scope is required to receive an ID token. Ensure `openid` is
+> included in your `authorization_params.scope`.
+
 ## Resolver Patterns
 
 ### Database Lookup (SQLAlchemy)
@@ -146,12 +154,12 @@ engine = create_async_engine("postgresql+asyncpg://user:pass@localhost/mydb")
 
 async def domain_resolver(context: DomainResolverContext) -> str:
     host = context.request_headers.get("host", "").split(":")[0]
-    tenant = host.split(".")[0]
+    subdomain = host.split(".")[0]
 
     async with AsyncSession(engine) as session:
         result = await session.execute(
             text("SELECT auth0_domain FROM tenants WHERE slug = :slug"),
-            {"slug": tenant}
+            {"slug": subdomain}
         )
         row = result.fetchone()
         if row:
@@ -162,20 +170,20 @@ async def domain_resolver(context: DomainResolverContext) -> str:
 
 ### Database Lookup with In-Memory Cache
 
-Avoid hitting the database on every request by caching the tenant map:
+Avoid hitting the database on every request by caching the domain map:
 
 ```python
 import time
 
-_tenant_cache = {}
+_domain_cache = {}
 _cache_ttl = 300  # 5 minutes
 
 async def domain_resolver(context: DomainResolverContext) -> str:
     host = context.request_headers.get("host", "").split(":")[0]
-    tenant = host.split(".")[0]
+    subdomain = host.split(".")[0]
 
     now = time.time()
-    cached = _tenant_cache.get(tenant)
+    cached = _domain_cache.get(subdomain)
     if cached and cached["expires_at"] > now:
         return cached["domain"]
 
@@ -183,18 +191,18 @@ async def domain_resolver(context: DomainResolverContext) -> str:
     async with AsyncSession(engine) as session:
         result = await session.execute(
             text("SELECT auth0_domain FROM tenants WHERE slug = :slug"),
-            {"slug": tenant}
+            {"slug": subdomain}
         )
         row = result.fetchone()
         domain = row[0] if row else DEFAULT_DOMAIN
 
-    _tenant_cache[tenant] = {"domain": domain, "expires_at": now + _cache_ttl}
+    _domain_cache[subdomain] = {"domain": domain, "expires_at": now + _cache_ttl}
     return domain
 ```
 
 ### Redis Lookup
 
-Use Redis for shared tenant configuration across multiple app instances:
+Use Redis for shared domain configuration across multiple app instances:
 
 ```python
 import redis.asyncio as redis
@@ -203,10 +211,10 @@ redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
 
 async def domain_resolver(context: DomainResolverContext) -> str:
     host = context.request_headers.get("host", "").split(":")[0]
-    tenant = host.split(".")[0]
+    subdomain = host.split(".")[0]
 
-    # Key format: "tenant:acme" -> "acme.auth0.com"
-    domain = await redis_client.get(f"tenant:{tenant}")
+    # Key format: "tenant:brand-1" -> "login.brand-1.com"
+    domain = await redis_client.get(f"tenant:{subdomain}")
     if domain:
         return domain
 
@@ -215,15 +223,15 @@ async def domain_resolver(context: DomainResolverContext) -> str:
 
 ### Redis with Hash Map
 
-Store all tenant mappings in a single Redis hash:
+Store all domain mappings in a single Redis hash:
 
 ```python
 async def domain_resolver(context: DomainResolverContext) -> str:
     host = context.request_headers.get("host", "").split(":")[0]
-    tenant = host.split(".")[0]
+    subdomain = host.split(".")[0]
 
-    # All tenants in one hash: HGET tenant_domains acme -> "acme.auth0.com"
-    domain = await redis_client.hget("tenant_domains", tenant)
+    # All domains in one hash: HGET tenant_domains brand-1 -> "login.brand-1.com"
+    domain = await redis_client.hget("tenant_domains", subdomain)
     if domain:
         return domain
 
@@ -232,7 +240,7 @@ async def domain_resolver(context: DomainResolverContext) -> str:
 
 ### Path-Based Resolution
 
-Resolve tenant from URL path instead of hostname:
+Resolve from URL path instead of hostname:
 
 ```python
 from urllib.parse import urlparse
@@ -240,11 +248,11 @@ from urllib.parse import urlparse
 async def domain_resolver(context: DomainResolverContext) -> str:
     if context.request_url:
         path = urlparse(context.request_url).path
-        # URL pattern: /tenant/acme/auth/login
+        # URL pattern: /brand/brand-1/auth/login
         parts = path.strip("/").split("/")
-        if len(parts) >= 2 and parts[0] == "tenant":
-            tenant = parts[1]
-            return DOMAIN_MAP.get(tenant, DEFAULT_DOMAIN)
+        if len(parts) >= 2 and parts[0] == "brand":
+            name = parts[1]
+            return DOMAIN_MAP.get(name, DEFAULT_DOMAIN)
 
     return DEFAULT_DOMAIN
 ```
@@ -257,10 +265,10 @@ Use a custom header set by your API gateway or load balancer:
 async def domain_resolver(context: DomainResolverContext) -> str:
     headers = context.request_headers or {}
 
-    # API gateway sets X-Tenant-Id header
-    tenant_id = headers.get("x-tenant-id")
-    if tenant_id:
-        return DOMAIN_MAP.get(tenant_id, DEFAULT_DOMAIN)
+    # API gateway sets X-Brand-Id header
+    brand_id = headers.get("x-brand-id")
+    if brand_id:
+        return DOMAIN_MAP.get(brand_id, DEFAULT_DOMAIN)
 
     # Fallback to host header
     host = headers.get("host", "").split(":")[0]
@@ -325,7 +333,7 @@ The SDK uses a three-tier fallback to determine the session's domain:
 1. **`session.domain`** — new sessions created after MCD was enabled store this field.
 2. **Static domain** — if a static `domain` string was configured, it is used as a fallback.
 3. **User's issuer claim** — the hostname is extracted from the `iss` claim in the user's
-   ID token (e.g., `https://tenant.auth0.com/` yields `tenant.auth0.com`).
+   ID token (e.g., `https://login.brand-1.com/` yields `login.brand-1.com`).
 
 This means legacy sessions created before MCD support will still work as long as the
 resolver returns a domain that matches one of the fallback values. In most cases, the
@@ -339,7 +347,20 @@ is intentional to keep sessions isolated per domain.
 
 The SDK caches OIDC metadata and JWKS per domain in memory (LRU eviction, 600-second TTL, up to 100 domains). This avoids repeated network calls when serving multiple domains. The cache is shared across all requests to the same `ServerClient` instance.
 
+Most applications can keep the defaults, but you may want to adjust in these cases:
+- Increase `max_entries` if one process handles more than 100 distinct Auth0 domains during the TTL window. This is most common in MCD deployments that work with many custom domains.
+- Decrease `max_entries` if memory usage matters more than avoiding repeated discovery.
+- Increase TTL if the same domains are reused frequently and you want to reduce repeated discovery and JWKS fetches after cache entries expire.
+- Decrease TTL if you want the SDK to pick up Auth0 metadata or signing key changes sooner.
+
+Rule of thumb: set `max_entries` to cover the number of distinct Auth0 domains a single process is expected to use during the TTL window, with some headroom.
+
 ## Security Best Practices
+
+> **The domain resolver is a security-critical component.** A misconfigured resolver can lead to authentication bypass on the relying party (RP) or expose the application to Server-Side Request Forgery (SSRF). The SDK trusts the resolved domain to fetch OIDC metadata and verification keys. It is the customer's responsibility to ensure the resolver cannot be influenced by untrusted input.
+
+**Single Tenant Limitation:**
+The domain resolver is intended solely for multiple custom domains belonging to the same Auth0 tenant. It is not a supported mechanism for connecting multiple Auth0 tenants to a single application.
 
 ### Use an Allowlist in Your Resolver
 
@@ -352,8 +373,8 @@ The SDK uses the resolved domain to fetch OIDC metadata and JWKS. If an attacker
 ```python
 # Safe: allowlist lookup — unknown hosts fall back to default
 DOMAIN_MAP = {
-    "acme.myapp.com": "auth.acme.com",
-    "globex.myapp.com": "auth.globex.com",
+    "brand-1.yourapp.com": "login.brand-1.com",
+    "brand-2.yourapp.com": "login.brand-2.com",
 }
 
 async def domain_resolver(context: DomainResolverContext) -> str:
@@ -365,9 +386,15 @@ async def domain_resolver(context: DomainResolverContext) -> str:
 # Risky: constructs domain from raw input — attacker can influence resolved domain
 async def domain_resolver(context: DomainResolverContext) -> str:
     host = context.request_headers.get("host", "").split(":")[0]
-    tenant = host.split(".")[0]
-    return f"{tenant}.auth0.com"  # attacker sends Host: evil.myapp.com → evil.auth0.com
+    subdomain = host.split(".")[0]
+    return f"login.{subdomain}.com"  # attacker sends Host: evil.yourapp.com → login.evil.com
 ```
+
+### Secure Proxy Requirement
+
+When using Multiple Custom Domains (MCD), your application must be deployed behind a secure reverse proxy (e.g., Cloudflare, Nginx, or AWS ALB). The proxy must be configured to sanitize and overwrite `Host` and `X-Forwarded-Host` headers before they reach your application.
+
+Without a trusted proxy layer to validate these headers, an attacker can manipulate the domain resolution process. This can result in authentication bypass or Server-Side Request Forgery (SSRF).
 
 ### Trust Forwarded Headers Only Behind a Proxy
 

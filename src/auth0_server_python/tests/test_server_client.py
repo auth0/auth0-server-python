@@ -1456,9 +1456,9 @@ async def test_handle_backchannel_logout_ok(mocker):
     call_kwargs = mock_jwt_decode.call_args[1]
     assert call_kwargs["audience"] == "client_id"
 
-    # In static mode, iss should NOT be included
+    # iss is always included in claims for issuer-scoped deletion
     mock_state_store.delete_by_logout_token.assert_awaited_once_with(
-        {"sub": "user_sub", "sid": "session_id_123"},
+        {"sub": "user_sub", "sid": "session_id_123", "iss": "https://auth0.local"},
         None
     )
 
@@ -1521,6 +1521,43 @@ async def test_backchannel_logout_mcd_known_domain(mocker):
         {"sub": "user123", "sid": "session123", "iss": "https://tenant1.auth0.com/"},
         None
     )
+
+
+@pytest.mark.asyncio
+async def test_backchannel_logout_mcd_iss_mismatch(mocker):
+    """Test that backchannel logout rejects token when iss does not match resolved domain."""
+    async def domain_resolver(context):
+        return "tenant1.auth0.com"
+
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain=domain_resolver,
+        client_id="test_client",
+        client_secret="test_secret",
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    # Mock jwt.decode to return a token with a DIFFERENT issuer
+    mocker.patch("jwt.decode", return_value={
+        "iss": "https://attacker.evil.com/",
+        "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
+        "sub": "user123",
+        "sid": "session123"
+    })
+
+    # _verify_and_decode_jwt should NOT be called — rejection happens before signature check
+    mock_verify = mocker.patch.object(client, "_verify_and_decode_jwt")
+
+    with pytest.raises(BackchannelLogoutError, match="Logout token issuer does not match the resolved domain"):
+        await client.handle_backchannel_logout("malicious_logout_token")
+
+    # Signature verification must not have been reached
+    mock_verify.assert_not_awaited()
+
+    # State store must not have been touched
+    mock_state_store.delete_by_logout_token.assert_not_awaited()
 
 
 # Test For AuthLib Helpers

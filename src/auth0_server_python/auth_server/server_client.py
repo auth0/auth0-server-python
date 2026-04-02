@@ -811,24 +811,35 @@ class ServerClient(Generic[TStoreOptions]):
         try:
             # Determine domain for JWKS fetch and issuer validation
             if self._domain_resolver:
+                # Resolve domain from request context
+                resolved_domain = await self._resolve_current_domain(store_options)
+
+                # Read iss from unverified token for comparison
                 try:
                     unverified = jwt.decode(
                         logout_token, algorithms=["RS256"],
                         options={"verify_signature": False}
                     )
                     token_issuer = unverified.get("iss", "")
-                    parsed = urlparse(token_issuer)
-                    domain = parsed.hostname
-                    if not domain:
-                        raise BackchannelLogoutError(
-                            "Cannot determine domain: logout token has no valid issuer"
-                        )
-                except BackchannelLogoutError:
-                    raise
                 except Exception as e:
                     raise BackchannelLogoutError(
-                        f"Failed to extract domain from logout token: {str(e)}"
+                        f"Failed to extract issuer from logout token: {str(e)}"
                     )
+
+                if not token_issuer:
+                    raise BackchannelLogoutError(
+                        "Cannot determine domain: logout token has no valid issuer"
+                    )
+
+                # Validate token's iss matches the resolved domain
+                normalized_iss = self._normalize_url(token_issuer)
+                normalized_resolved = self._normalize_url(resolved_domain)
+                if normalized_iss != normalized_resolved:
+                    raise BackchannelLogoutError(
+                        "Logout token issuer does not match the resolved domain"
+                    )
+
+                domain = resolved_domain
             else:
                 domain = self._domain
 
@@ -864,15 +875,13 @@ class ServerClient(Generic[TStoreOptions]):
             # Delete sessions associated with this token
             logout_claims = LogoutTokenClaims(
                 sub=claims.get("sub"),
-                sid=claims.get("sid")
+                sid=claims.get("sid"),
+                iss=claims.get("iss")
             )
 
-            # In resolver mode, include iss for issuer-scoped deletion
-            claims_dict = logout_claims.dict()
-            if self._domain_resolver:
-                claims_dict["iss"] = claims.get("iss")
-
-            await self._state_store.delete_by_logout_token(claims_dict, store_options)
+            await self._state_store.delete_by_logout_token(
+                logout_claims.dict(), store_options
+            )
 
         except (jwt.PyJWTError, ValidationError) as e:
             raise BackchannelLogoutError(

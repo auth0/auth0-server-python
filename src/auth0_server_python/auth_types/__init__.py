@@ -103,6 +103,7 @@ class LogoutTokenClaims(BaseModel):
     """
     sub: str
     sid: str
+    iss: Optional[str] = None
 
 
 class EncryptedStoreOptions(BaseModel):
