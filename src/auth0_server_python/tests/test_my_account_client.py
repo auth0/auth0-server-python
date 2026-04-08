@@ -1,6 +1,7 @@
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
+
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_types import (
     CompleteConnectAccountRequest,
