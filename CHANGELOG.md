@@ -1,5 +1,14 @@
 # Change Log
 
+## [1.0.0b9](https://github.com/auth0/auth0-server-python/tree/1.0.0b9) (2026-04-08)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b8...1.0.0b9)
+
+**Added**
+- feat: add Multiple Custom Domains (MCD) support and fix JWT verification [\#71](https://github.com/auth0/auth0-server-python/pull/71) ([kishore7snehil](https://github.com/kishore7snehil))
+
+**Changed**
+- chore: bump dependencies and add SCA scan workflow [\#93](https://github.com/auth0/auth0-server-python/pull/93) ([kishore7snehil](https://github.com/kishore7snehil))
+
 ## [1.0.0b8](https://github.com/auth0/auth0-server-python/tree/1.0.0b8) (2026-02-06)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b7...1.0.0b8)
 
