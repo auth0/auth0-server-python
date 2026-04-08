@@ -1,5 +1,7 @@
 line-length = 100
 target-version = "py39"
+
+[lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -11,4 +13,3 @@ select = [
     "S",   # bandit (security)
 ]
 ignore = ["E501", "B904", "S101", "S105", "S106"]  # Line too long (handled by black), Exception handling without from
-
