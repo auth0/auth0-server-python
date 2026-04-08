@@ -2317,14 +2317,58 @@ class ServerClient(Generic[TStoreOptions]):
 
             token_response = await self.custom_token_exchange(exchange_options, store_options=store_options)
 
+            # Resolve domain and fetch metadata for verification
+            domain = await self._resolve_current_domain(store_options)
+            metadata = await self._get_oidc_metadata_cached(domain)
+
             # Extract user claims from ID token if present
             user_claims = None
             sid = PKCE.generate_random_string(32)  # Default sid
             if token_response.id_token:
-                claims = jwt.decode(token_response.id_token, options={"verify_signature": False})
-                user_claims = UserClaims.parse_obj(claims)
-                # Extract sid from token if available
-                sid = claims.get("sid", sid)
+                # Fetch JWKS and verify ID token signature
+                jwks = await self._get_jwks_cached(domain, metadata)
+                try:
+                    claims = await self._verify_and_decode_jwt(
+                        token_response.id_token, jwks, audience=self._client_id
+                    )
+
+                    # Validate issuer against resolved domain
+                    origin_issuer = metadata.get("issuer")
+                    token_issuer = claims.get("iss", "")
+                    if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
+                        raise IssuerValidationError(
+                            "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+                        )
+
+                    user_claims = UserClaims.parse_obj(claims)
+                    # Extract sid from token if available
+                    sid = claims.get("sid", sid)
+                except ValueError as e:
+                    raise ApiError("jwks_key_not_found", str(e))
+                except jwt.InvalidSignatureError as e:
+                    raise ApiError(
+                        "invalid_signature",
+                        f"ID token signature verification failed: {str(e)}",
+                        e
+                    )
+                except jwt.InvalidAudienceError as e:
+                    raise ApiError(
+                        "invalid_audience",
+                        f"ID token audience mismatch. Expected: {self._client_id}: {str(e)}",
+                        e
+                    )
+                except jwt.ExpiredSignatureError as e:
+                    raise ApiError(
+                        "token_expired",
+                        f"ID token has expired: {str(e)}",
+                        e
+                    )
+                except jwt.InvalidTokenError as e:
+                    raise ApiError(
+                        "invalid_token",
+                        f"ID token verification failed: {str(e)}",
+                        e
+                    )
 
             # Determine audience for token set
             audience = options.audience or self.DEFAULT_AUDIENCE_STATE_KEY
@@ -2336,9 +2380,6 @@ class ServerClient(Generic[TStoreOptions]):
                 scope=token_response.scope or options.scope or "",
                 expires_at=int(time.time()) + token_response.expires_in
             )
-
-            # Resolve domain for session storage
-            domain = await self._resolve_current_domain(store_options)
 
             # Construct state data
             state_data = StateData(

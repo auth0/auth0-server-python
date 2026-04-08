@@ -3370,7 +3370,17 @@ async def test_login_with_custom_token_exchange_success(mocker):
     mocker.patch.object(
         client,
         "_fetch_oidc_metadata",
-        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+        return_value={
+            "token_endpoint": "https://auth0.local/oauth/token",
+            "issuer": "https://auth0.local/",
+        }
+    )
+
+    # Mock JWKS fetch
+    mocker.patch.object(
+        client,
+        "_get_jwks_cached",
+        return_value={"keys": []}
     )
 
     # Mock token exchange response with ID token
@@ -3393,11 +3403,12 @@ async def test_login_with_custom_token_exchange_success(mocker):
 
     mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
 
-    # Mock JWT decode
-    mocker.patch("jwt.decode", return_value={
+    # Mock ID token verification (signature + decode)
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
         "sub": "user123",
         "name": "John Doe",
-        "sid": "session123"
+        "sid": "session123",
+        "iss": "https://auth0.local/"
     })
 
     # Act
