@@ -95,12 +95,25 @@ class StateStore(AbstractDataStore[dict[str, Any]]):
         """
         Delete sessions based on logout token claims.
 
+        Per the OIDC Back-Channel Logout spec, either ``sid`` or ``sub``
+        (or both) will be present. Implementations should match on
+        whichever claim is present (OR logic), not require both (AND).
+
+        When ``iss`` is present in claims (always included by the SDK),
+        implementations should validate that the token's issuer matches
+        the session's stored domain before deleting. This prevents
+        cross-domain session deletion in MCD deployments.
+
         Args:
-            claims: Claims from the logout token
+            claims: Claims from the logout token. Keys:
+                - ``sub``: Subject identifier of the user
+                - ``sid``: Session identifier
+                - ``iss``: Token issuer (always included; compare against
+                  session domain before deletion)
             options: Additional operation-specific options
 
         Note:
-            Default implementation throws NotImplementedError.
+            Default implementation raises NotImplementedError.
             Concrete implementations should override this method.
         """
         raise NotImplementedError("Method not implemented.")

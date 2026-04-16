@@ -101,6 +101,17 @@ class MissingRequiredArgumentError(Auth0Error):
         self.argument = argument
 
 
+class ConfigurationError(Auth0Error):
+    """
+    Error raised when SDK configuration is invalid.
+    This includes invalid combinations of parameters or incorrect configuration values.
+    """
+    code = "configuration_error"
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.name = "ConfigurationError"
+
 class InvalidArgumentError(Auth0Error):
     """
     Error raised when a given argument is an invalid value.
@@ -113,6 +124,19 @@ class InvalidArgumentError(Auth0Error):
         self.argument = argument
 
 
+class IssuerValidationError(Auth0Error):
+    """
+    Error raised when token issuer validation fails.
+    This can happen when the issuer claim in a token does not match
+    the expected issuer for the configured domain.
+    """
+    code = "issuer_validation_error"
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.name = "IssuerValidationError"
+
+
 class BackchannelLogoutError(Auth0Error):
     """
     Error raised during backchannel logout processing.
@@ -123,6 +147,21 @@ class BackchannelLogoutError(Auth0Error):
     def __init__(self, message: str):
         super().__init__(message)
         self.name = "BackchannelLogoutError"
+
+
+class DomainResolverError(Auth0Error):
+    """
+    Error raised when domain resolver function fails or returns invalid value.
+
+    This error indicates an issue with the custom domain resolver function
+    provided for MCD (Multiple Custom Domains) support.
+    """
+    code = "domain_resolver_error"
+
+    def __init__(self, message: str, original_error: Exception = None):
+        super().__init__(message)
+        self.name = "DomainResolverError"
+        self.original_error = original_error
 
 
 class AccessTokenForConnectionError(Auth0Error):
@@ -157,6 +196,8 @@ class AccessTokenErrorCode:
     REFRESH_TOKEN_ERROR = "refresh_token_error"
     AUTH_REQ_ID_ERROR = "auth_req_id_error"
     INCORRECT_AUDIENCE = "incorrect_audience"
+    MISSING_SESSION_DOMAIN = "missing_session_domain"
+    DOMAIN_MISMATCH = "domain_mismatch"
 
 
 class AccessTokenForConnectionErrorCode:
@@ -165,6 +206,8 @@ class AccessTokenForConnectionErrorCode:
     FAILED_TO_RETRIEVE = "failed_to_retrieve"
     API_ERROR = "api_error"
     FETCH_ERROR = "retrieval_error"
+    MISSING_SESSION_DOMAIN = "missing_session_domain"
+    DOMAIN_MISMATCH = "domain_mismatch"
 
 
 class CustomTokenExchangeError(Auth0Error):

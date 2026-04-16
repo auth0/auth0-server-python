@@ -25,3 +25,5 @@ test-script.py
 .coverage
 coverage.xml
 
+# AI tools
+.claude
