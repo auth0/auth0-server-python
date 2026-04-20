@@ -4642,6 +4642,53 @@ async def test_server_client_mfa_property():
 
 
 @pytest.mark.asyncio
+async def test_server_client_mfa_receives_callable_domain():
+    """
+    When ServerClient is given a callable domain (MCD), the MfaClient
+    should receive that callable — not None or a resolved string.
+    """
+    from auth0_server_python.auth_server.mfa_client import MfaClient
+
+    mock_secret = "a-test-secret-with-enough-length"
+    mock_store = MagicMock()
+    mock_store.get = AsyncMock(return_value=None)
+    mock_store.set = AsyncMock()
+    mock_store.delete = AsyncMock()
+
+    async def my_resolver(context):
+        return "tenant-x.auth0.local"
+
+    import auth0_server_python.auth_server.server_client as sc_mod
+
+    original_fetch = sc_mod.ServerClient._fetch_oidc_metadata
+
+    async def _fake_fetch(self, domain):
+        return {
+            "authorization_endpoint": f"https://{domain}/authorize",
+            "token_endpoint": f"https://{domain}/oauth/token",
+            "end_session_endpoint": f"https://{domain}/v2/logout",
+            "backchannel_logout_supported": True,
+        }
+
+    sc_mod.ServerClient._fetch_oidc_metadata = _fake_fetch
+    try:
+        client = ServerClient(
+            domain=my_resolver,
+            client_id="cid",
+            client_secret="csecret",
+            secret=mock_secret,
+            transaction_store=mock_store,
+            state_store=mock_store,
+        )
+        mfa = client.mfa
+        assert isinstance(mfa, MfaClient)
+        assert mfa._domain_resolver is my_resolver
+        assert mfa._domain is None
+    finally:
+        sc_mod.ServerClient._fetch_oidc_metadata = original_fetch
+
+
+@pytest.mark.asyncio
 async def test_get_access_token_mfa_required(mocker):
     """
     When get_token_by_refresh_token returns an mfa_required error,

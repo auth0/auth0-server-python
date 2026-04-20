@@ -16,6 +16,7 @@ from auth0_server_python.auth_types import (
     OtpEnrollmentResponse,
 )
 from auth0_server_python.error import (
+    DomainResolverError,
     MfaChallengeError,
     MfaEnrollmentError,
     MfaListAuthenticatorsError,
@@ -47,10 +48,103 @@ class TestMfaClientConstructor:
     def test_constructor_sets_properties(self):
         client = _make_client()
         assert client._domain == DOMAIN
-        assert client._base_url == f"https://{DOMAIN}"
+        assert client._domain_resolver is None
         assert client._client_id == CLIENT_ID
         assert client._client_secret == CLIENT_SECRET
         assert client._secret == SECRET
+
+    def test_constructor_with_callable_domain(self):
+        resolver = AsyncMock(return_value="resolved.auth0.local")
+        client = MfaClient(
+            domain=resolver,
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            secret=SECRET
+        )
+        assert client._domain is None
+        assert client._domain_resolver is resolver
+
+
+# ── Domain Resolution (MCD) ──────────────────────────────────────────────────
+
+class TestDomainResolution:
+    @pytest.mark.asyncio
+    async def test_resolver_returning_none_raises(self):
+        resolver = AsyncMock(return_value=None)
+        client = MfaClient(
+            domain=resolver, client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET, secret=SECRET
+        )
+        with pytest.raises(DomainResolverError, match="returned None"):
+            await client._resolve_base_url()
+
+    @pytest.mark.asyncio
+    async def test_resolver_returning_empty_string_raises(self):
+        resolver = AsyncMock(return_value="   ")
+        client = MfaClient(
+            domain=resolver, client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET, secret=SECRET
+        )
+        with pytest.raises(DomainResolverError, match="empty string"):
+            await client._resolve_base_url()
+
+    @pytest.mark.asyncio
+    async def test_resolver_returning_non_string_raises(self):
+        resolver = AsyncMock(return_value=42)
+        client = MfaClient(
+            domain=resolver, client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET, secret=SECRET
+        )
+        with pytest.raises(DomainResolverError, match="must return a string"):
+            await client._resolve_base_url()
+
+    @pytest.mark.asyncio
+    async def test_resolver_exception_wrapped_in_domain_resolver_error(self):
+        original = RuntimeError("DNS lookup failed")
+        resolver = AsyncMock(side_effect=original)
+        client = MfaClient(
+            domain=resolver, client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET, secret=SECRET
+        )
+        with pytest.raises(DomainResolverError, match="DNS lookup failed") as exc:
+            await client._resolve_base_url()
+        assert exc.value.original_error is original
+
+    @pytest.mark.asyncio
+    async def test_resolver_failure_propagates_through_api_method(self, mocker):
+        """A broken resolver should surface as the API-method's error, not silently produce https://None."""
+        resolver = AsyncMock(return_value=None)
+        client = MfaClient(
+            domain=resolver, client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET, secret=SECRET
+        )
+        # list_authenticators wraps unexpected errors in MfaListAuthenticatorsError,
+        # but DomainResolverError is NOT caught by the inner try/except — it propagates.
+        with pytest.raises(DomainResolverError):
+            await client.list_authenticators({"mfa_token": "tok"})
+
+    @pytest.mark.asyncio
+    async def test_store_options_forwarded_to_resolver(self):
+        """store_options must reach the domain resolver so it can inspect the request."""
+        captured = {}
+
+        async def resolver(context):
+            captured["context"] = context
+            return "tenant-a.auth0.local"
+
+        client = MfaClient(
+            domain=resolver, client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET, secret=SECRET
+        )
+        fake_request = MagicMock()
+        fake_request.url = "https://app.example.com/mfa"
+        fake_request.headers = {"host": "app.example.com"}
+
+        result = await client._resolve_base_url(
+            store_options={"request": fake_request}
+        )
+        assert result == "https://tenant-a.auth0.local"
+        assert captured["context"].request_url == "https://app.example.com/mfa"
 
 
 # ── Token Encryption / Decryption ────────────────────────────────────────────

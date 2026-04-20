@@ -48,6 +48,9 @@ The Auth0 MFA API allows you to manage multi-factor authentication for users in 
 
 Before using the MFA API, ensure MFA is configured in your [Auth0 Dashboard](https://manage.auth0.com) under **Security** > **Multi-factor Auth**. For detailed configuration, see the [Auth0 MFA documentation](https://auth0.com/docs/secure/multi-factor-authentication/customize-mfa/customize-mfa-enrollments-universal-login).
 
+> [!TIP]
+> **Multiple Custom Domains (MCD)**: All MFA methods accept an optional `store_options` parameter (as a top-level argument, not inside `options`). When using a callable domain resolver, pass `store_options={"request": request, "response": response}` so the resolver can determine the correct tenant domain from the incoming request.
+
 ## Understanding MFA Responses
 
 When MFA is required during authentication, the error response contains an `mfa_requirements` object that indicates either:
@@ -125,15 +128,16 @@ Retrieve the list of authenticators the user has already enrolled:
 
 ```python
 try:
-    authenticators = await server_client.mfa.list_authenticators({
-        "mfa_token": mfa_token
-    })
-    
+    authenticators = await server_client.mfa.list_authenticators(
+        {"mfa_token": mfa_token},
+        store_options={"request": request, "response": response}  # Optional — required for MCD
+    )
+
     for auth in authenticators:
         print(f"Authenticator: {auth.id}")
         print(f"  Type: {auth.authenticator_type}")
         print(f"  Created: {auth.created_at}")
-        
+
 except Exception as error:
     print(f"Error retrieving authenticators: {error}")
 ```
@@ -501,13 +505,16 @@ When you set `persist=True`, the SDK will:
 3. Add the token to the `token_sets` array with expiration information
 
 ```python
-verify_response = await server_client.mfa.verify({
-    "mfa_token": mfa_token,
-    "otp": "123456",
-    "persist": True,  # Enable automatic persistence
-    "audience": "https://api.example.com",  # Required when persist=True
-    "scope": "openid profile email"  # Optional
-})
+verify_response = await server_client.mfa.verify(
+    {
+        "mfa_token": mfa_token,
+        "otp": "123456",
+        "persist": True,  # Enable automatic persistence
+        "audience": "https://api.example.com",  # Required when persist=True
+        "scope": "openid profile email"  # Optional
+    },
+    store_options={"request": request, "response": response}  # Required for session persistence and MCD
+)
 
 # Tokens are now available in the session store
 # User can call server_client.get_user() to access updated session
@@ -519,11 +526,14 @@ user = await server_client.get_user()
 If you prefer to manage session updates yourself:
 
 ```python
-verify_response = await server_client.mfa.verify({
-    "mfa_token": mfa_token,
-    "otp": "123456"
-    # persist=False (default)
-})
+verify_response = await server_client.mfa.verify(
+    {
+        "mfa_token": mfa_token,
+        "otp": "123456"
+        # persist=False (default)
+    },
+    store_options={"request": request, "response": response}  # Optional — required for MCD
+)
 
 # Handle token storage manually if needed
 access_token = verify_response.access_token
@@ -540,42 +550,46 @@ await my_session_store.update_tokens(access_token, id_token)
 When a user needs to set up MFA for the first time:
 
 ```python
-async def handle_mfa_enrollment_flow(server_client, mfa_token):
+async def handle_mfa_enrollment_flow(server_client, mfa_token, store_options=None):
     try:
         # Get available enrollment factors
-        factors = await server_client.mfa.list_authenticators({
-            "mfa_token": mfa_token
-        })
-        
+        factors = await server_client.mfa.list_authenticators(
+            {"mfa_token": mfa_token},
+            store_options=store_options
+        )
+
         print("Available MFA options:")
         for factor in factors:
             print(f"  - {factor.authenticator_type}")
-        
+
         # User selects OTP
-        enrollment = await server_client.mfa.enroll_authenticator({
-            "mfa_token": mfa_token,
-            "factor_type": "otp"
-        })
-        
+        enrollment = await server_client.mfa.enroll_authenticator(
+            {"mfa_token": mfa_token, "factor_type": "otp"},
+            store_options=store_options
+        )
+
         # Display QR code to user
         print(f"QR Code: {enrollment.barcode_uri}")
-        
+
         # Wait for user to scan and enter verification code
         user_code = input("Enter 6-digit code from authenticator: ")
-        
+
         # Verify enrollment
-        verify_response = await server_client.mfa.verify({
-            "mfa_token": mfa_token,
-            "otp": user_code,
-            "persist": True,
-            "audience": "https://api.example.com",
-            "scope": "openid profile email"
-        })
-        
+        verify_response = await server_client.mfa.verify(
+            {
+                "mfa_token": mfa_token,
+                "otp": user_code,
+                "persist": True,
+                "audience": "https://api.example.com",
+                "scope": "openid profile email"
+            },
+            store_options=store_options
+        )
+
         print("MFA enrollment successful!")
         print("Tokens have been persisted to session store")
         return verify_response.access_token
-        
+
     except Exception as error:
         print(f"Enrollment flow failed: {error}")
         raise
@@ -586,45 +600,52 @@ async def handle_mfa_enrollment_flow(server_client, mfa_token):
 When a user with existing authenticators needs to verify:
 
 ```python
-async def handle_mfa_challenge_flow(server_client, mfa_token):
+async def handle_mfa_challenge_flow(server_client, mfa_token, store_options=None):
     try:
         # Get user's enrolled authenticators
-        authenticators = await server_client.mfa.list_authenticators({
-            "mfa_token": mfa_token
-        })
-        
+        authenticators = await server_client.mfa.list_authenticators(
+            {"mfa_token": mfa_token},
+            store_options=store_options
+        )
+
         print("Select an authenticator:")
         for i, auth in enumerate(authenticators):
             print(f"  {i + 1}. {auth.authenticator_type} ({auth.id})")
-        
+
         # User selects authenticator
         selected_index = int(input("Selection: ")) - 1
         selected_auth = authenticators[selected_index]
-        
+
         # Determine the correct factor_type for challenge
         # OOB authenticators use their oob_channel as the factor_type
         if selected_auth.authenticator_type == "oob":
             factor_type = selected_auth.oob_channel  # "sms", "email", "voice", "auth0"
         else:
             factor_type = selected_auth.authenticator_type  # "otp", "recovery-code"
-        
+
         # Initiate challenge
-        challenge = await server_client.mfa.challenge_authenticator({
-            "mfa_token": mfa_token,
-            "factor_type": factor_type,
-            "authenticator_id": selected_auth.id
-        })
-        
+        challenge = await server_client.mfa.challenge_authenticator(
+            {
+                "mfa_token": mfa_token,
+                "factor_type": factor_type,
+                "authenticator_id": selected_auth.id
+            },
+            store_options=store_options
+        )
+
         # Get verification code from user
         if selected_auth.authenticator_type == "otp":
             user_code = input("Enter 6-digit code from authenticator: ")
-            verify_response = await server_client.mfa.verify({
-                "mfa_token": mfa_token,
-                "otp": user_code,
-                "persist": True,
-                "audience": "https://api.example.com",
-                "scope": "openid profile email"
-            })
+            verify_response = await server_client.mfa.verify(
+                {
+                    "mfa_token": mfa_token,
+                    "otp": user_code,
+                    "persist": True,
+                    "audience": "https://api.example.com",
+                    "scope": "openid profile email"
+                },
+                store_options=store_options
+            )
         elif factor_type == "auth0":
             # Push notification — poll for approval
             verify_response = await poll_push_verification(
@@ -632,19 +653,22 @@ async def handle_mfa_challenge_flow(server_client, mfa_token):
             )
         else:
             user_code = input(f"Enter code from {factor_type}: ")
-            verify_response = await server_client.mfa.verify({
-                "mfa_token": mfa_token,
-                "oob_code": challenge.oob_code,
-                "binding_code": user_code,
-                "persist": True,
-                "audience": "https://api.example.com",
-                "scope": "openid profile email"
-            })
-        
+            verify_response = await server_client.mfa.verify(
+                {
+                    "mfa_token": mfa_token,
+                    "oob_code": challenge.oob_code,
+                    "binding_code": user_code,
+                    "persist": True,
+                    "audience": "https://api.example.com",
+                    "scope": "openid profile email"
+                },
+                store_options=store_options
+            )
+
         print("MFA verification successful!")
         print("Tokens have been persisted to session store")
         return verify_response.access_token
-        
+
     except Exception as error:
         print(f"Challenge flow failed: {error}")
         raise
@@ -655,35 +679,38 @@ async def handle_mfa_challenge_flow(server_client, mfa_token):
 ```python
 from auth0_server_python.error import MfaRequiredError
 
-async def login_with_mfa(server_client):
+async def login_with_mfa(server_client, store_options=None):
     try:
         # Attempt to get access token
-        access_token = await server_client.get_access_token()
+        access_token = await server_client.get_access_token(
+            store_options=store_options
+        )
         return access_token
-        
+
     except MfaRequiredError as mfa_error:
         mfa_token = mfa_error.mfa_token
-        
+
         # Determine flow: check if user needs to enroll or has authenticators
-        authenticators = await server_client.mfa.list_authenticators({
-            "mfa_token": mfa_token
-        })
-        
+        authenticators = await server_client.mfa.list_authenticators(
+            {"mfa_token": mfa_token},
+            store_options=store_options
+        )
+
         if len(authenticators) == 0:
             # User needs to enroll
             print("MFA enrollment required")
             access_token = await handle_mfa_enrollment_flow(
-                server_client, mfa_token
+                server_client, mfa_token, store_options=store_options
             )
         else:
             # User has authenticators, proceed with challenge
             print("MFA verification required")
             access_token = await handle_mfa_challenge_flow(
-                server_client, mfa_token
+                server_client, mfa_token, store_options=store_options
             )
-        
+
         return access_token
-        
+
     except Exception as error:
         print(f"Login failed: {error}")
         raise
@@ -696,49 +723,58 @@ Each MFA operation has specific error handling:
 ```python
 from auth0_server_python.error import MfaRequiredError, ApiError
 
-async def handle_mfa_with_error_handling(server_client):
+async def handle_mfa_with_error_handling(server_client, store_options=None):
     try:
         # Attempt token exchange
-        access_token = await server_client.get_access_token()
-        
+        access_token = await server_client.get_access_token(
+            store_options=store_options
+        )
+
     except MfaRequiredError as error:
         print(f"MFA Required: {error.error_description}")
         mfa_token = error.mfa_token
-        
+
         try:
             # Get authenticators
-            authenticators = await server_client.mfa.list_authenticators({
-                "mfa_token": mfa_token
-            })
+            authenticators = await server_client.mfa.list_authenticators(
+                {"mfa_token": mfa_token},
+                store_options=store_options
+            )
         except ApiError as list_error:
             print(f"Failed to retrieve authenticators: {list_error}")
             raise
-        
+
         try:
             # Initiate challenge
-            challenge = await server_client.mfa.challenge_authenticator({
-                "mfa_token": mfa_token,
-                "factor_type": "sms",
-                "authenticator_id": authenticators[0].id
-            })
+            challenge = await server_client.mfa.challenge_authenticator(
+                {
+                    "mfa_token": mfa_token,
+                    "factor_type": "sms",
+                    "authenticator_id": authenticators[0].id
+                },
+                store_options=store_options
+            )
         except ApiError as challenge_error:
             print(f"Challenge failed: {challenge_error}")
             raise
-        
+
         try:
             # Verify challenge
-            verify_response = await server_client.mfa.verify({
-                "mfa_token": mfa_token,
-                "oob_code": challenge.oob_code,
-                "binding_code": "123456"
-            })
+            verify_response = await server_client.mfa.verify(
+                {
+                    "mfa_token": mfa_token,
+                    "oob_code": challenge.oob_code,
+                    "binding_code": "123456"
+                },
+                store_options=store_options
+            )
         except ApiError as verify_error:
             if verify_error.status_code == 403:
                 print("Invalid code or challenge expired")
             else:
                 print(f"Verification error: {verify_error}")
             raise
-    
+
     except Exception as error:
         print(f"Unexpected error: {error}")
         raise

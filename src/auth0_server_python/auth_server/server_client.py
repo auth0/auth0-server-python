@@ -167,7 +167,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Initialize MFA client
         self._mfa_client = MfaClient(
-            domain=self._domain,
+            domain=domain,
             client_id=self._client_id,
             client_secret=self._client_secret,
             secret=self._secret,

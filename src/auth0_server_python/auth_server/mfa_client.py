@@ -4,7 +4,7 @@ Handles Multi-Factor Authentication operations against the Auth0 MFA API.
 """
 
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Union
 
 import httpx
 
@@ -21,6 +21,7 @@ from auth0_server_python.auth_types import (
 )
 from auth0_server_python.encryption.encrypt import decrypt, encrypt
 from auth0_server_python.error import (
+    DomainResolverError,
     MfaChallengeError,
     MfaEnrollmentError,
     MfaListAuthenticatorsError,
@@ -28,6 +29,10 @@ from auth0_server_python.error import (
     MfaTokenExpiredError,
     MfaTokenInvalidError,
     MfaVerifyError,
+)
+from auth0_server_python.utils.helpers import (
+    build_domain_resolver_context,
+    validate_resolved_domain_value,
 )
 
 DEFAULT_MFA_TOKEN_TTL = 300  # 5 minutes
@@ -47,20 +52,45 @@ class MfaClient:
 
     def __init__(
         self,
-        domain: str,
+        domain: Union[str, Callable, None],
         client_id: str,
         client_secret: str,
         secret: str,
         state_store=None,
         state_identifier: str = "_a0_session"
     ):
-        self._domain = domain
-        self._base_url = f"https://{domain}"
+        if callable(domain):
+            self._domain = None
+            self._domain_resolver = domain
+        else:
+            self._domain = domain
+            self._domain_resolver = None
         self._client_id = client_id
         self._client_secret = client_secret
         self._secret = secret
         self._state_store = state_store
         self._state_identifier = state_identifier
+
+    async def _resolve_base_url(
+        self,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> str:
+        """Resolve domain and return base URL for API calls."""
+        if self._domain_resolver:
+            context = build_domain_resolver_context(store_options)
+            try:
+                resolved = await self._domain_resolver(context)
+                domain = validate_resolved_domain_value(resolved)
+            except DomainResolverError:
+                raise
+            except Exception as e:
+                raise DomainResolverError(
+                    f"Domain resolver function raised an exception: {str(e)}",
+                    original_error=e
+                )
+        else:
+            domain = self._domain
+        return f"https://{domain}"
 
     # ============================================================================
     # MFA TOKEN ENCRYPTION / DECRYPTION
@@ -105,13 +135,15 @@ class MfaClient:
 
     async def list_authenticators(
         self,
-        options: dict[str, Any]
+        options: dict[str, Any],
+        store_options: Optional[dict[str, Any]] = None
     ) -> list[AuthenticatorResponse]:
         """
         Lists all MFA authenticators enrolled by the user.
 
         Args:
             options: Dict containing 'mfa_token' (encrypted or raw).
+            store_options: Optional options passed to the State Store (e.g. request/response).
 
         Returns:
             List of enrolled authenticators.
@@ -120,7 +152,8 @@ class MfaClient:
             MfaListAuthenticatorsError: When the request fails.
         """
         mfa_token = options["mfa_token"]
-        url = f"{self._base_url}/mfa/authenticators"
+        base_url = await self._resolve_base_url(store_options)
+        url = f"{base_url}/mfa/authenticators"
 
         try:
             async with httpx.AsyncClient() as client:
@@ -148,7 +181,8 @@ class MfaClient:
 
     async def enroll_authenticator(
         self,
-        options: dict[str, Any]
+        options: dict[str, Any],
+        store_options: Optional[dict[str, Any]] = None
     ) -> EnrollmentResponse:
         """
         Enrolls a new MFA authenticator for the user.
@@ -157,6 +191,7 @@ class MfaClient:
             options: Dict containing enrollment parameters.
                 Required: 'mfa_token', 'factor_type' (otp, sms, voice, email, auth0).
                 Optional: 'phone_number', 'email'.
+            store_options: Optional options passed to the State Store (e.g. request/response).
 
         Returns:
             OtpEnrollmentResponse or OobEnrollmentResponse.
@@ -166,7 +201,8 @@ class MfaClient:
         """
         mfa_token = options["mfa_token"]
         factor_type = options["factor_type"]
-        url = f"{self._base_url}/mfa/associate"
+        base_url = await self._resolve_base_url(store_options)
+        url = f"{base_url}/mfa/associate"
 
         # Map factor_type to Auth0 API parameters
         if factor_type == "otp":
@@ -231,7 +267,8 @@ class MfaClient:
 
     async def challenge_authenticator(
         self,
-        options: dict[str, Any]
+        options: dict[str, Any],
+        store_options: Optional[dict[str, Any]] = None
     ) -> ChallengeResponse:
         """
         Initiates an MFA challenge for user verification.
@@ -239,6 +276,7 @@ class MfaClient:
         Args:
             options: Dict containing 'mfa_token', 'factor_type' (otp, sms, voice, email, auth0),
                 and optionally 'authenticator_id'.
+            store_options: Optional options passed to the State Store (e.g. request/response).
 
         Returns:
             ChallengeResponse with challenge details.
@@ -248,7 +286,8 @@ class MfaClient:
         """
         mfa_token = options["mfa_token"]
         factor_type = options["factor_type"]
-        url = f"{self._base_url}/mfa/challenge"
+        base_url = await self._resolve_base_url(store_options)
+        url = f"{base_url}/mfa/challenge"
 
         # Map factor_type to Auth0 API challenge_type
         if factor_type == "otp":
@@ -297,7 +336,8 @@ class MfaClient:
 
     async def verify(
         self,
-        options: dict[str, Any]
+        options: dict[str, Any],
+        store_options: Optional[dict[str, Any]] = None
     ) -> MfaVerifyResponse:
         """
         Verifies an MFA code and completes authentication.
@@ -315,7 +355,7 @@ class MfaClient:
                 - 'persist': bool (optional, default=False) - Persist tokens to state store
                 - 'audience': str (optional, required if persist=True) - Audience for token_set
                 - 'scope': str (optional) - Scope for token_set
-                - 'store_options': dict (optional) - Store-specific options
+            store_options: Optional options passed to the State Store (e.g. request/response).
 
         Returns:
             MfaVerifyResponse with access_token, token_type, etc.
@@ -350,7 +390,8 @@ class MfaClient:
             )
 
         try:
-            token_endpoint = f"{self._base_url}/oauth/token"
+            base_url = await self._resolve_base_url(store_options)
+            token_endpoint = f"{base_url}/oauth/token"
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -388,7 +429,8 @@ class MfaClient:
                 if options.get("persist") and self._state_store:
                     await self._persist_mfa_tokens(
                         verify_response=verify_response,
-                        options=options
+                        options=options,
+                        store_options=store_options
                     )
 
                 return verify_response
@@ -403,7 +445,8 @@ class MfaClient:
     async def _persist_mfa_tokens(
         self,
         verify_response: MfaVerifyResponse,
-        options: dict[str, Any]
+        options: dict[str, Any],
+        store_options: Optional[dict[str, Any]] = None
     ) -> None:
         """
         Persist MFA verification tokens to the state store.
@@ -415,7 +458,7 @@ class MfaClient:
             options: Dict containing:
                 - 'audience': str - Audience for token_set
                 - 'scope': str (optional) - Scope for token_set
-                - 'store_options': dict (optional) - Store-specific options
+            store_options: Optional options passed to the State Store (e.g. request/response).
         """
         import time
 
@@ -423,7 +466,6 @@ class MfaClient:
 
         audience = options.get("audience")
         scope = options.get("scope")
-        store_options = options.get("store_options")
 
         if not audience:
             raise MfaVerifyError(
