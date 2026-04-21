@@ -1,5 +1,4 @@
-
-from typing import Optional
+from __future__ import annotations
 
 import httpx
 
@@ -25,14 +24,21 @@ class MyAccountClient:
     Client for interacting with the Auth0 MyAccount API.
     """
 
-    def __init__(self, domain: str):
+    def __init__(self, domain: str, headers: dict[str, str] | None = None):
         """
         Initialize the MyAccount API client.
 
         Args:
             domain: Auth0 domain (e.g., '<tenant>.<locality>.auth0.com')
+            headers: Optional default headers to include on every request
         """
         self._domain = domain
+        self._headers = headers or {}
+
+    def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
+        """Return an httpx.AsyncClient with default headers injected."""
+        headers = {**self._headers, **kwargs.pop("headers", {})}
+        return httpx.AsyncClient(headers=headers, **kwargs)
 
     @property
     def audience(self):
@@ -64,7 +70,7 @@ class MyAccountClient:
             ApiError: If the request fails due to network or other issues
         """
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     url=f"{self.audience}v1/connected-accounts/connect",
                     json=request.model_dump(exclude_none=True),
@@ -114,7 +120,7 @@ class MyAccountClient:
             ApiError: If the request fails due to network or other issues
         """
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     url=f"{self.audience}v1/connected-accounts/complete",
                     json=request.model_dump(exclude_none=True),
@@ -147,9 +153,9 @@ class MyAccountClient:
     async def list_connected_accounts(
         self,
         access_token: str,
-        connection: Optional[str] = None,
-        from_param: Optional[str] = None,
-        take: Optional[int] = None
+        connection: str | None = None,
+        from_param: str | None = None,
+        take: int | None = None
     ) -> ListConnectedAccountsResponse:
         """
         List connected accounts for the authenticated user.
@@ -176,7 +182,7 @@ class MyAccountClient:
             raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 params = {}
                 if connection:
                     params["connection"] = connection
@@ -243,7 +249,7 @@ class MyAccountClient:
             raise MissingRequiredArgumentError("connected_account_id")
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.delete(
                     url=f"{self.audience}v1/connected-accounts/accounts/{connected_account_id}",
                     auth=BearerAuth(access_token)
@@ -271,8 +277,8 @@ class MyAccountClient:
     async def list_connected_account_connections(
         self,
         access_token: str,
-        from_param: Optional[str] = None,
-        take: Optional[int] = None
+        from_param: str | None = None,
+        take: int | None = None
     ) -> ListConnectedAccountConnectionsResponse:
         """
         List available connections that support connected accounts.
@@ -298,7 +304,7 @@ class MyAccountClient:
             raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 params = {}
                 if from_param:
                     params["from"] = from_param

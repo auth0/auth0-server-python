@@ -3,8 +3,10 @@ MFA Client for auth0-server-python SDK.
 Handles Multi-Factor Authentication operations against the Auth0 MFA API.
 """
 
+from __future__ import annotations
+
 import time
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import httpx
 
@@ -54,12 +56,13 @@ class MfaClient:
 
     def __init__(
         self,
-        domain: Union[str, Callable, None],
+        domain: str | Callable | None,
         client_id: str,
         client_secret: str,
         secret: str,
         state_store=None,
-        state_identifier: str = "_a0_session"
+        state_identifier: str = "_a0_session",
+        headers: dict[str, str] | None = None
     ):
         if callable(domain):
             self._domain = None
@@ -72,10 +75,16 @@ class MfaClient:
         self._secret = secret
         self._state_store = state_store
         self._state_identifier = state_identifier
+        self._headers = headers or {}
+
+    def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
+        """Return an httpx.AsyncClient with default headers injected."""
+        headers = {**self._headers, **kwargs.pop("headers", {})}
+        return httpx.AsyncClient(headers=headers, **kwargs)
 
     async def _resolve_base_url(
         self,
-        store_options: Optional[dict[str, Any]] = None
+        store_options: dict[str, Any] | None = None
     ) -> str:
         """Resolve domain and return base URL for API calls."""
         if self._domain_resolver:
@@ -137,7 +146,7 @@ class MfaClient:
     async def list_authenticators(
         self,
         options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
+        store_options: dict[str, Any] | None = None
     ) -> list[AuthenticatorResponse]:
         """
         Lists all MFA authenticators enrolled by the user.
@@ -157,7 +166,7 @@ class MfaClient:
         url = f"{base_url}/mfa/authenticators"
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.get(
                     url,
                     auth=BearerAuth(mfa_token)
@@ -183,7 +192,7 @@ class MfaClient:
     async def enroll_authenticator(
         self,
         options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
+        store_options: dict[str, Any] | None = None
     ) -> EnrollmentResponse:
         """
         Enrolls a new MFA authenticator for the user.
@@ -232,7 +241,7 @@ class MfaClient:
             body["email"] = options["email"]
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     url,
                     json=body,
@@ -269,7 +278,7 @@ class MfaClient:
     async def challenge_authenticator(
         self,
         options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
+        store_options: dict[str, Any] | None = None
     ) -> ChallengeResponse:
         """
         Initiates an MFA challenge for user verification.
@@ -311,7 +320,7 @@ class MfaClient:
             body["authenticator_id"] = options["authenticator_id"]
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     url,
                     json=body,
@@ -338,7 +347,7 @@ class MfaClient:
     async def verify(
         self,
         options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
+        store_options: dict[str, Any] | None = None
     ) -> MfaVerifyResponse:
         """
         Verifies an MFA code and completes authentication.
@@ -395,7 +404,7 @@ class MfaClient:
             base_url = await self._resolve_base_url(store_options)
             token_endpoint = f"{base_url}/oauth/token"
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=body,
@@ -449,7 +458,7 @@ class MfaClient:
         self,
         verify_response: MfaVerifyResponse,
         options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
+        store_options: dict[str, Any] | None = None
     ) -> None:
         """
         Persist MFA verification tokens to the state store.
