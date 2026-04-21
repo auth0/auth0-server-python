@@ -3,10 +3,8 @@ MFA Client for auth0-server-python SDK.
 Handles Multi-Factor Authentication operations against the Auth0 MFA API.
 """
 
-from __future__ import annotations
-
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Union
 
 import httpx
 
@@ -56,13 +54,13 @@ class MfaClient:
 
     def __init__(
         self,
-        domain: str | Callable | None,
+        domain: Union[str, Callable, None],
         client_id: str,
         client_secret: str,
         secret: str,
         state_store=None,
         state_identifier: str = "_a0_session",
-        headers: dict[str, str] | None = None
+        headers: Optional[dict[str, str]] = None
     ):
         if callable(domain):
             self._domain = None
@@ -84,7 +82,7 @@ class MfaClient:
 
     async def _resolve_base_url(
         self,
-        store_options: dict[str, Any] | None = None
+        store_options: Optional[dict[str, Any]] = None
     ) -> str:
         """Resolve domain and return base URL for API calls."""
         if self._domain_resolver:
@@ -146,7 +144,7 @@ class MfaClient:
     async def list_authenticators(
         self,
         options: dict[str, Any],
-        store_options: dict[str, Any] | None = None
+        store_options: Optional[dict[str, Any]] = None
     ) -> list[AuthenticatorResponse]:
         """
         Lists all MFA authenticators enrolled by the user.
@@ -192,7 +190,7 @@ class MfaClient:
     async def enroll_authenticator(
         self,
         options: dict[str, Any],
-        store_options: dict[str, Any] | None = None
+        store_options: Optional[dict[str, Any]] = None
     ) -> EnrollmentResponse:
         """
         Enrolls a new MFA authenticator for the user.
@@ -278,7 +276,7 @@ class MfaClient:
     async def challenge_authenticator(
         self,
         options: dict[str, Any],
-        store_options: dict[str, Any] | None = None
+        store_options: Optional[dict[str, Any]] = None
     ) -> ChallengeResponse:
         """
         Initiates an MFA challenge for user verification.
@@ -347,7 +345,7 @@ class MfaClient:
     async def verify(
         self,
         options: dict[str, Any],
-        store_options: dict[str, Any] | None = None
+        store_options: Optional[dict[str, Any]] = None
     ) -> MfaVerifyResponse:
         """
         Verifies an MFA code and completes authentication.
@@ -458,7 +456,7 @@ class MfaClient:
         self,
         verify_response: MfaVerifyResponse,
         options: dict[str, Any],
-        store_options: dict[str, Any] | None = None
+        store_options: Optional[dict[str, Any]] = None
     ) -> None:
         """
         Persist MFA verification tokens to the state store.

@@ -5,12 +5,11 @@ Builds and caches the Auth0-Client and User-Agent headers sent
 on every HTTP request to Auth0 endpoints.
 """
 
-from __future__ import annotations
-
 import base64
 import importlib.metadata
 import json
 import platform
+from typing import Optional
 
 
 class Telemetry:
@@ -18,11 +17,11 @@ class Telemetry:
 
     _PACKAGE_NAME = "auth0-server-python"
 
-    def __init__(self, name: str, version: str, env: dict[str, str] | None = None):
+    def __init__(self, name: str, version: str, env: Optional[dict[str, str]] = None):
         self.name = name
         self.version = version
         self.env = env if env is not None else {"python": platform.python_version()}
-        self._cached_headers: dict[str, str] | None = None
+        self._cached_headers: Optional[dict[str, str]] = None
 
     def get_headers(self) -> dict[str, str]:
         """Return the telemetry headers, building and caching on first call."""
@@ -41,7 +40,7 @@ class Telemetry:
         return self._cached_headers
 
     @staticmethod
-    def default() -> Telemetry:
+    def default() -> "Telemetry":
         """Create a Telemetry instance with this SDK's package metadata."""
         try:
             version = importlib.metadata.version(Telemetry._PACKAGE_NAME)

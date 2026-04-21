@@ -1,4 +1,5 @@
-from __future__ import annotations
+
+from typing import Optional
 
 import httpx
 
@@ -24,7 +25,7 @@ class MyAccountClient:
     Client for interacting with the Auth0 MyAccount API.
     """
 
-    def __init__(self, domain: str, headers: dict[str, str] | None = None):
+    def __init__(self, domain: str, headers: Optional[dict[str, str]] = None):
         """
         Initialize the MyAccount API client.
 
@@ -153,9 +154,9 @@ class MyAccountClient:
     async def list_connected_accounts(
         self,
         access_token: str,
-        connection: str | None = None,
-        from_param: str | None = None,
-        take: int | None = None
+        connection: Optional[str] = None,
+        from_param: Optional[str] = None,
+        take: Optional[int] = None
     ) -> ListConnectedAccountsResponse:
         """
         List connected accounts for the authenticated user.
@@ -277,8 +278,8 @@ class MyAccountClient:
     async def list_connected_account_connections(
         self,
         access_token: str,
-        from_param: str | None = None,
-        take: int | None = None
+        from_param: Optional[str] = None,
+        take: Optional[int] = None
     ) -> ListConnectedAccountConnectionsResponse:
         """
         List available connections that support connected accounts.
