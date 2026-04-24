@@ -346,7 +346,7 @@ class TestEnrollAuthenticator:
 
         result = await client.enroll_authenticator({
             "mfa_token": "tok",
-            "factor_type": "sms"
+            "factor_type": "auth0"
         })
         assert isinstance(result, OobEnrollmentResponse)
         assert result.oob_channel == "auth0"
@@ -386,8 +386,6 @@ class TestEnrollAuthenticator:
             })
         assert "Unsupported factor_type" in str(exc.value)
 
-
-# ── delete_authenticator ─────────────────────────────────────────────────────
 
 # ── challenge_authenticator ──────────────────────────────────────────────────
 
