@@ -509,7 +509,7 @@ class MfaClient:
             # Persist updated state
             await self._state_store.set(
                 self._state_identifier,
-                existing_state.model_dump() if hasattr(existing_state, 'model_dump') else existing_state,
+                existing_state.model_dump(),
                 options=store_options
             )
 
