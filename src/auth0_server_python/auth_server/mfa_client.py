@@ -47,9 +47,9 @@ class MfaClient:
     Provides methods for listing authenticators, enrolling new authenticators,
     deleting authenticators, challenging authenticators, and verifying MFA codes.
 
-    All operations require an mfa_token which is obtained either:
-    1. From MfaRequiredError raised during get_access_token() (encrypted)
-    2. Directly from the Auth0 MFA challenge response (raw)
+    All API operations require a raw mfa_token. If the token was encrypted
+    (e.g. from MfaRequiredError raised by get_access_token()), use
+    decrypt_mfa_token() first to obtain the raw token.
     """
 
     def __init__(
@@ -143,7 +143,7 @@ class MfaClient:
         Lists all MFA authenticators enrolled by the user.
 
         Args:
-            options: Dict containing 'mfa_token' (encrypted or raw).
+            options: Dict containing 'mfa_token' (raw, decrypted).
             store_options: Optional options passed to the State Store (e.g. request/response).
 
         Returns:
