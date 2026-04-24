@@ -156,7 +156,7 @@ class TestMfaTokenEncryption:
             enroll=[{"type": "otp"}],
             challenge=[{"type": "oob"}]
         )
-        encrypted = client.encrypt_mfa_token(
+        encrypted = client._encrypt_mfa_token(
             raw_mfa_token="raw_token_123",
             audience="https://api.example.com",
             scope="openid profile",
@@ -175,7 +175,7 @@ class TestMfaTokenEncryption:
         client = _make_client()
         mocker.patch("auth0_server_python.auth_server.mfa_client.time.time",
                      return_value=1000)
-        encrypted = client.encrypt_mfa_token(
+        encrypted = client._encrypt_mfa_token(
             raw_mfa_token="raw",
             audience="aud",
             scope="scope"
@@ -194,7 +194,7 @@ class TestMfaTokenEncryption:
 
     def test_decrypt_tampered_token_raises(self):
         client = _make_client()
-        encrypted = client.encrypt_mfa_token(
+        encrypted = client._encrypt_mfa_token(
             raw_mfa_token="raw", audience="aud", scope="scope"
         )
         tampered = encrypted[:-5] + "XXXXX"
@@ -203,7 +203,7 @@ class TestMfaTokenEncryption:
 
     def test_encrypt_without_mfa_requirements(self):
         client = _make_client()
-        encrypted = client.encrypt_mfa_token(
+        encrypted = client._encrypt_mfa_token(
             raw_mfa_token="raw", audience="aud", scope="scope"
         )
         context = client.decrypt_mfa_token(encrypted)

@@ -105,7 +105,7 @@ class MfaClient:
     # MFA TOKEN ENCRYPTION / DECRYPTION
     # ============================================================================
 
-    def encrypt_mfa_token(
+    def _encrypt_mfa_token(
         self,
         raw_mfa_token: str,
         audience: str,

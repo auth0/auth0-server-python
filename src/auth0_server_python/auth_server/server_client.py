@@ -1020,7 +1020,7 @@ class ServerClient(Generic[TStoreOptions]):
                 mfa_requirements = getattr(e, "mfa_requirements", None)
 
                 if raw_mfa_token:
-                    encrypted_token = self._mfa_client.encrypt_mfa_token(
+                    encrypted_token = self._mfa_client._encrypt_mfa_token(
                         raw_mfa_token=raw_mfa_token,
                         audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
                         scope=merged_scope or "",

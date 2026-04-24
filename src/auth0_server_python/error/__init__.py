@@ -275,7 +275,7 @@ class MfaVerifyError(MfaApiError):
         super().__init__("mfa_verify_error", message, cause)
 
 
-class MfaRequiredError(Auth0Error):
+class MfaRequiredError(AccessTokenError):
     """
     Error thrown when MFA step-up is required during token refresh.
 
@@ -291,11 +291,9 @@ class MfaRequiredError(Auth0Error):
         mfa_requirements=None,
         cause: Optional[Exception] = None
     ):
-        super().__init__(message)
-        self.code = "mfa_required"
+        super().__init__("mfa_required", message, cause)
         self.mfa_token = mfa_token
         self.mfa_requirements = mfa_requirements
-        self.cause = cause
 
 
 class MfaTokenExpiredError(Auth0Error):
