@@ -57,6 +57,7 @@ from auth0_server_python.error import (
     PollingApiError,
     StartLinkUserError,
 )
+from auth0_server_python.telemetry import Telemetry
 from auth0_server_python.utils import PKCE, URL, State
 from auth0_server_python.utils.helpers import (
     build_domain_resolver_context,
@@ -152,13 +153,20 @@ class ServerClient(Generic[TStoreOptions]):
         self._transaction_identifier = transaction_identifier
         self._state_identifier = state_identifier
 
+        # Initialize telemetry
+        self._telemetry = Telemetry.default()
+        self._telemetry_headers = self._telemetry.headers
+
         # Initialize OAuth client
         self._oauth = AsyncOAuth2Client(
             client_id=client_id,
             client_secret=client_secret,
+            headers=self._telemetry_headers,
         )
 
-        self._my_account_client = MyAccountClient(domain=domain)
+        self._my_account_client = MyAccountClient(
+            domain=domain, headers=self._telemetry_headers
+        )
 
         # Unified cache for OIDC metadata and JWKS per domain (LRU eviction + TTL)
         self._discovery_cache: OrderedDict[str, dict] = OrderedDict()
@@ -172,8 +180,14 @@ class ServerClient(Generic[TStoreOptions]):
             client_secret=self._client_secret,
             secret=self._secret,
             state_store=self._state_store,
-            state_identifier=self._state_identifier
+            state_identifier=self._state_identifier,
+            headers=self._telemetry_headers,
         )
+
+    def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
+        """Return an httpx.AsyncClient with telemetry headers injected."""
+        headers = {**kwargs.pop("headers", {}), **self._telemetry_headers}
+        return httpx.AsyncClient(headers=headers, **kwargs)
 
     def _normalize_url(self, value: str) -> str:
         """
@@ -281,7 +295,7 @@ class ServerClient(Generic[TStoreOptions]):
         """Fetch OIDC metadata from domain."""
         normalized_domain = self._normalize_url(domain)
         metadata_url = f"{normalized_domain}/.well-known/openid-configuration"
-        async with httpx.AsyncClient() as client:
+        async with self._get_http_client() as client:
             response = await client.get(metadata_url)
             response.raise_for_status()
             return response.json()
@@ -352,7 +366,7 @@ class ServerClient(Generic[TStoreOptions]):
             ApiError: If JWKS fetch fails
         """
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.get(jwks_uri)
                 response.raise_for_status()
                 return response.json()
@@ -516,7 +530,7 @@ class ServerClient(Generic[TStoreOptions]):
 
             auth_params["client_id"] = self._client_id
             # Post the auth_params to the PAR endpoint
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 par_response = await client.post(
                     par_endpoint,
                     data=auth_params,
@@ -1077,7 +1091,7 @@ class ServerClient(Generic[TStoreOptions]):
                 token_params["scope"] = merged_scope
 
             # Exchange the refresh token for an access token
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=token_params,
@@ -1391,7 +1405,7 @@ class ServerClient(Generic[TStoreOptions]):
                 params.update(authorization_params)
 
             # Make the backchannel authentication request
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 backchannel_response = await client.post(
                     backchannel_endpoint,
                     data=params,
@@ -1466,7 +1480,7 @@ class ServerClient(Generic[TStoreOptions]):
             }
 
             # Exchange the auth_req_id for an access token
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=token_params,
@@ -1918,7 +1932,7 @@ class ServerClient(Generic[TStoreOptions]):
                 params["login_hint"] = options["login_hint"]
 
             # Make the request
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=params,
@@ -2272,7 +2286,7 @@ class ServerClient(Generic[TStoreOptions]):
                         params[key] = value
 
             # Make the token exchange request
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=params,

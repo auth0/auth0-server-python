@@ -25,14 +25,21 @@ class MyAccountClient:
     Client for interacting with the Auth0 MyAccount API.
     """
 
-    def __init__(self, domain: str):
+    def __init__(self, domain: str, headers: Optional[dict[str, str]] = None):
         """
         Initialize the MyAccount API client.
 
         Args:
             domain: Auth0 domain (e.g., '<tenant>.<locality>.auth0.com')
+            headers: Optional default headers to include on every request
         """
         self._domain = domain
+        self._headers = headers or {}
+
+    def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
+        """Return an httpx.AsyncClient with default headers injected."""
+        headers = {**kwargs.pop("headers", {}), **self._headers}
+        return httpx.AsyncClient(headers=headers, **kwargs)
 
     @property
     def audience(self):
@@ -64,7 +71,7 @@ class MyAccountClient:
             ApiError: If the request fails due to network or other issues
         """
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     url=f"{self.audience}v1/connected-accounts/connect",
                     json=request.model_dump(exclude_none=True),
@@ -114,7 +121,7 @@ class MyAccountClient:
             ApiError: If the request fails due to network or other issues
         """
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     url=f"{self.audience}v1/connected-accounts/complete",
                     json=request.model_dump(exclude_none=True),
@@ -176,7 +183,7 @@ class MyAccountClient:
             raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 params = {}
                 if connection:
                     params["connection"] = connection
@@ -243,7 +250,7 @@ class MyAccountClient:
             raise MissingRequiredArgumentError("connected_account_id")
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.delete(
                     url=f"{self.audience}v1/connected-accounts/accounts/{connected_account_id}",
                     auth=BearerAuth(access_token)
@@ -298,7 +305,7 @@ class MyAccountClient:
             raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 params = {}
                 if from_param:
                     params["from"] = from_param

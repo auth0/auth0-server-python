@@ -59,7 +59,8 @@ class MfaClient:
         client_secret: str,
         secret: str,
         state_store=None,
-        state_identifier: str = "_a0_session"
+        state_identifier: str = "_a0_session",
+        headers: Optional[dict[str, str]] = None
     ):
         if callable(domain):
             self._domain = None
@@ -72,6 +73,12 @@ class MfaClient:
         self._secret = secret
         self._state_store = state_store
         self._state_identifier = state_identifier
+        self._headers = headers or {}
+
+    def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
+        """Return an httpx.AsyncClient with default headers injected."""
+        headers = {**kwargs.pop("headers", {}), **self._headers}
+        return httpx.AsyncClient(headers=headers, **kwargs)
 
     async def _resolve_base_url(
         self,
@@ -157,7 +164,7 @@ class MfaClient:
         url = f"{base_url}/mfa/authenticators"
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.get(
                     url,
                     auth=BearerAuth(mfa_token)
@@ -232,7 +239,7 @@ class MfaClient:
             body["email"] = options["email"]
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     url,
                     json=body,
@@ -311,7 +318,7 @@ class MfaClient:
             body["authenticator_id"] = options["authenticator_id"]
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     url,
                     json=body,
@@ -395,7 +402,7 @@ class MfaClient:
             base_url = await self._resolve_base_url(store_options)
             token_endpoint = f"{base_url}/oauth/token"
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=body,
