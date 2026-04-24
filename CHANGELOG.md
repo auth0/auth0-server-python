@@ -1,5 +1,15 @@
 # Change Log
 
+## [1.0.0b10](https://github.com/auth0/auth0-server-python/tree/1.0.0b10) (2026-04-24)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b9...1.0.0b10)
+
+**Added**
+- feat: Add MFA (Multi-Factor Authentication) API support [\#79](https://github.com/auth0/auth0-server-python/pull/79) ([subhankarmaiti](https://github.com/subhankarmaiti))
+- feat: add Auth0-Client telemetry header [\#103](https://github.com/auth0/auth0-server-python/pull/103) ([kishore7snehil](https://github.com/kishore7snehil))
+
+**Fixed**
+- fix: Make MfaRequiredError extend AccessTokenError and privatize encrypt_mfa_token [\#104](https://github.com/auth0/auth0-server-python/pull/104) ([kishore7snehil](https://github.com/kishore7snehil))
+
 ## [1.0.0b9](https://github.com/auth0/auth0-server-python/tree/1.0.0b9) (2026-04-08)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b8...1.0.0b9)
 
