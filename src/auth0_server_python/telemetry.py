@@ -13,7 +13,7 @@ from typing import Optional
 
 
 class Telemetry:
-    """Builds and caches telemetry headers for Auth0 HTTP requests."""
+    """Builds telemetry headers for Auth0 HTTP requests."""
 
     _PACKAGE_NAME = "auth0-server-python"
 
@@ -21,23 +21,13 @@ class Telemetry:
         self.name = name
         self.version = version
         self.env = env if env is not None else {"python": platform.python_version()}
-        self._cached_headers: Optional[dict[str, str]] = None
-
-    def get_headers(self) -> dict[str, str]:
-        """Return the telemetry headers, building and caching on first call."""
-        if self._cached_headers is None:
-            payload = {
-                "name": self.name,
-                "version": self.version,
-                "env": self.env,
-            }
-            self._cached_headers = {
-                "Auth0-Client": base64.b64encode(
-                    json.dumps(payload).encode("utf-8")
-                ).decode("utf-8"),
-                "User-Agent": f"Python/{platform.python_version()}",
-            }
-        return self._cached_headers
+        payload = {"name": self.name, "version": self.version, "env": self.env}
+        self.headers: dict[str, str] = {
+            "Auth0-Client": base64.b64encode(
+                json.dumps(payload).encode("utf-8")
+            ).decode("utf-8"),
+            "User-Agent": f"Python/{platform.python_version()}",
+        }
 
     @staticmethod
     def default() -> "Telemetry":

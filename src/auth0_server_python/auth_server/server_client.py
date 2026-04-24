@@ -155,7 +155,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Initialize telemetry
         self._telemetry = Telemetry.default()
-        self._telemetry_headers = self._telemetry.get_headers()
+        self._telemetry_headers = self._telemetry.headers
 
         # Initialize OAuth client
         self._oauth = AsyncOAuth2Client(
