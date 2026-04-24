@@ -14,6 +14,7 @@ The Auth0 MFA API allows you to manage multi-factor authentication for users in 
     - [Challenge Flow Response](#challenge-flow-response)
     - [Enroll Flow Response](#enroll-flow-response)
   - [Handling MFA Required Errors](#handling-mfa-required-errors)
+    - [MFA Token Encryption Design](#mfa-token-encryption-design)
   - [Getting Authenticators](#getting-authenticators)
     - [Response Structure](#response-structure)
   - [Getting Enrollment Factors](#getting-enrollment-factors)
@@ -121,6 +122,28 @@ except MfaRequiredError as error:
     # The MFA context is automatically stored in the client
     # You can now use the MFA methods
 ```
+
+### MFA Token Encryption Design
+
+The MFA token returned by `MfaRequiredError` from `get_access_token()` is **encrypted** by `ServerClient` before it reaches the caller. This prevents token tampering and replay when the token is stored client-side (e.g. in a cookie or hidden form field).
+
+All `MfaClient` API methods (`list_authenticators`, `enroll_authenticator`, `challenge_authenticator`, `verify`) operate on **raw** MFA tokens. The caller must decrypt the token using `decrypt_mfa_token()` before passing it to any MFA method:
+
+```python
+except MfaRequiredError as error:
+    encrypted_mfa_token = error.mfa_token  # Encrypted by ServerClient
+
+    # Decrypt before calling MFA methods
+    context = server_client.mfa.decrypt_mfa_token(encrypted_mfa_token)
+    raw_mfa_token = context.mfa_token
+
+    authenticators = await server_client.mfa.list_authenticators(
+        {"mfa_token": raw_mfa_token}
+    )
+```
+
+> [!IMPORTANT]
+> **Chained MFA**: If `verify()` raises `MfaRequiredError` (additional factor required), the `mfa_token` in that error is **raw** (not encrypted). This is by design — `MfaClient` is a transport-layer client that does not encrypt tokens. Encryption is the responsibility of the calling layer (`ServerClient` or the framework SDK like auth0-fastapi). Framework SDKs should encrypt the chained MFA token before returning it to the client.
 
 ## Getting Authenticators
 

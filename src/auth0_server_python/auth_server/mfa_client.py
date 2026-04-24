@@ -346,7 +346,8 @@ class MfaClient:
         Supports OTP, OOB (with binding code), and recovery code verification.
 
         If Auth0 returns 'mfa_required' again (chained MFA), raises MfaRequiredError
-        with a new encrypted mfa_token.
+        with a raw mfa_token. The framework SDK (e.g. auth0-fastapi) is responsible
+        for encrypting the token before returning it to the client.
 
         Args:
             options: Dict containing 'mfa_token' and one of:
@@ -404,7 +405,8 @@ class MfaClient:
                 if response.status_code != 200:
                     error_data = response.json()
 
-                    # Handle chained MFA
+                    # Handle chained MFA — token is raw; encryption is the
+                    # framework SDK's responsibility (see ServerClient.get_access_token).
                     if error_data.get("error") == "mfa_required":
                         new_mfa_token = error_data.get("mfa_token")
                         mfa_requirements_data = error_data.get("mfa_requirements")
