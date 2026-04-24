@@ -102,7 +102,6 @@ class MfaClient:
         audience: str,
         scope: str,
         mfa_requirements: Optional[MfaRequirements] = None,
-        ttl: int = DEFAULT_MFA_TOKEN_TTL
     ) -> str:
         """Encrypt an MFA token with context for secure client-side storage."""
         context = MfaTokenContext(
@@ -492,8 +491,7 @@ class MfaClient:
                 existing_state.id_token = verify_response.id_token
 
             # Create token_set for the access_token
-            expires_in = verify_response.get("expires_in", 86400)  # Default 24 hours
-            expires_at = int(time.time()) + expires_in
+            expires_at = int(time.time()) + verify_response.expires_in
 
             new_token_set = TokenSet(
                 audience=audience,

@@ -725,3 +725,126 @@ class TestVerify:
         with pytest.raises(MfaVerifyError) as exc:
             await client.verify({"mfa_token": "tok", "otp": "123456"})
         assert "connection reset" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_verify_persist_updates_session(self, mocker):
+        """verify(persist=True) should update the state store with new access_token."""
+        store = AsyncMock()
+        store.get = AsyncMock(return_value={
+            "user": {"sub": "auth0|123"},
+            "id_token": "old_id_token",
+            "token_sets": [
+                {"audience": "https://api.example.com", "access_token": "old_at",
+                 "scope": "openid", "expires_at": 1000}
+            ],
+            "internal": {"sid": "sid_123", "created_at": 1000}
+        })
+        client = MfaClient(
+            domain=DOMAIN, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
+            secret=SECRET, state_store=store
+        )
+
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "access_token": "new_at_from_mfa", "token_type": "Bearer",
+            "expires_in": 3600, "id_token": "new_id_token"
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        await client.verify(
+            {"mfa_token": "tok", "otp": "123456",
+             "persist": True, "audience": "https://api.example.com"}
+        )
+
+        store.set.assert_called_once()
+        saved_state = store.set.call_args[0][1]
+        assert saved_state["id_token"] == "new_id_token"
+        assert len(saved_state["token_sets"]) == 1
+        assert saved_state["token_sets"][0]["access_token"] == "new_at_from_mfa"
+
+    @pytest.mark.asyncio
+    async def test_verify_persist_missing_audience_raises(self, mocker):
+        store = AsyncMock()
+        client = MfaClient(
+            domain=DOMAIN, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
+            secret=SECRET, state_store=store
+        )
+
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "access_token": "at", "token_type": "Bearer", "expires_in": 3600
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        with pytest.raises(MfaVerifyError, match="audience is required"):
+            await client.verify(
+                {"mfa_token": "tok", "otp": "123456", "persist": True}
+            )
+
+    @pytest.mark.asyncio
+    async def test_verify_persist_no_existing_session_raises(self, mocker):
+        store = AsyncMock()
+        store.get = AsyncMock(return_value=None)
+        client = MfaClient(
+            domain=DOMAIN, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
+            secret=SECRET, state_store=store
+        )
+
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "access_token": "at", "token_type": "Bearer", "expires_in": 3600
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        with pytest.raises(MfaVerifyError, match="No existing session"):
+            await client.verify(
+                {"mfa_token": "tok", "otp": "123456",
+                 "persist": True, "audience": "https://api.example.com"}
+            )
+
+    @pytest.mark.asyncio
+    async def test_verify_persist_skipped_when_no_state_store(self, mocker):
+        """persist=True but no state_store configured should silently skip."""
+        client = _make_client()
+
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "access_token": "at", "token_type": "Bearer", "expires_in": 3600
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        result = await client.verify(
+            {"mfa_token": "tok", "otp": "123456",
+             "persist": True, "audience": "https://api.example.com"}
+        )
+        assert result.access_token == "at"
+
+    @pytest.mark.asyncio
+    async def test_verify_persist_store_failure_raises(self, mocker):
+        store = AsyncMock()
+        store.get = AsyncMock(return_value={
+            "user": {"sub": "auth0|123"}, "id_token": "id",
+            "token_sets": [], "internal": {"sid": "s", "created_at": 1000}
+        })
+        store.set = AsyncMock(side_effect=RuntimeError("Redis down"))
+        client = MfaClient(
+            domain=DOMAIN, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
+            secret=SECRET, state_store=store
+        )
+
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={
+            "access_token": "at", "token_type": "Bearer", "expires_in": 3600
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        with pytest.raises(MfaVerifyError, match="Failed to persist"):
+            await client.verify(
+                {"mfa_token": "tok", "otp": "123456",
+                 "persist": True, "audience": "https://api.example.com"}
+            )
