@@ -18,6 +18,8 @@ from auth0_server_python.auth_types import (
     MfaVerifyResponse,
     OobEnrollmentResponse,
     OtpEnrollmentResponse,
+    StateData,
+    TokenSet,
 )
 from auth0_server_python.encryption.encrypt import decrypt, encrypt
 from auth0_server_python.error import (
@@ -459,10 +461,6 @@ class MfaClient:
                 - 'scope': str (optional) - Scope for token_set
             store_options: Optional options passed to the State Store (e.g. request/response).
         """
-        import time
-
-        from auth0_server_python.auth_types import StateData, TokenSet
-
         audience = options.get("audience")
         scope = options.get("scope")
 

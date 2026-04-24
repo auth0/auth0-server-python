@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from pydantic_core import ValidationError
 
+from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.server_client import ServerClient
 from auth0_server_python.auth_types import (
@@ -4605,8 +4606,6 @@ async def test_server_client_mfa_property():
     """
     The ServerClient should expose an 'mfa' property returning an MfaClient instance.
     """
-    from auth0_server_python.auth_server.mfa_client import MfaClient
-
     mock_secret = "a-test-secret-with-enough-length"
     mock_store = MagicMock()
     mock_store.get = AsyncMock(return_value=None)
@@ -4614,9 +4613,7 @@ async def test_server_client_mfa_property():
     mock_store.delete = AsyncMock()
 
     # Patch OIDC metadata
-    import auth0_server_python.auth_server.server_client as sc_mod
-
-    original_fetch = sc_mod.ServerClient._fetch_oidc_metadata
+    original_fetch = ServerClient._fetch_oidc_metadata
 
     async def _fake_fetch(self, domain):
         return {
@@ -4626,7 +4623,7 @@ async def test_server_client_mfa_property():
             "backchannel_logout_supported": True,
         }
 
-    sc_mod.ServerClient._fetch_oidc_metadata = _fake_fetch
+    ServerClient._fetch_oidc_metadata = _fake_fetch
     try:
         client = ServerClient(
             domain="auth0.local",
@@ -4638,7 +4635,7 @@ async def test_server_client_mfa_property():
         )
         assert isinstance(client.mfa, MfaClient)
     finally:
-        sc_mod.ServerClient._fetch_oidc_metadata = original_fetch
+        ServerClient._fetch_oidc_metadata = original_fetch
 
 
 @pytest.mark.asyncio
@@ -4647,8 +4644,6 @@ async def test_server_client_mfa_receives_callable_domain():
     When ServerClient is given a callable domain (MCD), the MfaClient
     should receive that callable — not None or a resolved string.
     """
-    from auth0_server_python.auth_server.mfa_client import MfaClient
-
     mock_secret = "a-test-secret-with-enough-length"
     mock_store = MagicMock()
     mock_store.get = AsyncMock(return_value=None)
@@ -4658,9 +4653,7 @@ async def test_server_client_mfa_receives_callable_domain():
     async def my_resolver(context):
         return "tenant-x.auth0.local"
 
-    import auth0_server_python.auth_server.server_client as sc_mod
-
-    original_fetch = sc_mod.ServerClient._fetch_oidc_metadata
+    original_fetch = ServerClient._fetch_oidc_metadata
 
     async def _fake_fetch(self, domain):
         return {
@@ -4670,7 +4663,7 @@ async def test_server_client_mfa_receives_callable_domain():
             "backchannel_logout_supported": True,
         }
 
-    sc_mod.ServerClient._fetch_oidc_metadata = _fake_fetch
+    ServerClient._fetch_oidc_metadata = _fake_fetch
     try:
         client = ServerClient(
             domain=my_resolver,
@@ -4685,7 +4678,7 @@ async def test_server_client_mfa_receives_callable_domain():
         assert mfa._domain_resolver is my_resolver
         assert mfa._domain is None
     finally:
-        sc_mod.ServerClient._fetch_oidc_metadata = original_fetch
+        ServerClient._fetch_oidc_metadata = original_fetch
 
 
 @pytest.mark.asyncio
@@ -4700,9 +4693,7 @@ async def test_get_access_token_mfa_required(mocker):
     mock_store.set = AsyncMock()
     mock_store.delete = AsyncMock()
 
-    import auth0_server_python.auth_server.server_client as sc_mod
-
-    original_fetch = sc_mod.ServerClient._fetch_oidc_metadata
+    original_fetch = ServerClient._fetch_oidc_metadata
 
     async def _fake_fetch(self, domain):
         return {
@@ -4712,7 +4703,7 @@ async def test_get_access_token_mfa_required(mocker):
             "backchannel_logout_supported": True,
         }
 
-    sc_mod.ServerClient._fetch_oidc_metadata = _fake_fetch
+    ServerClient._fetch_oidc_metadata = _fake_fetch
     try:
         client = ServerClient(
             domain="auth0.local",
@@ -4752,7 +4743,7 @@ async def test_get_access_token_mfa_required(mocker):
         assert exc.value.mfa_token is not None
         assert exc.value.mfa_token != "raw_mfa_token_xyz"  # encrypted
     finally:
-        sc_mod.ServerClient._fetch_oidc_metadata = original_fetch
+        ServerClient._fetch_oidc_metadata = original_fetch
 
 
 @pytest.mark.asyncio
@@ -4767,9 +4758,7 @@ async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
     mock_store.set = AsyncMock()
     mock_store.delete = AsyncMock()
 
-    import auth0_server_python.auth_server.server_client as sc_mod
-
-    original_fetch = sc_mod.ServerClient._fetch_oidc_metadata
+    original_fetch = ServerClient._fetch_oidc_metadata
 
     async def _fake_fetch(self, domain):
         return {
@@ -4779,7 +4768,7 @@ async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
             "backchannel_logout_supported": True,
         }
 
-    sc_mod.ServerClient._fetch_oidc_metadata = _fake_fetch
+    ServerClient._fetch_oidc_metadata = _fake_fetch
     try:
         client = ServerClient(
             domain="auth0.local",
@@ -4826,4 +4815,4 @@ async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
         assert exc.value.mfa_token != "raw_mfa_token_enroll"  # encrypted
         assert exc.value.mfa_requirements is not None
     finally:
-        sc_mod.ServerClient._fetch_oidc_metadata = original_fetch
+        ServerClient._fetch_oidc_metadata = original_fetch

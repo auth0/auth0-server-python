@@ -3,13 +3,14 @@ target-version = "py39"
 
 [lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
-    "S",   # bandit (security)
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "S",      # bandit (security)
+    "PLC0415", # pylint: import-outside-top-level
 ]
 ignore = ["E501", "B904", "S101", "S105", "S106"]  # Line too long (handled by black), Exception handling without from
