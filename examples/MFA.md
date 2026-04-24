@@ -116,11 +116,11 @@ server_client = ServerClient(
 try:
     access_token = await server_client.get_access_token()
 except MfaRequiredError as error:
-    mfa_token = error.mfa_token
     print(f"MFA Required: {error.error_description}")
-    
-    # The MFA context is automatically stored in the client
-    # You can now use the MFA methods
+
+    # Decrypt the encrypted mfa_token before using MFA methods
+    context = server_client.mfa.decrypt_mfa_token(error.mfa_token)
+    mfa_token = context.mfa_token  # Raw token for MFA API calls
 ```
 
 ### MFA Token Encryption Design
@@ -711,7 +711,9 @@ async def login_with_mfa(server_client, store_options=None):
         return access_token
 
     except MfaRequiredError as mfa_error:
-        mfa_token = mfa_error.mfa_token
+        # Decrypt the encrypted mfa_token from get_access_token()
+        context = server_client.mfa.decrypt_mfa_token(mfa_error.mfa_token)
+        mfa_token = context.mfa_token
 
         # Determine flow: check if user needs to enroll or has authenticators
         authenticators = await server_client.mfa.list_authenticators(
@@ -755,7 +757,10 @@ async def handle_mfa_with_error_handling(server_client, store_options=None):
 
     except MfaRequiredError as error:
         print(f"MFA Required: {error.error_description}")
-        mfa_token = error.mfa_token
+
+        # Decrypt the encrypted mfa_token from get_access_token()
+        context = server_client.mfa.decrypt_mfa_token(error.mfa_token)
+        mfa_token = context.mfa_token
 
         try:
             # Get authenticators
