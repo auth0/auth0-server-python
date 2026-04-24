@@ -38,7 +38,7 @@ class MyAccountClient:
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with default headers injected."""
-        headers = {**self._headers, **kwargs.pop("headers", {})}
+        headers = {**kwargs.pop("headers", {}), **self._headers}
         return httpx.AsyncClient(headers=headers, **kwargs)
 
     @property

@@ -1,7 +1,8 @@
 import base64
+import importlib.metadata
 import json
 import platform
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -63,7 +64,7 @@ class TestTelemetry:
 
     @patch(
         "auth0_server_python.telemetry.importlib.metadata.version",
-        side_effect=Exception("not installed"),
+        side_effect=importlib.metadata.PackageNotFoundError("not installed"),
     )
     def test_default_factory_unknown_version_on_error(self, _mock):
         telemetry = Telemetry.default()
@@ -96,23 +97,40 @@ class TestServerClientTelemetry:
         assert "version" in decoded
         assert "python" in decoded["env"]
 
-    def test_get_http_client_includes_telemetry_headers(self):
+    @pytest.mark.asyncio
+    async def test_get_http_client_includes_telemetry_headers(self):
         client = self._make_client()
         http_client = client._get_http_client()
         for key, value in client._telemetry_headers.items():
             assert http_client.headers.get(key) == value
+        await http_client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_get_http_client_per_request_headers_do_not_override_telemetry(self):
+        client = self._make_client()
+        http_client = client._get_http_client(headers={"User-Agent": "custom", "X-Custom": "val"})
+        # Telemetry headers must win over caller-provided duplicates
+        assert http_client.headers.get("User-Agent") == client._telemetry_headers["User-Agent"]
+        assert http_client.headers.get("Auth0-Client") == client._telemetry_headers["Auth0-Client"]
+        # Non-conflicting caller headers are preserved
+        assert http_client.headers.get("X-Custom") == "val"
+        await http_client.aclose()
 
     def test_my_account_client_receives_telemetry_headers(self):
         client = self._make_client()
         assert client._my_account_client._headers == client._telemetry_headers
 
+    def test_mfa_client_receives_telemetry_headers(self):
+        client = self._make_client()
+        assert client._mfa_client._headers == client._telemetry_headers
+
     @pytest.mark.asyncio
     async def test_fetch_oidc_metadata_sends_telemetry(self, mocker):
         client = self._make_client()
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"issuer": "https://auth0.local/"}
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = MagicMock()
 
         mock_http_client = AsyncMock()
         mock_http_client.get.return_value = mock_response

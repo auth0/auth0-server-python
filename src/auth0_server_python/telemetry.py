@@ -44,6 +44,6 @@ class Telemetry:
         """Create a Telemetry instance with this SDK's package metadata."""
         try:
             version = importlib.metadata.version(Telemetry._PACKAGE_NAME)
-        except Exception:
+        except importlib.metadata.PackageNotFoundError:
             version = "unknown"
         return Telemetry(name=Telemetry._PACKAGE_NAME, version=version)

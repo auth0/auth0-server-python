@@ -186,7 +186,7 @@ class ServerClient(Generic[TStoreOptions]):
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with telemetry headers injected."""
-        headers = {**self._telemetry_headers, **kwargs.pop("headers", {})}
+        headers = {**kwargs.pop("headers", {}), **self._telemetry_headers}
         return httpx.AsyncClient(headers=headers, **kwargs)
 
     def _normalize_url(self, value: str) -> str:
