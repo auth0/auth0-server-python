@@ -54,6 +54,7 @@ from auth0_server_python.error import (
     MfaRequiredError,
     MissingRequiredArgumentError,
     MissingTransactionError,
+    OrganizationTokenValidationError,
     PollingApiError,
     StartLinkUserError,
 )
@@ -79,9 +80,7 @@ class ServerClient(Generic[TStoreOptions]):
     """
     DEFAULT_AUDIENCE_STATE_KEY = "default"
 
-    # ============================================================================
     # INITIALIZATION
-    # ============================================================================
 
     def __init__(
         self,
@@ -96,6 +95,7 @@ class ServerClient(Generic[TStoreOptions]):
         state_identifier: str = "_a0_session",
         authorization_params: Optional[dict[str, Any]] = None,
         pushed_authorization_requests: bool = False,
+        organization: Optional[str] = None,
     ):
         """
         Initialize the Auth0 server client.
@@ -112,6 +112,9 @@ class ServerClient(Generic[TStoreOptions]):
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
             pushed_authorization_requests: Whether to use Pushed Authorization Requests
+            organization: Default organization for all login flows from this client.
+                Can be an org ID (e.g. 'org_abc123') or an org name (e.g. 'acme-corp').
+                Per-login values passed in StartInteractiveLoginOptions always override this.
         """
         if not secret:
             raise MissingRequiredArgumentError("secret")
@@ -146,6 +149,7 @@ class ServerClient(Generic[TStoreOptions]):
         self._secret = secret
         self._default_authorization_params = authorization_params or {}
         self._pushed_authorization_requests = pushed_authorization_requests  # store the flag
+        self._organization = organization
 
         # Initialize stores
         self._transaction_store = transaction_store
@@ -206,6 +210,40 @@ class ServerClient(Generic[TStoreOptions]):
             value = f'https://{value}'
 
         return value.rstrip('/')
+
+    def _validate_org_claims(self, claims: dict, expected_org: str) -> None:
+        """
+        Validate org_id or org_name in token claims against the requested organization.
+
+        Uses expected_org prefix to determine which claim to check:
+          - 'org_' prefix  → validate claims['org_id'] exact match
+          - no prefix      → validate claims['org_name'] case-insensitive match
+
+        Raises:
+            OrganizationTokenValidationError: if the claim is missing or mismatched.
+        """
+        if expected_org.startswith("org_"):
+            actual = claims.get("org_id")
+            if not isinstance(actual, str):
+                raise OrganizationTokenValidationError(
+                    "Organization Id (org_id) claim must be a string present in the ID token"
+                )
+            if actual != expected_org:
+                raise OrganizationTokenValidationError(
+                    f"Organization Id (org_id) claim value mismatch in the ID token; "
+                    f"expected {expected_org}, found {actual}"
+                )
+        else:
+            actual = claims.get("org_name")
+            if not isinstance(actual, str):
+                raise OrganizationTokenValidationError(
+                    "Organization Name (org_name) claim must be a string present in the ID token"
+                )
+            if actual.lower() != expected_org.lower():
+                raise OrganizationTokenValidationError(
+                    f"Organization Name (org_name) claim value mismatch in the ID token; "
+                    f"expected {expected_org}, found {actual}"
+                )
 
     async def _resolve_current_domain(self, store_options=None) -> str:
         """Resolve domain from resolver function or return static domain."""
@@ -435,11 +473,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         return jwks
 
-    # ============================================================================
     # INTERACTIVE LOGIN FLOW
-    # Handles browser-based authentication using the Authorization Code flow
-    # with PKCE for secure token exchange.
-    # ============================================================================
 
     async def start_interactive_login(
         self,
@@ -502,6 +536,15 @@ class ServerClient(Generic[TStoreOptions]):
         merged_scope = self._merge_scope_with_defaults(requested_scope, audience)
         auth_params["scope"] = merged_scope
 
+        # Resolve organization: per-login value takes precedence over client-level default.
+        resolved_org = options.organization or self._organization
+        if resolved_org:
+            auth_params["organization"] = resolved_org
+
+        # Invitation is forwarded to /authorize but not stored for callback validation.
+        if options.invitation:
+            auth_params["invitation"] = options.invitation
+
         # Build the transaction data to store with domain
         transaction_data = TransactionData(
             code_verifier=code_verifier,
@@ -509,6 +552,7 @@ class ServerClient(Generic[TStoreOptions]):
             audience=audience,
             domain=origin_domain,
             redirect_uri=auth_params.get("redirect_uri"),
+            organization=resolved_org,
         )
 
         # Store the transaction data
@@ -638,8 +682,12 @@ class ServerClient(Generic[TStoreOptions]):
         user_info = token_response.get("userinfo")
         user_claims = None
         id_token = token_response.get("id_token")
+        expected_org = transaction_data.organization
 
         if user_info:
+            # Org validation on the userinfo path — claims come from userinfo dict.
+            if expected_org:
+                self._validate_org_claims(user_info, expected_org)
             user_claims = UserClaims.parse_obj(user_info)
         elif id_token:
             # Fetch JWKS for signature verification
@@ -655,6 +703,10 @@ class ServerClient(Generic[TStoreOptions]):
                 token_issuer = claims.get("iss", "")
                 if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
                     raise IssuerValidationError("ID token issuer mismatch. Ensure your Auth0 domain is configured correctly.")
+
+                # Organization claim validation — mandatory when org was requested.
+                if expected_org:
+                    self._validate_org_claims(claims, expected_org)
 
                 user_claims = UserClaims.parse_obj(claims)
             except ValueError as e:
@@ -729,10 +781,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         return result
 
-    # ============================================================================
     # USER SESSION MANAGEMENT
-    # Methods for retrieving user information, session data, and logout operations.
-    # ============================================================================
 
     async def get_user(self, store_options: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
         """
@@ -916,10 +965,7 @@ class ServerClient(Generic[TStoreOptions]):
             raise BackchannelLogoutError(
                 f"Error processing logout token: {str(e)}")
 
-    # ============================================================================
     # ACCESS TOKEN MANAGEMENT
-    # Retrieves, validates, and refreshes access tokens for API calls.
-    # ============================================================================
 
     async def get_access_token(
         self,
@@ -1001,6 +1047,16 @@ class ServerClient(Generic[TStoreOptions]):
 
             if merged_scope:
                 get_refresh_token_options["scope"] = merged_scope
+
+            # Carry org context so refreshed tokens include org_id/org_name claims.
+            # Use org_id (stable) rather than org_name (mutable).
+            user_dict = state_data_dict.get("user") or {}
+            if isinstance(user_dict, dict):
+                session_org_id = user_dict.get("org_id")
+            else:
+                session_org_id = getattr(user_dict, "org_id", None)
+            if session_org_id is not None:
+                get_refresh_token_options["organization"] = session_org_id
 
             token_endpoint_response = await self.get_token_by_refresh_token(get_refresh_token_options)
 
@@ -1090,6 +1146,10 @@ class ServerClient(Generic[TStoreOptions]):
             if merged_scope:
                 token_params["scope"] = merged_scope
 
+            organization = options.get("organization")
+            if organization is not None:
+                token_params["organization"] = organization
+
             # Exchange the refresh token for an access token
             async with self._get_http_client() as client:
                 response = await client.post(
@@ -1128,10 +1188,23 @@ class ServerClient(Generic[TStoreOptions]):
                     token_response["expires_at"] = int(
                         time.time()) + token_response["expires_in"]
 
+                # Validate org claims in the refreshed ID token when org context was sent.
+                # This ensures a refresh cannot silently downgrade or change org membership.
+                refresh_id_token = token_response.get("id_token")
+                if organization is not None and refresh_id_token:
+                    refresh_jwks = await self._get_jwks_cached(domain, metadata)
+                    try:
+                        refresh_claims = await self._verify_and_decode_jwt(
+                            refresh_id_token, refresh_jwks, audience=self._client_id
+                        )
+                    except Exception as e:
+                        raise ApiError("invalid_token", f"Refresh ID token verification failed: {str(e)}", e)
+                    self._validate_org_claims(refresh_claims, organization)
+
                 return token_response
 
         except Exception as e:
-            if isinstance(e, ApiError):
+            if isinstance(e, (ApiError, OrganizationTokenValidationError)):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
@@ -1185,11 +1258,7 @@ class ServerClient(Generic[TStoreOptions]):
         # Return the token set with the smallest superset of scopes that matches the requested audience and scopes
         return min(matches, key=lambda t: t[0])[1] if matches else None
 
-    # ============================================================================
     # BACKCHANNEL AUTHENTICATION (CIBA)
-    # Client-Initiated Backchannel Authentication for decoupled authentication
-    # flows where users authenticate on a separate device.
-    # ============================================================================
 
     async def login_backchannel(
         self,
@@ -1213,10 +1282,12 @@ class ServerClient(Generic[TStoreOptions]):
         Returns:
             A dictionary containing the authorizationDetails (when RAR was used).
         """
+        resolved_org = options.get("organization") or self._organization
         token_endpoint_response = await self.backchannel_authentication({
             "binding_message": options.get("binding_message"),
             "login_hint": options.get("login_hint"),
             "authorization_params": options.get("authorization_params"),
+            "organization": resolved_org,
         }, store_options=store_options)
 
         existing_state_data = await self._state_store.get(self._state_identifier, store_options)
@@ -1275,6 +1346,7 @@ class ServerClient(Generic[TStoreOptions]):
             "expires_in", 120)  # Default to 2 minutes
         interval = backchannel_data.get(
             "interval", 5)  # Default to 5 seconds
+        organization = options.get("organization")
 
         # Calculate when to stop polling
         end_time = time.time() + expires_in
@@ -1283,7 +1355,11 @@ class ServerClient(Generic[TStoreOptions]):
         while time.time() < end_time:
             # Make token request
             try:
-                token_response = await self.backchannel_authentication_grant(auth_req_id, store_options=store_options)
+                token_response = await self.backchannel_authentication_grant(
+                    auth_req_id,
+                    organization=organization,
+                    store_options=store_options,
+                )
                 return token_response
 
             except Exception as e:
@@ -1296,6 +1372,8 @@ class ServerClient(Generic[TStoreOptions]):
                         # Wait for the specified interval before polling again
                         await asyncio.sleep(e.interval or interval)
                         continue
+                if isinstance(e, OrganizationTokenValidationError):
+                    raise
                 raise ApiError(
                     "backchannel_error",
                     f"Backchannel authentication failed: {str(e) or 'Unknown error'}",
@@ -1404,6 +1482,12 @@ class ServerClient(Generic[TStoreOptions]):
             if authorization_params:
                 params.update(authorization_params)
 
+            # Organization: per-request value already resolved upstream in login_backchannel.
+            # Accept it here so it reaches the bc-authorize request body.
+            backchannel_org = options.get("organization")
+            if backchannel_org:
+                params["organization"] = backchannel_org
+
             # Make the backchannel authentication request
             async with self._get_http_client() as client:
                 backchannel_response = await client.post(
@@ -1443,6 +1527,7 @@ class ServerClient(Generic[TStoreOptions]):
     async def backchannel_authentication_grant(
         self,
         auth_req_id: str,
+        organization: Optional[str] = None,
         store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
@@ -1450,6 +1535,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Args:
             auth_req_id (str): The authentication request ID obtained from bc-authorize
+            organization: Organization value used at CIBA initiation, for ID token validation.
             store_options: Optional options used to pass to the Transaction and State Store.
 
         Raises:
@@ -1511,10 +1597,29 @@ class ServerClient(Generic[TStoreOptions]):
                     token_response["expires_at"] = int(
                         time.time()) + token_response["expires_in"]
 
+                # Validate org claims in the ID token when an org was requested.
+                # If org was requested but no id_token was returned, fail closed —
+                # we cannot verify org membership without an id_token.
+                id_token = token_response.get("id_token")
+                if organization:
+                    if not id_token:
+                        raise OrganizationTokenValidationError(
+                            "Organization was requested but the token response did not include an ID token; "
+                            "cannot verify organization membership"
+                        )
+                    jwks = await self._get_jwks_cached(domain)
+                    try:
+                        ciba_claims = await self._verify_and_decode_jwt(
+                            id_token, jwks, audience=self._client_id
+                        )
+                    except Exception as e:
+                        raise ApiError("invalid_token", f"CIBA ID token verification failed: {str(e)}", e)
+                    self._validate_org_claims(ciba_claims, organization)
+
                 return token_response
 
         except Exception as e:
-            if isinstance(e, (ApiError, PollingApiError)):
+            if isinstance(e, (ApiError, PollingApiError, OrganizationTokenValidationError)):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.AUTH_REQ_ID_ERROR,
@@ -1522,11 +1627,7 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
-    # ============================================================================
     # USER LINKING / UNLINKING
-    # Methods for linking and unlinking external identity provider accounts
-    # to a user's Auth0 profile.
-    # ============================================================================
 
     async def start_link_user(
         self,
@@ -1797,11 +1898,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         return URL.build_url(auth_endpoint, params)
 
-    # ============================================================================
     # FEDERATED CONNECTION TOKENS
-    # Retrieves access tokens for federated identity provider connections
-    # (e.g., Google, GitHub) using token exchange.
-    # ============================================================================
 
     async def get_access_token_for_connection(
         self,
@@ -1968,11 +2065,7 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
-    # ============================================================================
     # CONNECTED ACCOUNTS
-    # Methods for managing third-party account connections via the My Account API.
-    # Includes initiating connections, completing flows, and CRUD operations.
-    # ============================================================================
 
     async def start_connect_account(
         self,
@@ -2199,10 +2292,7 @@ class ServerClient(Generic[TStoreOptions]):
         return await self._my_account_client.list_connected_account_connections(
             access_token=access_token, from_param=from_param, take=take)
 
-    # ============================================================================
     # CUSTOM TOKEN EXCHANGE (RFC 8693)
-    # Exchanges external custom tokens for Auth0 tokens.
-    # ============================================================================
 
     async def custom_token_exchange(
         self,
@@ -2475,9 +2565,7 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
-    # ============================================================================
     # MFA (Multi-Factor Authentication)
-    # ============================================================================
 
     @property
     def mfa(self) -> MfaClient:

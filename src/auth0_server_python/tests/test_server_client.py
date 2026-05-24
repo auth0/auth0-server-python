@@ -24,6 +24,7 @@ from auth0_server_python.auth_types import (
     LoginWithCustomTokenExchangeOptions,
     LogoutOptions,
     MfaRequirements,
+    StartInteractiveLoginOptions,
     StateData,
     TransactionData,
 )
@@ -43,6 +44,7 @@ from auth0_server_python.error import (
     MfaRequiredError,
     MissingRequiredArgumentError,
     MissingTransactionError,
+    OrganizationTokenValidationError,
     PollingApiError,
     StartLinkUserError,
 )
@@ -2320,9 +2322,7 @@ async def test_get_token_by_refresh_token_exchange_failed(mocker):
     args, kwargs = mock_post.call_args
     assert kwargs["data"]["refresh_token"] == "<refresh_token_should_fail>"
 
-# =============================================================================
 # Connected Accounts Tests (My Account Client)
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -2856,9 +2856,7 @@ async def test_list_connected_account_connections_with_invalid_take_param(mocker
     assert "The 'take' parameter must be a positive integer." in str(exc.value)
     mock_my_account_client.list_connected_account_connections.assert_not_awaited()
 
-# =============================================================================
 # Custom Token Exchange Tests
-# =============================================================================
 
 @pytest.mark.asyncio
 async def test_custom_token_exchange_success(mocker):
@@ -3351,9 +3349,7 @@ async def test_custom_token_exchange_forbidden_params_filtered(mocker):
     assert call_args[1]["data"]["allowed_param"] == "value"
 
 
-# =============================================================================
 # Login with Custom Token Exchange Tests
-# =============================================================================
 
 @pytest.mark.asyncio
 async def test_login_with_custom_token_exchange_success(mocker):
@@ -3541,9 +3537,7 @@ async def test_login_with_custom_token_exchange_failure_propagates(mocker):
     assert exc.value.code == "unauthorized"
 
 
-# =============================================================================
 # OIDC Metadata and JWKS Fetching Tests
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -3844,9 +3838,7 @@ async def test_metadata_cache_size_limit():
     assert "domain3.auth0.com" in client._discovery_cache
 
 
-# =============================================================================
 # Issuer Validation Tests
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -4050,9 +4042,7 @@ async def test_normalize_url_handles_edge_cases():
     assert client._normalize_url(None) is None
 
 
-# =============================================================================
 # MCD Tests : Multiple Issuer Configuration Methods Tests
-# =============================================================================
 
 @pytest.mark.asyncio
 async def test_domain_as_static_string():
@@ -4121,9 +4111,7 @@ async def test_empty_domain_string():
         )
 
 
-# =============================================================================
 # MCD Tests : Domain Resolver Context Tests
-# =============================================================================
 
 @pytest.mark.asyncio
 async def test_domain_resolver_receives_context(mocker):
@@ -4336,9 +4324,7 @@ async def test_resolver_returns_domain_with_scheme_prefix():
     assert user["sub"] == "user123"
 
 
-# =============================================================================
 # MCD Tests : Domain-specific Session Management Tests
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -4816,3 +4802,1061 @@ async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
         assert exc.value.mfa_requirements is not None
     finally:
         ServerClient._fetch_oidc_metadata = original_fetch
+
+
+# ORGANIZATIONS SUPPORT TESTS
+
+def _make_org_client(mocker, transaction_data: TransactionData, **extra):
+    """Helper: build a ServerClient with mocked stores and standard JWT mocks."""
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = transaction_data
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+        **extra
+    )
+
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://tenant.auth0.com/",
+            "token_endpoint": "https://tenant.auth0.com/token",
+            "authorization_endpoint": "https://tenant.auth0.com/authorize",
+        }
+    )
+    mocker.patch.object(
+        client,
+        "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+    async_fetch_token = AsyncMock(return_value={
+        "access_token": "at123",
+        "id_token": "id_token_jwt",
+        "scope": "openid profile",
+    })
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+    mocker.patch("jwt.get_unverified_header", return_value={"kid": "test-key"})
+    mock_signing_key = mocker.MagicMock()
+    mock_signing_key.key = "mock_pem_key"
+    mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
+    return client
+
+
+# --------------------------------------------------------------------------
+# ORG-001: org by ID — matching org_id succeeds
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_org_by_id_matching_claim_succeeds(mocker):
+    """ORG-001: Token with matching org_id passes validation."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="org_abc123"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/",
+        "aud": "test_client", "org_id": "org_abc123",
+    })
+    result = await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert result["state_data"]["user"]["org_id"] == "org_abc123"
+
+
+# --------------------------------------------------------------------------
+# ORG-002: org by ID — missing org_id claim raises error
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_org_by_id_missing_claim_raises(mocker):
+    """ORG-002: Token missing org_id raises OrganizationTokenValidationError."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="org_abc123"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        # no org_id
+    })
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert "org_id" in str(exc.value)
+    assert "must be a string present" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# ORG-003: org by ID — wrong org_id raises error with detail
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_org_by_id_wrong_claim_raises(mocker):
+    """ORG-003: Token with wrong org_id raises OrganizationTokenValidationError with mismatch detail."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="org_abc123"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_id": "org_attacker",
+    })
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert "mismatch" in str(exc.value)
+    assert "org_abc123" in str(exc.value)
+    assert "org_attacker" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# ORG-004: org by ID — null org_id claim raises error
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_org_by_id_null_claim_raises(mocker):
+    """ORG-004: Token with null org_id raises OrganizationTokenValidationError."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="org_abc123"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_id": None,
+    })
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert "org_id" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# ORG-005: org by name — exact case match succeeds
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_org_by_name_exact_match_succeeds(mocker):
+    """ORG-005: Token with matching org_name (exact case) passes validation."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="acme-corp"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_name": "acme-corp",
+    })
+    result = await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert result is not None
+
+
+# --------------------------------------------------------------------------
+# ORG-006: org by name — case-insensitive match succeeds
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_org_by_name_case_insensitive_match_succeeds(mocker):
+    """ORG-006: Token with org_name differing only in case passes validation."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="ACME-CORP"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_name": "acme-corp",
+    })
+    result = await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert result is not None
+
+
+# --------------------------------------------------------------------------
+# ORG-007: org by name — missing org_name claim raises error
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_org_by_name_missing_claim_raises(mocker):
+    """ORG-007: Token missing org_name raises OrganizationTokenValidationError."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="acme-corp"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        # no org_name
+    })
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert "org_name" in str(exc.value)
+    assert "must be a string present" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# ORG-008: org by name — wrong org_name raises error with detail
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_org_by_name_wrong_claim_raises(mocker):
+    """ORG-008: Token with wrong org_name raises OrganizationTokenValidationError with detail."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="acme-corp"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_name": "evil-corp",
+    })
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert "mismatch" in str(exc.value)
+    assert "acme-corp" in str(exc.value)
+    assert "evil-corp" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# ORG-009: no org requested — token with org_id is not rejected
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_no_org_requested_token_with_org_id_passes(mocker):
+    """ORG-009: When no org was requested, tokens carrying org_id must not be rejected."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com"),  # no organization
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_id": "org_abc123", "org_name": "acme",
+    })
+    result = await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert result["state_data"]["user"]["org_id"] == "org_abc123"
+    assert result["state_data"]["user"]["org_name"] == "acme"
+
+
+# --------------------------------------------------------------------------
+# ORG-010: no org requested — plain token passes
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_no_org_requested_plain_token_passes(mocker):
+    """ORG-010: When no org was requested, a token without org claims passes normally."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+    })
+    result = await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert result is not None
+
+
+# --------------------------------------------------------------------------
+# ORG-011: invitation and org forwarded to /authorize
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_invitation_and_org_forwarded_to_authorize(mocker):
+    """ORG-011: organization and invitation appear in the authorization URL."""
+    mock_tx_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        redirect_uri="https://app.example.com/callback",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant.auth0.com/",
+        "authorization_endpoint": "https://tenant.auth0.com/authorize",
+    })
+
+    url = await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            organization="org_abc123",
+            invitation="inv_token_xyz",
+        )
+    )
+
+    assert "organization=org_abc123" in url
+    assert "invitation=inv_token_xyz" in url
+
+    # Confirm transaction stores the organization
+    stored = mock_tx_store.set.call_args[0][1]
+    assert stored.organization == "org_abc123"
+
+
+# --------------------------------------------------------------------------
+# ORG-012: invitation without org forwarded to /authorize
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_invitation_without_org_forwarded_to_authorize(mocker):
+    """ORG-012: invitation alone appears in the URL; no organization param."""
+    mock_tx_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        redirect_uri="https://app.example.com/callback",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant.auth0.com/",
+        "authorization_endpoint": "https://tenant.auth0.com/authorize",
+    })
+
+    url = await client.start_interactive_login(
+        StartInteractiveLoginOptions(invitation="inv_token_xyz")
+    )
+
+    assert "invitation=inv_token_xyz" in url
+    assert "organization=" not in url
+
+
+# --------------------------------------------------------------------------
+# ORG-013: per-login org overrides client-level org
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_per_login_org_overrides_client_org(mocker):
+    """ORG-013: Per-login organization overrides the client-level default."""
+    mock_tx_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        redirect_uri="https://app.example.com/callback",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+        organization="org_default",
+    )
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant.auth0.com/",
+        "authorization_endpoint": "https://tenant.auth0.com/authorize",
+    })
+
+    url = await client.start_interactive_login(
+        StartInteractiveLoginOptions(organization="org_override")
+    )
+
+    assert "organization=org_override" in url
+    assert "org_default" not in url
+
+    stored = mock_tx_store.set.call_args[0][1]
+    assert stored.organization == "org_override"
+
+
+# --------------------------------------------------------------------------
+# ORG-014: client-level org used when login options has no org
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_client_level_org_used_when_no_per_login_org(mocker):
+    """ORG-014: Client-level organization is used when no per-login org is set."""
+    mock_tx_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        redirect_uri="https://app.example.com/callback",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+        organization="org_default",
+    )
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant.auth0.com/",
+        "authorization_endpoint": "https://tenant.auth0.com/authorize",
+    })
+
+    url = await client.start_interactive_login(StartInteractiveLoginOptions())
+
+    assert "organization=org_default" in url
+    stored = mock_tx_store.set.call_args[0][1]
+    assert stored.organization == "org_default"
+
+
+# --------------------------------------------------------------------------
+# ORG-015: org_name present in UserClaims after successful org login
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_org_name_present_in_user_claims_after_org_login(mocker):
+    """ORG-015: org_id and org_name both surface in session user claims."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="org_abc123"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_id": "org_abc123", "org_name": "acme-corp",
+    })
+    result = await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    user = result["state_data"]["user"]
+    assert user["org_id"] == "org_abc123"
+    assert user["org_name"] == "acme-corp"
+
+
+# --------------------------------------------------------------------------
+# ORG-016: refresh token carries org context
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_refresh_token_includes_org_from_session(mocker):
+    """ORG-016: get_access_token passes organization to the refresh token request."""
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "user": {"sub": "u1", "org_id": "org_abc123"},
+        "refresh_token": "rt_xyz",
+        "token_sets": [],
+        "domain": "tenant.auth0.com",
+    }
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    mock_refresh = AsyncMock(return_value={
+        "access_token": "new_at",
+        "expires_in": 3600,
+        "expires_at": int(time.time()) + 3600,
+    })
+    mocker.patch.object(client, "get_token_by_refresh_token", mock_refresh)
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant.auth0.com/",
+        "token_endpoint": "https://tenant.auth0.com/token",
+    })
+
+    await client.get_access_token()
+
+    call_options = mock_refresh.call_args[0][0]
+    assert call_options.get("organization") == "org_abc123"
+
+
+# --------------------------------------------------------------------------
+# ORG-017: refresh without org context — no org in request
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_refresh_token_no_org_when_no_session_org(mocker):
+    """ORG-017: When session has no org_id, no organization param in refresh request."""
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "user": {"sub": "u1"},
+        "refresh_token": "rt_xyz",
+        "token_sets": [],
+        "domain": "tenant.auth0.com",
+    }
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    mock_refresh = AsyncMock(return_value={
+        "access_token": "new_at",
+        "expires_in": 3600,
+        "expires_at": int(time.time()) + 3600,
+    })
+    mocker.patch.object(client, "get_token_by_refresh_token", mock_refresh)
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant.auth0.com/",
+        "token_endpoint": "https://tenant.auth0.com/token",
+    })
+
+    await client.get_access_token()
+
+    call_options = mock_refresh.call_args[0][0]
+    assert "organization" not in call_options
+
+
+# --------------------------------------------------------------------------
+# ORG-018: refresh uses org_id not org_name
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_refresh_uses_org_id_not_org_name(mocker):
+    """ORG-018: Refresh token request uses org_id (stable), not org_name (mutable)."""
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "user": {"sub": "u1", "org_id": "org_abc123", "org_name": "acme-corp"},
+        "refresh_token": "rt_xyz",
+        "token_sets": [],
+        "domain": "tenant.auth0.com",
+    }
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    mock_refresh = AsyncMock(return_value={
+        "access_token": "new_at",
+        "expires_in": 3600,
+        "expires_at": int(time.time()) + 3600,
+    })
+    mocker.patch.object(client, "get_token_by_refresh_token", mock_refresh)
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant.auth0.com/",
+        "token_endpoint": "https://tenant.auth0.com/token",
+    })
+
+    await client.get_access_token()
+
+    call_options = mock_refresh.call_args[0][0]
+    assert call_options.get("organization") == "org_abc123"
+
+
+# --------------------------------------------------------------------------
+# Adversarial tests
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_adv_org_id_is_integer_not_string_raises(mocker):
+    """ADV-001: org_id claim as integer (not string) raises OrganizationTokenValidationError."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="org_abc123"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_id": 12345,
+    })
+    with pytest.raises(OrganizationTokenValidationError):
+        await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+
+
+@pytest.mark.asyncio
+async def test_adv_org_name_is_array_raises(mocker):
+    """ADV-002: org_name claim as array raises OrganizationTokenValidationError."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="acme"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_name": ["acme", "other"],
+    })
+    with pytest.raises(OrganizationTokenValidationError):
+        await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+
+
+@pytest.mark.asyncio
+async def test_adv_empty_string_org_id_raises(mocker):
+    """ADV-004: Empty string org_id claim raises OrganizationTokenValidationError (mismatch)."""
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization="org_abc123"),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_id": "",
+    })
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert "mismatch" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_adv_org_in_untyped_dict_does_not_leak_into_transaction(mocker):
+    """ADV-003: org in authorization_params dict is overridden by typed organization field."""
+    mock_tx_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        redirect_uri="https://app.example.com/callback",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant.auth0.com/",
+        "authorization_endpoint": "https://tenant.auth0.com/authorize",
+    })
+
+    # Typed organization wins; untyped dict has attacker value
+    url = await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            organization="org_legitimate",
+            authorization_params={"organization": "org_attacker"},
+        )
+    )
+
+    # TransactionData stores the typed value
+    stored = mock_tx_store.set.call_args[0][1]
+    assert stored.organization == "org_legitimate"
+
+    # URL must not contain the attacker value
+    from urllib.parse import parse_qs, urlparse
+    parsed = parse_qs(urlparse(url).query)
+    org_values = parsed.get("organization", [])
+    assert "org_attacker" not in org_values
+    assert "org_legitimate" in org_values
+
+
+# --------------------------------------------------------------------------
+# Error class properties
+# --------------------------------------------------------------------------
+
+def test_organization_token_validation_error_code():
+    """OrganizationTokenValidationError has the correct code and message."""
+    err = OrganizationTokenValidationError("test message")
+    assert err.code == "organization_token_validation_error"
+    assert err.name == "OrganizationTokenValidationError"
+    assert str(err) == "test message"
+
+
+# --------------------------------------------------------------------------
+# ORG-019: userinfo path — org_id validated when org requested
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_org_userinfo_path_matching_org_id_succeeds(mocker):
+    """ORG-019: userinfo response with matching org_id passes validation."""
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="cv", domain="tenant.auth0.com", organization="org_abc123"
+    )
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = None
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        secret="test_secret_key_32_chars_long!!",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://tenant.auth0.com/",
+            "token_endpoint": "https://tenant.auth0.com/token",
+        }
+    )
+    # Token response returns userinfo (no id_token)
+    mocker.patch.object(client._oauth, "fetch_token", AsyncMock(return_value={
+        "access_token": "at123",
+        "userinfo": {"sub": "u1", "org_id": "org_abc123"},
+    }))
+    result = await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert result["state_data"]["user"]["org_id"] == "org_abc123"
+
+
+@pytest.mark.asyncio
+async def test_org_userinfo_path_wrong_org_id_raises(mocker):
+    """ORG-020: userinfo response with wrong org_id raises OrganizationTokenValidationError."""
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="cv", domain="tenant.auth0.com", organization="org_abc123"
+    )
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = None
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        secret="test_secret_key_32_chars_long!!",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://tenant.auth0.com/",
+            "token_endpoint": "https://tenant.auth0.com/token",
+        }
+    )
+    mocker.patch.object(client._oauth, "fetch_token", AsyncMock(return_value={
+        "access_token": "at123",
+        "userinfo": {"sub": "u1", "org_id": "org_different"},
+    }))
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert "mismatch" in str(exc.value)
+    assert "org_abc123" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_org_userinfo_path_missing_org_id_raises(mocker):
+    """ORG-021: userinfo response missing org_id raises OrganizationTokenValidationError."""
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="cv", domain="tenant.auth0.com", organization="org_abc123"
+    )
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = None
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        secret="test_secret_key_32_chars_long!!",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://tenant.auth0.com/",
+            "token_endpoint": "https://tenant.auth0.com/token",
+        }
+    )
+    mocker.patch.object(client._oauth, "fetch_token", AsyncMock(return_value={
+        "access_token": "at123",
+        "userinfo": {"sub": "u1"},  # no org_id
+    }))
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert "must be a string present" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# ORG-022: CIBA — org_id validated in grant response
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ciba_org_id_matching_succeeds(mocker):
+    """ORG-022: backchannel_authentication_grant with matching org_id passes."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "access_token": "at_ciba",
+        "id_token": "id_token_jwt",
+        "expires_in": 3600,
+    })
+    mock_response.headers = {}
+    mock_post.return_value = mock_response
+
+    mocker.patch.object(
+        client, "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+    mocker.patch.object(
+        client, "_verify_and_decode_jwt",
+        return_value={"sub": "u1", "org_id": "org_abc123"}
+    )
+
+    result = await client.backchannel_authentication_grant(
+        "auth_req_123", organization="org_abc123"
+    )
+    assert result["access_token"] == "at_ciba"
+
+
+# --------------------------------------------------------------------------
+# ORG-023: CIBA — org_id mismatch raises OrganizationTokenValidationError
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ciba_org_id_mismatch_raises(mocker):
+    """ORG-023: backchannel_authentication_grant with wrong org_id raises OrganizationTokenValidationError."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "access_token": "at_ciba",
+        "id_token": "id_token_jwt",
+        "expires_in": 3600,
+    })
+    mock_response.headers = {}
+    mock_post.return_value = mock_response
+
+    mocker.patch.object(
+        client, "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+    mocker.patch.object(
+        client, "_verify_and_decode_jwt",
+        return_value={"sub": "u1", "org_id": "org_different"}
+    )
+
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.backchannel_authentication_grant(
+            "auth_req_123", organization="org_abc123"
+        )
+    assert "mismatch" in str(exc.value)
+    assert "org_abc123" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# ORG-024: CIBA — client-level org propagates through login_backchannel
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ciba_client_level_org_propagates(mocker):
+    """ORG-024: Client-level organization propagates through login_backchannel."""
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {"token_sets": []}
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        organization="org_client_level",
+    )
+
+    mock_backchannel = AsyncMock(return_value={
+        "access_token": "at_ciba",
+        "expires_in": 3600,
+    })
+    mocker.patch.object(client, "backchannel_authentication", mock_backchannel)
+
+    await client.login_backchannel({
+        "binding_message": "Approve login",
+        "login_hint": {"sub": "user1"},
+    })
+
+    called_options = mock_backchannel.call_args[0][0]
+    assert called_options.get("organization") == "org_client_level"
+
+
+# --------------------------------------------------------------------------
+# ORG-025: CIBA — missing id_token with org set fails closed
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ciba_org_requested_no_id_token_fails_closed(mocker):
+    """ORG-025: org requested but id_token absent in CIBA grant response raises OrganizationTokenValidationError."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "access_token": "at_ciba",
+        # no id_token
+        "expires_in": 3600,
+    })
+    mock_response.headers = {}
+    mock_post.return_value = mock_response
+
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.backchannel_authentication_grant(
+            "auth_req_123", organization="org_abc123"
+        )
+    assert "did not include an ID token" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# ORG-026: CIBA — no org + no id_token succeeds
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ciba_no_org_no_id_token_succeeds(mocker):
+    """ORG-026: No org requested and no id_token — grant succeeds without validation."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret"
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/token"}
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "access_token": "at_ciba",
+        # no id_token, no org
+        "expires_in": 3600,
+    })
+    mock_response.headers = {}
+    mock_post.return_value = mock_response
+
+    result = await client.backchannel_authentication_grant("auth_req_123")
+    assert result["access_token"] == "at_ciba"
+
+
+# --------------------------------------------------------------------------
+# ORG-027: refresh response — matching org_id accepted
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_refresh_response_matching_org_id_accepted(mocker):
+    """ORG-027: get_token_by_refresh_token validates org claims in returned id_token."""
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=AsyncMock(),
+        secret="test_secret_key_32_chars_long!!",
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://tenant.auth0.com/",
+            "token_endpoint": "https://tenant.auth0.com/token",
+        }
+    )
+    mocker.patch.object(
+        client, "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+    mocker.patch.object(
+        client, "_verify_and_decode_jwt",
+        return_value={"sub": "u1", "org_id": "org_abc123"}
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "access_token": "new_at",
+        "id_token": "id_token_jwt",
+        "expires_in": 3600,
+    })
+    mock_post.return_value = mock_response
+
+    result = await client.get_token_by_refresh_token({
+        "refresh_token": "rt_xyz",
+        "organization": "org_abc123",
+    })
+    assert result["access_token"] == "new_at"
+
+
+# --------------------------------------------------------------------------
+# ORG-028: refresh response — wrong org_id raises OrganizationTokenValidationError
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_refresh_response_wrong_org_id_raises(mocker):
+    """ORG-028: get_token_by_refresh_token raises OrganizationTokenValidationError when refreshed id_token has wrong org."""
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=AsyncMock(),
+        secret="test_secret_key_32_chars_long!!",
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://tenant.auth0.com/",
+            "token_endpoint": "https://tenant.auth0.com/token",
+        }
+    )
+    mocker.patch.object(
+        client, "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+    mocker.patch.object(
+        client, "_verify_and_decode_jwt",
+        return_value={"sub": "u1", "org_id": "org_attacker"}
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "access_token": "new_at",
+        "id_token": "id_token_jwt",
+        "expires_in": 3600,
+    })
+    mock_post.return_value = mock_response
+
+    with pytest.raises(OrganizationTokenValidationError) as exc:
+        await client.get_token_by_refresh_token({
+            "refresh_token": "rt_xyz",
+            "organization": "org_abc123",
+        })
+    assert "mismatch" in str(exc.value)
+    assert "org_abc123" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# ORG-029: refresh response — no id_token when org set succeeds (no validation possible)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_refresh_response_no_id_token_with_org_succeeds(mocker):
+    """ORG-029: When refresh response has no id_token, org validation is skipped (AS choice)."""
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=AsyncMock(),
+        state_store=AsyncMock(),
+        secret="test_secret_key_32_chars_long!!",
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://tenant.auth0.com/",
+            "token_endpoint": "https://tenant.auth0.com/token",
+        }
+    )
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "access_token": "new_at",
+        # no id_token — AS did not include one
+        "expires_in": 3600,
+    })
+    mock_post.return_value = mock_response
+
+    result = await client.get_token_by_refresh_token({
+        "refresh_token": "rt_xyz",
+        "organization": "org_abc123",
+    })
+    assert result["access_token"] == "new_at"
