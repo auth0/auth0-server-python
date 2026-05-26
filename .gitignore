@@ -64,3 +64,18 @@ share/python-wheels/
 
 # Logs
 *.log
+
+# Session cache
+.sessions_cache
+
+# Docs build output
+docs
+
+# Dev scripts
+server.py
+setup.py
+test.py
+test-script.py
+
+# AI tools
+.claude
