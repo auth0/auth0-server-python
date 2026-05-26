@@ -1,81 +1,30 @@
-# Python
+### Python ###
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
-eggs/
-parts/
-var/
-sdist/
-wheels/
-*.egg-link
-MANIFEST
 
-# Virtual environments
-.venv/
-.venv-*/
-venv/
-env/
-ENV/
-
-# Testing & coverage
-.pytest_cache/
-.coverage
-.coverage.*
-coverage.xml
-htmlcov/
-.tox/
-nosetests.xml
-pytest-cache/
-
-# Type checking
-.mypy_cache/
-.dmypy.json
-.pytype/
-
-# Distribution / packaging
-*.spec
-pip-wheel-metadata/
-share/python-wheels/
-
-# Jupyter
-.ipynb_checkpoints
-
-# Environment files
+#Environments
 .env
-.env.*
-!.env.example
+.venv
+.venv-*/
+env/
 
-# IDEs
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Logs
-*.log
-
-# Session cache
+#Session Cache
 .sessions_cache
+.DS_Store
 
-# Docs build output
+#Build files
+dist
 docs
 
-# Dev scripts
+#testfile
 server.py
 setup.py
 test.py
 test-script.py
+.coverage
+coverage.xml
 
 # AI tools
 .claude
