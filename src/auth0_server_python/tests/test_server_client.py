@@ -5439,7 +5439,6 @@ async def test_adv_org_in_untyped_dict_does_not_leak_into_transaction(mocker):
     assert stored.organization == "org_legitimate"
 
     # URL must not contain the attacker value
-    from urllib.parse import parse_qs, urlparse
     parsed = parse_qs(urlparse(url).query)
     org_values = parsed.get("organization", [])
     assert "org_attacker" not in org_values
