@@ -6,6 +6,7 @@ Handles authentication flows, token management, and user sessions.
 import asyncio
 import json
 import time
+import unicodedata
 from collections import OrderedDict
 from typing import Any, Callable, Generic, Optional, TypeVar, Union
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -239,7 +240,10 @@ class ServerClient(Generic[TStoreOptions]):
                 raise OrganizationTokenValidationError(
                     "Organization Name (org_name) claim must be a string present in the ID token"
                 )
-            if actual.lower() != expected_org.lower():
+            # NFC-normalize before comparison: the same visual character (e.g. é) can have
+            # multiple byte representations in Unicode. Normalizing both sides prevents
+            # false rejections without risk of false matches.
+            if unicodedata.normalize("NFC", actual).lower() != unicodedata.normalize("NFC", expected_org).lower():
                 raise OrganizationTokenValidationError(
                     f"Organization Name (org_name) claim value mismatch in the ID token; "
                     f"expected {expected_org}, found {actual}"
@@ -684,8 +688,22 @@ class ServerClient(Generic[TStoreOptions]):
         id_token = token_response.get("id_token")
         expected_org = transaction_data.organization
 
+        if not user_info and not id_token and expected_org:
+            raise OrganizationTokenValidationError(
+                "Organization was requested but the token response included neither an ID token nor userinfo; "
+                "cannot verify organization membership"
+            )
+
         if user_info:
-            # Org validation on the userinfo path — claims come from userinfo dict.
+            if not isinstance(user_info, dict):
+                if expected_org:
+                    raise OrganizationTokenValidationError(
+                        "Userinfo response is not a valid claims dictionary; cannot verify organization membership"
+                    )
+                raise ApiError(
+                    "invalid_response",
+                    "Userinfo response is not a valid claims dictionary"
+                )
             if expected_org:
                 self._validate_org_claims(user_info, expected_org)
             user_claims = UserClaims.parse_obj(user_info)
@@ -1088,7 +1106,7 @@ class ServerClient(Generic[TStoreOptions]):
                         mfa_requirements=mfa_requirements
                     )
 
-            if isinstance(e, AccessTokenError):
+            if isinstance(e, (AccessTokenError, OrganizationTokenValidationError)):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
@@ -2364,9 +2382,6 @@ class ServerClient(Generic[TStoreOptions]):
                 params["actor_token"] = options.actor_token
                 params["actor_token_type"] = options.actor_token_type
 
-            if options.organization:
-                params["organization"] = options.organization
-
             # Merge additional authorization params
             if options.authorization_params:
                 # Prevent override of critical parameters
@@ -2374,6 +2389,9 @@ class ServerClient(Generic[TStoreOptions]):
                 for key, value in options.authorization_params.items():
                     if key not in forbidden_params:
                         params[key] = value
+
+            if options.organization:
+                params["organization"] = options.organization
 
             # Make the token exchange request
             async with self._get_http_client() as client:
@@ -2476,6 +2494,13 @@ class ServerClient(Generic[TStoreOptions]):
             # Extract user claims from ID token if present
             user_claims = None
             sid = PKCE.generate_random_string(32)  # Default sid
+
+            if options.organization and not token_response.id_token:
+                raise OrganizationTokenValidationError(
+                    "Organization was requested but the token response did not include an ID token; "
+                    "cannot verify organization membership"
+                )
+
             if token_response.id_token:
                 # Fetch JWKS and verify ID token signature
                 jwks = await self._get_jwks_cached(domain, metadata)
@@ -2491,6 +2516,9 @@ class ServerClient(Generic[TStoreOptions]):
                         raise IssuerValidationError(
                             "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
                         )
+
+                    if options.organization:
+                        self._validate_org_claims(claims, options.organization)
 
                     user_claims = UserClaims.parse_obj(claims)
                     # Extract sid from token if available
@@ -2557,7 +2585,7 @@ class ServerClient(Generic[TStoreOptions]):
             return result
 
         except Exception as e:
-            if isinstance(e, (CustomTokenExchangeError, ApiError)):
+            if isinstance(e, (CustomTokenExchangeError, ApiError, OrganizationTokenValidationError, IssuerValidationError)):
                 raise
             raise CustomTokenExchangeError(
                 CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
