@@ -5,7 +5,7 @@ These Pydantic models provide type safety and validation for all SDK data struct
 
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class UserClaims(BaseModel):
@@ -13,6 +13,7 @@ class UserClaims(BaseModel):
     User profile information as returned by Auth0.
     Contains standard OIDC claims about the authenticated user.
     """
+
     sub: str
     name: Optional[str] = None
     nickname: Optional[str] = None
@@ -32,6 +33,7 @@ class TokenSet(BaseModel):
     Represents a set of tokens issued by Auth0.
     Contains the access token and related metadata.
     """
+
     audience: str
     access_token: str
     scope: Optional[str] = None
@@ -43,6 +45,7 @@ class ConnectionTokenSet(TokenSet):
     Token set specific to a connection.
     Extends TokenSet with connection-specific information.
     """
+
     connection: str
     login_hint: str
 
@@ -52,6 +55,7 @@ class InternalStateData(BaseModel):
     Internal data used for managing state.
     Not meant to be accessed directly by SDK users.
     """
+
     sid: str
     created_at: int
 
@@ -61,6 +65,7 @@ class SessionData(BaseModel):
     Represents a user session with Auth0.
     Contains user information and tokens.
     """
+
     user: Optional[UserClaims] = None
     id_token: Optional[str] = None
     refresh_token: Optional[str] = None
@@ -77,6 +82,7 @@ class StateData(SessionData):
     Complete state data stored in the state store.
     Extends SessionData with internal management information.
     """
+
     internal: InternalStateData
 
 
@@ -85,6 +91,7 @@ class TransactionData(BaseModel):
     Represents data for an in-progress authentication transaction.
     Used during the authorization code flow to correlate requests.
     """
+
     audience: Optional[str] = None
     code_verifier: str
     app_state: Optional[Any] = None
@@ -101,6 +108,7 @@ class LogoutTokenClaims(BaseModel):
     Claims expected in a logout token.
     Used for backchannel logout processing.
     """
+
     sub: str
     sid: str
     iss: Optional[str] = None
@@ -111,6 +119,7 @@ class EncryptedStoreOptions(BaseModel):
     Options for encrypted stores.
     Contains the secret used for encryption.
     """
+
     secret: str
 
 
@@ -119,6 +128,7 @@ class ServerClientOptionsBase(BaseModel):
     Base options for configuring the Auth0 server client.
     Contains core settings required for all clients.
     """
+
     domain: str
     client_id: str
     client_secret: str
@@ -135,6 +145,7 @@ class ServerClientOptionsWithSecret(ServerClientOptionsBase):
     Client options using a secret for encryption.
     Extends base options with secret and duration settings.
     """
+
     secret: str
     state_absolute_duration: Optional[int] = 259200  # 3 days in seconds
 
@@ -144,6 +155,7 @@ class StartInteractiveLoginOptions(BaseModel):
     Options for starting the interactive login process.
     Configures how the authorization request is constructed.
     """
+
     pushed_authorization_requests: Optional[bool] = False
     app_state: Optional[Any] = None
     authorization_params: Optional[dict[str, Any]] = None
@@ -154,6 +166,7 @@ class LogoutOptions(BaseModel):
     Options for logout operations.
     Configures how the logout request is constructed.
     """
+
     return_to: Optional[str] = None
 
 
@@ -162,6 +175,7 @@ class AuthorizationParameters(BaseModel):
     Parameters used in authorization requests.
     Based on standard OAuth2/OIDC parameters.
     """
+
     scope: Optional[str] = None
     audience: Optional[str] = None
     redirect_uri: Optional[str] = None
@@ -169,11 +183,13 @@ class AuthorizationParameters(BaseModel):
     class Config:
         extra = "allow"  # Allow additional OAuth parameters
 
+
 class AuthorizationDetails(BaseModel):
     """
     Authorization details returned from Auth0.
     Used for Resource Access Rights (RAR).
     """
+
     type: str
     actions: Optional[list[str]] = None
     locations: Optional[list[str]] = None
@@ -188,6 +204,7 @@ class LoginBackchannelOptions(BaseModel):
     """
     Options for Client-Initiated Backchannel Authentication.
     """
+
     binding_message: str
     login_hint: dict[str, str]  # Should contain a 'sub' field
     authorization_params: Optional[dict[str, Any]] = None
@@ -200,6 +217,7 @@ class LoginBackchannelResult(BaseModel):
     """
     Result from Client-Initiated Backchannel Authentication.
     """
+
     authorization_details: Optional[list[AuthorizationDetails]] = None
 
 
@@ -207,8 +225,10 @@ class AccessTokenForConnectionOptions(BaseModel):
     """
     Options for retrieving an access token for a specific connection.
     """
+
     connection: str
     login_hint: Optional[str] = None
+
 
 class StartLinkUserOptions(BaseModel):
     connection: str
@@ -216,9 +236,11 @@ class StartLinkUserOptions(BaseModel):
     authorization_params: Optional[dict[str, Any]] = None
     app_state: Optional[Any] = None
 
+
 # =============================================================================
 # Multiple Custom Domain
 # =============================================================================
+
 
 class DomainResolverContext(BaseModel):
     """
@@ -236,12 +258,15 @@ class DomainResolverContext(BaseModel):
             host = context.request_headers.get('host', '').split(':')[0]
             return DOMAIN_MAP.get(host, DEFAULT_DOMAIN)
     """
+
     request_url: Optional[str] = None
     request_headers: Optional[dict[str, str]] = None
+
 
 # =============================================================================
 # Custom Token Exchange Types
 # =============================================================================
+
 
 class CustomTokenExchangeOptions(BaseModel):
     """
@@ -257,6 +282,7 @@ class CustomTokenExchangeOptions(BaseModel):
         organization: Organization identifier for the token exchange (optional)
         authorization_params: Additional OAuth parameters (optional)
     """
+
     subject_token: str = Field(..., min_length=1)
     subject_token_type: str = Field(..., min_length=1)
     audience: Optional[str] = None
@@ -266,7 +292,7 @@ class CustomTokenExchangeOptions(BaseModel):
     organization: Optional[str] = None
     authorization_params: Optional[dict[str, Any]] = None
 
-    @field_validator('subject_token', 'actor_token')
+    @field_validator("subject_token", "actor_token")
     @classmethod
     def validate_token_format(cls, v: Optional[str]) -> Optional[str]:
         """Validate token doesn't have Bearer prefix and isn't whitespace-only."""
@@ -277,8 +303,8 @@ class CustomTokenExchangeOptions(BaseModel):
                 raise ValueError("Token should not include 'Bearer ' prefix")
         return v
 
-    @model_validator(mode='after')
-    def validate_actor_token_type(self) -> 'CustomTokenExchangeOptions':
+    @model_validator(mode="after")
+    def validate_actor_token_type(self) -> "CustomTokenExchangeOptions":
         """Ensure actor_token_type is provided if actor_token is present."""
         if self.actor_token and not self.actor_token_type:
             raise ValueError("actor_token_type is required when actor_token is provided")
@@ -298,6 +324,7 @@ class TokenExchangeResponse(BaseModel):
         id_token: OpenID Connect ID token (optional)
         refresh_token: Refresh token (optional)
     """
+
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
@@ -313,6 +340,7 @@ class LoginWithCustomTokenExchangeOptions(BaseModel):
 
     Combines token exchange parameters with session management.
     """
+
     subject_token: str = Field(..., min_length=1)
     subject_token_type: str = Field(..., min_length=1)
     audience: Optional[str] = None
@@ -322,7 +350,7 @@ class LoginWithCustomTokenExchangeOptions(BaseModel):
     organization: Optional[str] = None
     authorization_params: Optional[dict[str, Any]] = None
 
-    @field_validator('subject_token', 'actor_token')
+    @field_validator("subject_token", "actor_token")
     @classmethod
     def validate_token_format(cls, v: Optional[str]) -> Optional[str]:
         """Validate token doesn't have Bearer prefix and isn't whitespace-only."""
@@ -333,8 +361,8 @@ class LoginWithCustomTokenExchangeOptions(BaseModel):
                 raise ValueError("Token should not include 'Bearer ' prefix")
         return v
 
-    @model_validator(mode='after')
-    def validate_actor_token_type(self) -> 'LoginWithCustomTokenExchangeOptions':
+    @model_validator(mode="after")
+    def validate_actor_token_type(self) -> "LoginWithCustomTokenExchangeOptions":
         """Ensure actor_token_type is provided if actor_token is present."""
         if self.actor_token and not self.actor_token_type:
             raise ValueError("actor_token_type is required when actor_token is provided")
@@ -347,12 +375,15 @@ class LoginWithCustomTokenExchangeResult(BaseModel):
 
     Contains session data established after token exchange.
     """
+
     state_data: dict[str, Any]
     authorization_details: Optional[list[AuthorizationDetails]] = None
+
 
 # =============================================================================
 # Connected Accounts Types
 # =============================================================================
+
 
 # BASE & SHARED
 class ConnectedAccountBase(BaseModel):
@@ -362,6 +393,7 @@ class ConnectedAccountBase(BaseModel):
     scopes: list[str]
     created_at: str
     expires_at: Optional[str] = None
+
 
 # ENTITIES (What exists)
 class ConnectedAccount(ConnectedAccountBase):
@@ -381,6 +413,7 @@ class ConnectedAccountConnection(BaseModel):
 
 # Connect Operations (How to connect)
 
+
 class ConnectAccountOptions(BaseModel):
     connection: str
     redirect_uri: Optional[str] = None
@@ -388,17 +421,20 @@ class ConnectAccountOptions(BaseModel):
     app_state: Optional[Any] = None
     authorization_params: Optional[dict[str, Any]] = None
 
+
 class ConnectAccountRequest(BaseModel):
     connection: str
     scopes: Optional[list[str]] = None
     redirect_uri: Optional[str] = None
     state: Optional[str] = None
     code_challenge: Optional[str] = None
-    code_challenge_method: Optional[str] = 'S256'
+    code_challenge_method: Optional[str] = "S256"
     authorization_params: Optional[dict[str, Any]] = None
+
 
 class ConnectParams(BaseModel):
     ticket: str
+
 
 class ConnectAccountResponse(BaseModel):
     auth_session: str
@@ -406,23 +442,221 @@ class ConnectAccountResponse(BaseModel):
     connect_params: ConnectParams
     expires_in: int
 
+
 class CompleteConnectAccountRequest(BaseModel):
     auth_session: str
     connect_code: str
     redirect_uri: str
     code_verifier: Optional[str] = None
 
+
 class CompleteConnectAccountResponse(ConnectedAccountBase):
     app_state: Optional[Any] = None
+
 
 # Manage operations
 class ListConnectedAccountsResponse(BaseModel):
     accounts: list[ConnectedAccount]
     next: Optional[str] = None
 
+
 class ListConnectedAccountConnectionsResponse(BaseModel):
     connections: list[ConnectedAccountConnection]
     next: Optional[str] = None
+
+
+# =============================================================================
+# Passkey & MyAccount Authentication Methods Types
+# =============================================================================
+
+
+class PasskeyRpInfo(BaseModel):
+    id: str
+    name: str
+
+
+class PasskeyUserInfo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    id: str
+    name: str
+    display_name: Optional[str] = Field(None, alias="displayName")
+
+
+class PasskeyPubKeyCredParam(BaseModel):
+    type: str
+    alg: int
+
+
+class PasskeyAuthenticatorSelection(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    resident_key: Optional[str] = Field(None, alias="residentKey")
+    user_verification: Optional[str] = Field(None, alias="userVerification")
+
+
+class PasskeyPublicKeyOptions(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    challenge: str
+    rp: Optional[PasskeyRpInfo] = None
+    rp_id: Optional[str] = Field(None, alias="rpId")
+    user: Optional[PasskeyUserInfo] = None
+    pub_key_cred_params: Optional[list[PasskeyPubKeyCredParam]] = Field(
+        None, alias="pubKeyCredParams"
+    )
+    authenticator_selection: Optional[PasskeyAuthenticatorSelection] = Field(
+        None, alias="authenticatorSelection"
+    )
+    timeout: Optional[int] = None
+    user_verification: Optional[str] = Field(None, alias="userVerification")
+
+
+class EnrollAuthenticationMethodRequest(BaseModel):
+    type: str
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    preferred_authentication_method: Optional[str] = None
+    user_identity_id: Optional[str] = None
+    connection: Optional[str] = None
+
+
+class EnrollmentChallengeResponse(BaseModel):
+    authentication_method_id: str
+    auth_session: str
+    authn_params_public_key: Optional[PasskeyPublicKeyOptions] = None
+
+    def __repr__(self) -> str:
+        return (
+            f"EnrollmentChallengeResponse("
+            f"authentication_method_id={self.authentication_method_id!r}, "
+            f"auth_session=[REDACTED], "
+            f"authn_params_public_key={self.authn_params_public_key!r})"
+        )
+
+
+class PasskeyAuthResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    id: str
+    raw_id: str = Field(alias="rawId")
+    type: str
+    authenticator_attachment: Optional[str] = Field(None, alias="authenticatorAttachment")
+    response: dict[str, str]
+    client_extension_results: Optional[dict] = Field(None, alias="clientExtensionResults")
+
+
+class VerifyAuthenticationMethodRequest(BaseModel):
+    auth_session: str
+    authn_response: Optional[PasskeyAuthResponse] = None
+    otp_code: Optional[str] = None
+    recovery_code: Optional[str] = None
+    password: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _check_at_least_one_method(self) -> "VerifyAuthenticationMethodRequest":
+        has_method = (
+            self.authn_response is not None
+            or self.otp_code is not None
+            or self.recovery_code is not None
+            or self.password is not None
+        )
+        if not has_method:
+            raise ValueError(
+                "At least one verification method must be provided: "
+                "authn_response, otp_code, recovery_code, or password"
+            )
+        return self
+
+
+class AuthenticationMethod(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    id: str
+    type: str
+    created_at: str
+    confirmed: Optional[bool] = None
+    usage: Optional[list[str]] = None
+    identity_user_id: Optional[str] = None
+    credential_device_type: Optional[str] = None
+    credential_backed_up: Optional[bool] = None
+    key_id: Optional[str] = None
+    public_key: Optional[str] = None
+    transports: Optional[list[str]] = None
+    user_agent: Optional[str] = None
+    user_handle: Optional[str] = None
+    aaguid: Optional[str] = None
+    relying_party_id: Optional[str] = None
+    phone_number: Optional[str] = None
+    preferred_authentication_method: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    last_password_reset: Optional[str] = None
+
+
+class UpdateAuthenticationMethodRequest(BaseModel):
+    name: Optional[str] = None
+    preferred_authentication_method: Optional[str] = None
+
+
+class ListAuthenticationMethodsResponse(BaseModel):
+    authentication_methods: list[AuthenticationMethod]
+
+
+class Factor(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str
+    enabled: Optional[bool] = None
+    trial_expired: Optional[bool] = None
+
+
+class GetFactorsResponse(BaseModel):
+    factors: list[Factor]
+
+
+class PasskeySignupChallengeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    auth_session: str
+    authn_params_public_key: PasskeyPublicKeyOptions
+
+    def __repr__(self) -> str:
+        return (
+            f"PasskeySignupChallengeResponse("
+            f"auth_session=[REDACTED], "
+            f"authn_params_public_key={self.authn_params_public_key!r})"
+        )
+
+
+class PasskeyLoginChallengeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    auth_session: str
+    authn_params_public_key: PasskeyPublicKeyOptions
+
+    def __repr__(self) -> str:
+        return (
+            f"PasskeyLoginChallengeResponse("
+            f"auth_session=[REDACTED], "
+            f"authn_params_public_key={self.authn_params_public_key!r})"
+        )
+
+
+class PasskeyTokenResponse(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    expires_at: Optional[int] = None
+    scope: Optional[str] = None
+    id_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+
+    def __repr__(self) -> str:
+        return (
+            f"PasskeyTokenResponse("
+            f"token_type={self.token_type!r}, "
+            f"expires_in={self.expires_in!r}, "
+            f"expires_at={self.expires_at!r}, "
+            f"scope={self.scope!r}, "
+            f"access_token=[REDACTED], "
+            f"id_token=[REDACTED], "
+            f"refresh_token=[REDACTED])"
+        )
 
 
 # =============================================================================
@@ -437,6 +671,7 @@ ChallengeType = Literal["otp", "oob"]
 
 class AuthenticatorResponse(BaseModel):
     """Represents an MFA authenticator enrolled by a user."""
+
     id: str
     authenticator_type: AuthenticatorType
     active: bool
@@ -450,14 +685,17 @@ class AuthenticatorResponse(BaseModel):
 
 # Enrollment Options
 
+
 class EnrollOtpOptions(BaseModel):
     """Options for enrolling an OTP authenticator."""
+
     authenticator_types: list[str]
     mfa_token: str
 
 
 class EnrollOobOptions(BaseModel):
     """Options for enrolling an OOB authenticator (SMS, Voice, Push)."""
+
     authenticator_types: list[str]
     oob_channels: list[OobChannel]
     phone_number: Optional[str] = None
@@ -466,6 +704,7 @@ class EnrollOobOptions(BaseModel):
 
 class EnrollEmailOptions(BaseModel):
     """Options for enrolling an email authenticator."""
+
     authenticator_types: list[str]
     oob_channels: list[OobChannel]
     email: Optional[str] = None
@@ -477,8 +716,10 @@ EnrollAuthenticatorOptions = Union[EnrollOtpOptions, EnrollOobOptions, EnrollEma
 
 # Enrollment Responses
 
+
 class OtpEnrollmentResponse(BaseModel):
     """Response when enrolling an OTP authenticator."""
+
     authenticator_type: Literal["otp"]
     secret: str
     barcode_uri: str
@@ -488,6 +729,7 @@ class OtpEnrollmentResponse(BaseModel):
 
 class OobEnrollmentResponse(BaseModel):
     """Response when enrolling an OOB authenticator."""
+
     authenticator_type: Literal["oob"]
     oob_channel: OobChannel
     oob_code: Optional[str] = None
@@ -502,8 +744,10 @@ EnrollmentResponse = Union[OtpEnrollmentResponse, OobEnrollmentResponse]
 
 # Challenge Types
 
+
 class ChallengeOptions(BaseModel):
     """Options for initiating an MFA challenge."""
+
     challenge_type: ChallengeType
     authenticator_id: Optional[str] = None
     mfa_token: str
@@ -511,6 +755,7 @@ class ChallengeOptions(BaseModel):
 
 class ChallengeResponse(BaseModel):
     """Response from initiating an MFA challenge."""
+
     challenge_type: ChallengeType
     oob_code: Optional[str] = None
     binding_method: Optional[str] = None
@@ -519,21 +764,26 @@ class ChallengeResponse(BaseModel):
 
 # List Options
 
+
 class ListAuthenticatorsOptions(BaseModel):
     """Options for listing MFA authenticators."""
+
     mfa_token: str
 
 
 # Verify Types
 
+
 class VerifyOtpOptions(BaseModel):
     """Verify with OTP code."""
+
     mfa_token: str
     otp: str
 
 
 class VerifyOobOptions(BaseModel):
     """Verify with OOB code + binding code."""
+
     mfa_token: str
     oob_code: str
     binding_code: str
@@ -541,6 +791,7 @@ class VerifyOobOptions(BaseModel):
 
 class VerifyRecoveryCodeOptions(BaseModel):
     """Verify with recovery code."""
+
     mfa_token: str
     recovery_code: str
 
@@ -550,6 +801,7 @@ VerifyMfaOptions = Union[VerifyOtpOptions, VerifyOobOptions, VerifyRecoveryCodeO
 
 class MfaVerifyResponse(BaseModel):
     """Response from MFA verification."""
+
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
@@ -562,24 +814,28 @@ class MfaVerifyResponse(BaseModel):
 
 # MFA Requirements
 
+
 class MfaRequirement(BaseModel):
     """A single MFA requirement entry."""
+
     type: str
 
 
 class MfaRequirements(BaseModel):
     """MFA requirements from an mfa_required error response."""
+
     enroll: Optional[list[MfaRequirement]] = None
     challenge: Optional[list[MfaRequirement]] = None
 
 
 # MFA Token Context (for encrypted storage)
 
+
 class MfaTokenContext(BaseModel):
     """Internal context stored inside encrypted mfa_token."""
+
     mfa_token: str
     audience: str
     scope: str
     mfa_requirements: Optional[MfaRequirements] = None
     created_at: int
-

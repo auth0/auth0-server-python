@@ -31,6 +31,10 @@ from auth0_server_python.auth_types import (
     LogoutOptions,
     LogoutTokenClaims,
     MfaRequirements,
+    PasskeyAuthResponse,
+    PasskeyLoginChallengeResponse,
+    PasskeySignupChallengeResponse,
+    PasskeyTokenResponse,
     StartInteractiveLoginOptions,
     StateData,
     TokenExchangeResponse,
@@ -65,11 +69,18 @@ from auth0_server_python.utils.helpers import (
 )
 
 # Generic type for store options
-TStoreOptions = TypeVar('TStoreOptions')
+TStoreOptions = TypeVar("TStoreOptions")
 # redirect_uri is intentionally excluded — in MCD mode it is built
 # dynamically from the resolved domain at login time.
-INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
-                             "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
+INTERNAL_AUTHORIZE_PARAMS = [
+    "client_id",
+    "response_type",
+    "code_challenge",
+    "code_challenge_method",
+    "state",
+    "nonce",
+    "scope",
+]
 
 
 class ServerClient(Generic[TStoreOptions]):
@@ -77,6 +88,7 @@ class ServerClient(Generic[TStoreOptions]):
     Main client for Auth0 server SDK. Handles authentication flows, session management,
     and token operations using Authlib for OIDC functionality.
     """
+
     DEFAULT_AUDIENCE_STATE_KEY = "default"
 
     # ============================================================================
@@ -117,9 +129,7 @@ class ServerClient(Generic[TStoreOptions]):
             raise MissingRequiredArgumentError("secret")
 
         if domain is None:
-            raise ConfigurationError(
-                "Domain is required"
-            )
+            raise ConfigurationError("Domain is required")
 
         # Validate domain type
         if not isinstance(domain, str) and not callable(domain):
@@ -164,14 +174,12 @@ class ServerClient(Generic[TStoreOptions]):
             headers=self._telemetry_headers,
         )
 
-        self._my_account_client = MyAccountClient(
-            domain=domain, headers=self._telemetry_headers
-        )
+        self._my_account_client = MyAccountClient(domain=domain, headers=self._telemetry_headers)
 
         # Unified cache for OIDC metadata and JWKS per domain (LRU eviction + TTL)
         self._discovery_cache: OrderedDict[str, dict] = OrderedDict()
-        self._cache_ttl = 600     # 10 mins. TTL
-        self._cache_max_entries = 100 # Max 100 domains
+        self._cache_ttl = 600  # 10 mins. TTL
+        self._cache_max_entries = 100  # Max 100 domains
 
         # Initialize MFA client
         self._mfa_client = MfaClient(
@@ -198,14 +206,14 @@ class ServerClient(Generic[TStoreOptions]):
             return value
 
         value = value.lower()
-        if value.startswith('https://'):
+        if value.startswith("https://"):
             pass
-        elif value.startswith('http://'):
-            value = value.replace('http://', 'https://')
+        elif value.startswith("http://"):
+            value = value.replace("http://", "https://")
         else:
-            value = f'https://{value}'
+            value = f"https://{value}"
 
-        return value.rstrip('/')
+        return value.rstrip("/")
 
     async def _resolve_current_domain(self, store_options=None) -> str:
         """Resolve domain from resolver function or return static domain."""
@@ -218,8 +226,7 @@ class ServerClient(Generic[TStoreOptions]):
                 raise
             except Exception as e:
                 raise DomainResolverError(
-                    f"Domain resolver function raised an exception: {str(e)}",
-                    original_error=e
+                    f"Domain resolver function raised an exception: {str(e)}", original_error=e
                 )
         return self._domain
 
@@ -233,18 +240,18 @@ class ServerClient(Generic[TStoreOptions]):
         2. self._domain — static domain (if configured)
         3. Extract hostname from user.iss — derive from user's issuer claim
         """
-        domain = state_data_dict.get('domain')
+        domain = state_data_dict.get("domain")
         if domain:
             return domain
 
         if self._domain:
             return self._domain
 
-        user = state_data_dict.get('user')
+        user = state_data_dict.get("user")
         if isinstance(user, dict):
-            iss = user.get('iss')
+            iss = user.get("iss")
         else:
-            iss = getattr(user, 'iss', None) if user else None
+            iss = getattr(user, "iss", None) if user else None
 
         if iss:
             parsed = urlparse(iss)
@@ -347,7 +354,7 @@ class ServerClient(Generic[TStoreOptions]):
         self._discovery_cache[domain] = {
             "metadata": metadata,
             "jwks": None,
-            "expires_at": now + self._cache_ttl
+            "expires_at": now + self._cache_ttl,
         }
 
         return metadata
@@ -409,11 +416,11 @@ class ServerClient(Generic[TStoreOptions]):
         if not metadata:
             metadata = await self._get_oidc_metadata_cached(domain)
 
-        jwks_uri = metadata.get('jwks_uri')
+        jwks_uri = metadata.get("jwks_uri")
         if not jwks_uri:
             raise ApiError(
                 "missing_jwks_uri",
-                f"OIDC metadata for {domain} does not contain jwks_uri. Provider may be non-RFC-compliant."
+                f"OIDC metadata for {domain} does not contain jwks_uri. Provider may be non-RFC-compliant.",
             )
 
         # Fetch JWKS
@@ -430,7 +437,7 @@ class ServerClient(Generic[TStoreOptions]):
             self._discovery_cache[domain] = {
                 "metadata": metadata,
                 "jwks": jwks,
-                "expires_at": now + self._cache_ttl
+                "expires_at": now + self._cache_ttl,
             }
 
         return jwks
@@ -442,9 +449,7 @@ class ServerClient(Generic[TStoreOptions]):
     # ============================================================================
 
     async def start_interactive_login(
-        self,
-        options: Optional[StartInteractiveLoginOptions] = None,
-        store_options: dict = None
+        self, options: Optional[StartInteractiveLoginOptions] = None, store_options: dict = None
     ) -> str:
         """
         Starts the interactive login process and returns a URL to redirect to.
@@ -465,15 +470,17 @@ class ServerClient(Generic[TStoreOptions]):
         try:
             metadata = await self._get_oidc_metadata_cached(origin_domain)
         except Exception as e:
-            raise ApiError("metadata_error",
-                           "Failed to fetch OIDC metadata", e)
+            raise ApiError("metadata_error", "Failed to fetch OIDC metadata", e)
 
         # Get effective authorization params (merge defaults with provided ones)
         auth_params = dict(self._default_authorization_params)
         if options.authorization_params:
             auth_params.update(
-                {k: v for k, v in options.authorization_params.items(
-                ) if k not in INTERNAL_AUTHORIZE_PARAMS}
+                {
+                    k: v
+                    for k, v in options.authorization_params.items()
+                    if k not in INTERNAL_AUTHORIZE_PARAMS
+                }
             )
 
         # Ensure we have a redirect_uri
@@ -497,7 +504,11 @@ class ServerClient(Generic[TStoreOptions]):
         auth_params["state"] = state
 
         # Merge any requested scope with defaults
-        requested_scope = options.authorization_params.get("scope", None) if options.authorization_params else None
+        requested_scope = (
+            options.authorization_params.get("scope", None)
+            if options.authorization_params
+            else None
+        )
         audience = auth_params.get("audience", None)
         merged_scope = self._merge_scope_with_defaults(requested_scope, audience)
         auth_params["scope"] = merged_scope
@@ -513,65 +524,61 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Store the transaction data
         await self._transaction_store.set(
-            f"{self._transaction_identifier}:{state}",
-            transaction_data,
-            options=store_options
+            f"{self._transaction_identifier}:{state}", transaction_data, options=store_options
         )
 
         # Set metadata for OAuth client
         self._oauth.metadata = metadata
         # If PAR is enabled, use the PAR endpoint
         if self._pushed_authorization_requests:
-            par_endpoint = self._oauth.metadata.get(
-                "pushed_authorization_request_endpoint")
+            par_endpoint = self._oauth.metadata.get("pushed_authorization_request_endpoint")
             if not par_endpoint:
                 raise ApiError(
-                    "configuration_error", "PAR is enabled but pushed_authorization_request_endpoint is missing in metadata")
+                    "configuration_error",
+                    "PAR is enabled but pushed_authorization_request_endpoint is missing in metadata",
+                )
 
             auth_params["client_id"] = self._client_id
             # Post the auth_params to the PAR endpoint
             async with self._get_http_client() as client:
                 par_response = await client.post(
-                    par_endpoint,
-                    data=auth_params,
-                    auth=(self._client_id, self._client_secret)
+                    par_endpoint, data=auth_params, auth=(self._client_id, self._client_secret)
                 )
                 if par_response.status_code not in (200, 201):
                     error_data = par_response.json()
                     raise ApiError(
                         error_data.get("error", "par_error"),
                         error_data.get(
-                            "error_description", "Failed to obtain request_uri from PAR endpoint")
+                            "error_description", "Failed to obtain request_uri from PAR endpoint"
+                        ),
                     )
                 par_data = par_response.json()
                 request_uri = par_data.get("request_uri")
                 if not request_uri:
-                    raise ApiError(
-                        "par_error", "No request_uri returned from PAR endpoint")
+                    raise ApiError("par_error", "No request_uri returned from PAR endpoint")
 
             auth_endpoint = self._oauth.metadata.get("authorization_endpoint")
             final_url = f"{auth_endpoint}?request_uri={request_uri}&response_type={auth_params['response_type']}&client_id={self._client_id}"
             return final_url
         else:
             if "authorization_endpoint" not in self._oauth.metadata:
-                raise ApiError("configuration_error",
-                               "Authorization endpoint missing in OIDC metadata")
+                raise ApiError(
+                    "configuration_error", "Authorization endpoint missing in OIDC metadata"
+                )
 
             authorization_endpoint = self._oauth.metadata["authorization_endpoint"]
 
             try:
                 auth_url, state = self._oauth.create_authorization_url(
-                    authorization_endpoint, **auth_params)
+                    authorization_endpoint, **auth_params
+                )
             except Exception as e:
-                raise ApiError("authorization_url_error",
-                               "Failed to create authorization URL", e)
+                raise ApiError("authorization_url_error", "Failed to create authorization URL", e)
 
             return auth_url
 
     async def complete_interactive_login(
-        self,
-        url: str,
-        store_options: dict = None
+        self, url: str, store_options: dict = None
     ) -> dict[str, Any]:
         """
         Completes the login process after user is redirected back.
@@ -594,7 +601,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Retrieve the transaction data using the state
         transaction_identifier = f"{self._transaction_identifier}:{state}"
-        transaction_data = await self._transaction_store.get(transaction_identifier, options=store_options)
+        transaction_data = await self._transaction_store.get(
+            transaction_identifier, options=store_options
+        )
 
         if not transaction_data:
             raise MissingTransactionError()
@@ -615,7 +624,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Fetch metadata and derive issuer from the origin domain
         metadata = await self._get_oidc_metadata_cached(origin_domain)
-        origin_issuer = metadata.get('issuer')
+        origin_issuer = metadata.get("issuer")
         self._oauth.metadata = metadata
 
         # Exchange the code for tokens
@@ -631,8 +640,7 @@ class ServerClient(Generic[TStoreOptions]):
             )
         except OAuthError as e:
             # Raise a custom error (or handle it as appropriate)
-            raise ApiError(
-                "token_error", f"Token exchange failed: {str(e)}", e)
+            raise ApiError("token_error", f"Token exchange failed: {str(e)}", e)
 
         # Use the userinfo field from the token_response for user claims
         user_info = token_response.get("userinfo")
@@ -647,14 +655,14 @@ class ServerClient(Generic[TStoreOptions]):
 
             # Decode and verify ID token with signature verification enabled
             try:
-                claims = await self._verify_and_decode_jwt(
-                    id_token, jwks, audience=self._client_id
-                )
+                claims = await self._verify_and_decode_jwt(id_token, jwks, audience=self._client_id)
 
                 # Custom normalized issuer validation
                 token_issuer = claims.get("iss", "")
                 if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
-                    raise IssuerValidationError("ID token issuer mismatch. Ensure your Auth0 domain is configured correctly.")
+                    raise IssuerValidationError(
+                        "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+                    )
 
                 user_claims = UserClaims.parse_obj(claims)
             except ValueError as e:
@@ -663,40 +671,33 @@ class ServerClient(Generic[TStoreOptions]):
                 raise ApiError(
                     "invalid_signature",
                     f"ID token signature verification failed. The token may have been tampered with or is from an untrusted source: {str(e)}",
-                    e
+                    e,
                 )
             except jwt.InvalidAudienceError as e:
                 raise ApiError(
                     "invalid_audience",
                     f"ID token audience mismatch. Expected: {self._client_id}. Ensure your client_id is configured correctly: {str(e)}",
-                    e
+                    e,
                 )
             except jwt.ExpiredSignatureError as e:
-                raise ApiError(
-                    "token_expired",
-                    f"ID token has expired: {str(e)}",
-                    e
-                )
+                raise ApiError("token_expired", f"ID token has expired: {str(e)}", e)
             except jwt.InvalidTokenError as e:
-                raise ApiError(
-                    "invalid_token",
-                    f"ID token verification failed: {str(e)}",
-                    e
-                )
-
+                raise ApiError("invalid_token", f"ID token verification failed: {str(e)}", e)
 
         # Build a token set using the token response data
         token_set = TokenSet(
             audience=transaction_data.audience or self.DEFAULT_AUDIENCE_STATE_KEY,
             access_token=token_response.get("access_token", ""),
             scope=token_response.get("scope", ""),
-            expires_at=int(time.time()) +
-            token_response.get("expires_in", 3600)
+            expires_at=int(time.time()) + token_response.get("expires_in", 3600),
         )
 
         # Generate a session id (sid) from token_response or transaction data, or create a new one
-        sid = user_info.get(
-            "sid") if user_info and "sid" in user_info else PKCE.generate_random_string(32)
+        sid = (
+            user_info.get("sid")
+            if user_info and "sid" in user_info
+            else PKCE.generate_random_string(32)
+        )
 
         # Construct state data to represent the session
         state_data = StateData(
@@ -706,10 +707,7 @@ class ServerClient(Generic[TStoreOptions]):
             refresh_token=token_response.get("refresh_token"),
             token_sets=[token_set],
             domain=origin_domain,
-            internal={
-                "sid": sid,
-                "created_at": int(time.time())
-            }
+            internal={"sid": sid, "created_at": int(time.time())},
         )
 
         # Store the state data in the state store using store_options (Response required)
@@ -734,7 +732,9 @@ class ServerClient(Generic[TStoreOptions]):
     # Methods for retrieving user information, session data, and logout operations.
     # ============================================================================
 
-    async def get_user(self, store_options: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    async def get_user(
+        self, store_options: Optional[dict[str, Any]] = None
+    ) -> Optional[dict[str, Any]]:
         """
         Retrieves the user from the store, or None if no user found.
 
@@ -763,7 +763,9 @@ class ServerClient(Generic[TStoreOptions]):
             return state_data.get("user")
         return None
 
-    async def get_session(self, store_options: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    async def get_session(
+        self, store_options: Optional[dict[str, Any]] = None
+    ) -> Optional[dict[str, Any]]:
         """
         Retrieve the user session from the store, or None if no session found.
 
@@ -789,15 +791,14 @@ class ServerClient(Generic[TStoreOptions]):
                 if self._normalize_url(session_domain) != self._normalize_url(current_domain):
                     return None
 
-            session_data = {k: v for k, v in state_data.items()
-                            if k != "internal"}
+            session_data = {k: v for k, v in state_data.items() if k != "internal"}
             return session_data
         return None
 
     async def logout(
         self,
         options: Optional[LogoutOptions] = None,
-        store_options: Optional[dict[str, Any]] = None
+        store_options: Optional[dict[str, Any]] = None,
     ) -> str:
         options = options or LogoutOptions()
 
@@ -813,19 +814,18 @@ class ServerClient(Generic[TStoreOptions]):
                 if hasattr(state_data, "dict") and callable(state_data.dict):
                     state_data = state_data.dict()
                 session_domain = self._get_session_domain(state_data)
-                if session_domain and self._normalize_url(session_domain) == self._normalize_url(domain):
+                if session_domain and self._normalize_url(session_domain) == self._normalize_url(
+                    domain
+                ):
                     await self._state_store.delete(self._state_identifier, store_options)
 
         # Return logout URL for the current resolved domain
-        logout_url = URL.create_logout_url(
-            domain, self._client_id, options.return_to)
+        logout_url = URL.create_logout_url(domain, self._client_id, options.return_to)
 
         return logout_url
 
     async def handle_backchannel_logout(
-        self,
-        logout_token: str,
-        store_options: Optional[dict[str, Any]] = None
+        self, logout_token: str, store_options: Optional[dict[str, Any]] = None
     ) -> None:
         """
         Handles backchannel logout requests.
@@ -846,8 +846,7 @@ class ServerClient(Generic[TStoreOptions]):
                 # Read iss from unverified token for comparison
                 try:
                     unverified = jwt.decode(
-                        logout_token, algorithms=["RS256"],
-                        options={"verify_signature": False}
+                        logout_token, algorithms=["RS256"], options={"verify_signature": False}
                     )
                     token_issuer = unverified.get("iss", "")
                 except Exception as e:
@@ -876,13 +875,16 @@ class ServerClient(Generic[TStoreOptions]):
             jwks = await self._get_jwks_cached(domain)
 
             try:
-                claims = await self._verify_and_decode_jwt(logout_token, jwks, audience=self._client_id)
+                claims = await self._verify_and_decode_jwt(
+                    logout_token, jwks, audience=self._client_id
+                )
 
                 # Normalized issuer validation
                 token_issuer = claims.get("iss", "")
                 expected_issuer = self._normalize_url(domain)
                 if self._normalize_url(token_issuer) != self._normalize_url(expected_issuer):
-                    raise IssuerValidationError("Logout token issuer mismatch.Ensure your Auth0 domain is configured correctly."
+                    raise IssuerValidationError(
+                        "Logout token issuer mismatch.Ensure your Auth0 domain is configured correctly."
                     )
             except ValueError as e:
                 raise BackchannelLogoutError(str(e))
@@ -891,30 +893,22 @@ class ServerClient(Generic[TStoreOptions]):
                     f"Logout token signature verification failed: {str(e)}"
                 )
             except jwt.InvalidTokenError as e:
-                raise BackchannelLogoutError(
-                    f"Logout token verification failed: {str(e)}"
-                )
+                raise BackchannelLogoutError(f"Logout token verification failed: {str(e)}")
 
             # Validate the token is a logout token
             events = claims.get("events", {})
             if "http://schemas.openid.net/event/backchannel-logout" not in events:
-                raise BackchannelLogoutError(
-                    "Invalid logout token: not a backchannel logout event")
+                raise BackchannelLogoutError("Invalid logout token: not a backchannel logout event")
 
             # Delete sessions associated with this token
             logout_claims = LogoutTokenClaims(
-                sub=claims.get("sub"),
-                sid=claims.get("sid"),
-                iss=claims.get("iss")
+                sub=claims.get("sub"), sid=claims.get("sid"), iss=claims.get("iss")
             )
 
-            await self._state_store.delete_by_logout_token(
-                logout_claims.dict(), store_options
-            )
+            await self._state_store.delete_by_logout_token(logout_claims.dict(), store_options)
 
         except (jwt.PyJWTError, ValidationError) as e:
-            raise BackchannelLogoutError(
-                f"Error processing logout token: {str(e)}")
+            raise BackchannelLogoutError(f"Error processing logout token: {str(e)}")
 
     # ============================================================================
     # ACCESS TOKEN MANAGEMENT
@@ -955,13 +949,13 @@ class ServerClient(Generic[TStoreOptions]):
             if not session_domain:
                 raise AccessTokenError(
                     AccessTokenErrorCode.MISSING_SESSION_DOMAIN,
-                    "Session domain does not match the current domain."
+                    "Session domain does not match the current domain.",
                 )
             current_domain = await self._resolve_current_domain(store_options)
             if self._normalize_url(session_domain) != self._normalize_url(current_domain):
                 raise AccessTokenError(
                     AccessTokenErrorCode.DOMAIN_MISMATCH,
-                    "Session domain does not match the current domain."
+                    "Session domain does not match the current domain.",
                 )
 
         auth_params = self._default_authorization_params or {}
@@ -975,7 +969,9 @@ class ServerClient(Generic[TStoreOptions]):
         # Find matching token set
         token_set = None
         if state_data_dict and "token_sets" in state_data_dict:
-            token_set = self._find_matching_token_set(state_data_dict["token_sets"], audience, merged_scope)
+            token_set = self._find_matching_token_set(
+                state_data_dict["token_sets"], audience, merged_scope
+            )
 
         # If token is valid, return it
         if token_set and token_set.get("expires_at", 0) > time.time():
@@ -985,7 +981,7 @@ class ServerClient(Generic[TStoreOptions]):
         if not state_data_dict or not state_data_dict.get("refresh_token"):
             raise AccessTokenError(
                 AccessTokenErrorCode.MISSING_REFRESH_TOKEN,
-                "The access token has expired and a refresh token was not provided. The user needs to re-authenticate."
+                "The access token has expired and a refresh token was not provided. The user needs to re-authenticate.",
             )
 
         # Get new token with refresh token
@@ -994,7 +990,7 @@ class ServerClient(Generic[TStoreOptions]):
             session_domain = state_data_dict.get("domain") or self._domain
             get_refresh_token_options = {
                 "refresh_token": state_data_dict["refresh_token"],
-                "domain": session_domain
+                "domain": session_domain,
             }
             if audience:
                 get_refresh_token_options["audience"] = audience
@@ -1002,15 +998,20 @@ class ServerClient(Generic[TStoreOptions]):
             if merged_scope:
                 get_refresh_token_options["scope"] = merged_scope
 
-            token_endpoint_response = await self.get_token_by_refresh_token(get_refresh_token_options)
+            token_endpoint_response = await self.get_token_by_refresh_token(
+                get_refresh_token_options
+            )
 
             # Update state data with new token
             existing_state_data = await self._state_store.get(self._state_identifier, store_options)
             updated_state_data = State.update_state_data(
-                audience, existing_state_data, token_endpoint_response)
+                audience, existing_state_data, token_endpoint_response
+            )
 
             # Store updated state
-            await self._state_store.set(self._state_identifier, updated_state_data, options=store_options)
+            await self._state_store.set(
+                self._state_identifier, updated_state_data, options=store_options
+            )
 
             return token_endpoint_response["access_token"]
         except Exception as e:
@@ -1024,21 +1025,20 @@ class ServerClient(Generic[TStoreOptions]):
                         raw_mfa_token=raw_mfa_token,
                         audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
                         scope=merged_scope or "",
-                        mfa_requirements=mfa_requirements
+                        mfa_requirements=mfa_requirements,
                     )
                     raise MfaRequiredError(
                         "Multifactor authentication required",
                         mfa_token=encrypted_token,
-                        mfa_requirements=mfa_requirements
+                        mfa_requirements=mfa_requirements,
                     )
 
             if isinstance(e, AccessTokenError):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
-                f"Failed to get token with refresh token: {str(e)}"
+                f"Failed to get token with refresh token: {str(e)}",
             )
-
 
     async def get_token_by_refresh_token(self, options: dict[str, Any]) -> dict[str, Any]:
         """
@@ -1067,8 +1067,7 @@ class ServerClient(Generic[TStoreOptions]):
 
             token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
-                raise ApiError("configuration_error",
-                               "Token endpoint missing in OIDC metadata")
+                raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
 
             # Prepare the token request parameters
             token_params = {
@@ -1083,8 +1082,7 @@ class ServerClient(Generic[TStoreOptions]):
 
             # Merge scope if present in options with any in the original authorization params
             merged_scope = self._merge_scope_with_defaults(
-                request_scope=options.get("scope"),
-                audience=audience
+                request_scope=options.get("scope"), audience=audience
             )
 
             if merged_scope:
@@ -1093,9 +1091,7 @@ class ServerClient(Generic[TStoreOptions]):
             # Exchange the refresh token for an access token
             async with self._get_http_client() as client:
                 response = await client.post(
-                    token_endpoint,
-                    data=token_params,
-                    auth=(self._client_id, self._client_secret)
+                    token_endpoint, data=token_params, auth=(self._client_id, self._client_secret)
                 )
 
                 if response.status_code != 200:
@@ -1105,8 +1101,7 @@ class ServerClient(Generic[TStoreOptions]):
                     # Preserve mfa_required details for upstream handling
                     if error_code == "mfa_required":
                         error = ApiError(
-                            error_code,
-                            error_data.get("error_description", "MFA required")
+                            error_code, error_data.get("error_description", "MFA required")
                         )
                         error.mfa_token = error_data.get("mfa_token")
                         mfa_requirements_data = error_data.get("mfa_requirements")
@@ -1117,16 +1112,14 @@ class ServerClient(Generic[TStoreOptions]):
 
                     raise ApiError(
                         error_code,
-                        error_data.get("error_description",
-                                       "Failed to exchange refresh token")
+                        error_data.get("error_description", "Failed to exchange refresh token"),
                     )
 
                 token_response = response.json()
 
                 # Add required fields if they are missing
                 if "expires_in" in token_response and "expires_at" not in token_response:
-                    token_response["expires_at"] = int(
-                        time.time()) + token_response["expires_in"]
+                    token_response["expires_at"] = int(time.time()) + token_response["expires_in"]
 
                 return token_response
 
@@ -1136,13 +1129,11 @@ class ServerClient(Generic[TStoreOptions]):
             raise AccessTokenError(
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
                 "The access token has expired and there was an error while trying to refresh it.",
-                e
+                e,
             )
 
     def _merge_scope_with_defaults(
-        self,
-        request_scope: Optional[str],
-        audience: Optional[str]
+        self, request_scope: Optional[str], audience: Optional[str]
     ) -> Optional[str]:
         """Helper: Merges requested scopes with default authorization params."""
         audience = audience or self.DEFAULT_AUDIENCE_STATE_KEY
@@ -1163,10 +1154,7 @@ class ServerClient(Generic[TStoreOptions]):
         return " ".join(merged_scopes) if merged_scopes else None
 
     def _find_matching_token_set(
-        self,
-        token_sets: list[dict[str, Any]],
-        audience: Optional[str],
-        scope: Optional[str]
+        self, token_sets: list[dict[str, Any]], audience: Optional[str], scope: Optional[str]
     ) -> Optional[dict[str, Any]]:
         """Helper: Finds a token set matching the requested audience and scopes."""
         audience = audience or self.DEFAULT_AUDIENCE_STATE_KEY
@@ -1192,9 +1180,7 @@ class ServerClient(Generic[TStoreOptions]):
     # ============================================================================
 
     async def login_backchannel(
-        self,
-        options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
+        self, options: dict[str, Any], store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
         Logs in using Client-Initiated Backchannel Authentication.
@@ -1213,22 +1199,22 @@ class ServerClient(Generic[TStoreOptions]):
         Returns:
             A dictionary containing the authorizationDetails (when RAR was used).
         """
-        token_endpoint_response = await self.backchannel_authentication({
-            "binding_message": options.get("binding_message"),
-            "login_hint": options.get("login_hint"),
-            "authorization_params": options.get("authorization_params"),
-        }, store_options=store_options)
+        token_endpoint_response = await self.backchannel_authentication(
+            {
+                "binding_message": options.get("binding_message"),
+                "login_hint": options.get("login_hint"),
+                "authorization_params": options.get("authorization_params"),
+            },
+            store_options=store_options,
+        )
 
         existing_state_data = await self._state_store.get(self._state_identifier, store_options)
 
         audience = self._default_authorization_params.get(
-            "audience", self.DEFAULT_AUDIENCE_STATE_KEY)
-
-        state_data = State.update_state_data(
-            audience,
-            existing_state_data,
-            token_endpoint_response
+            "audience", self.DEFAULT_AUDIENCE_STATE_KEY
         )
+
+        state_data = State.update_state_data(audience, existing_state_data, token_endpoint_response)
 
         # Store domain for MCD session
         domain = await self._resolve_current_domain(store_options)
@@ -1236,15 +1222,11 @@ class ServerClient(Generic[TStoreOptions]):
 
         await self._state_store.set(self._state_identifier, state_data, store_options)
 
-        result = {
-            "authorization_details": token_endpoint_response.get("authorization_details")
-        }
+        result = {"authorization_details": token_endpoint_response.get("authorization_details")}
         return result
 
     async def backchannel_authentication(
-        self,
-        options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
+        self, options: dict[str, Any], store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
         Performs backchannel authentication with Auth0.
@@ -1269,12 +1251,12 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             ApiError: If the backchannel authentication fails
         """
-        backchannel_data = await self.initiate_backchannel_authentication(options, store_options=store_options)
+        backchannel_data = await self.initiate_backchannel_authentication(
+            options, store_options=store_options
+        )
         auth_req_id = backchannel_data.get("auth_req_id")
-        expires_in = backchannel_data.get(
-            "expires_in", 120)  # Default to 2 minutes
-        interval = backchannel_data.get(
-            "interval", 5)  # Default to 5 seconds
+        expires_in = backchannel_data.get("expires_in", 120)  # Default to 2 minutes
+        interval = backchannel_data.get("interval", 5)  # Default to 5 seconds
 
         # Calculate when to stop polling
         end_time = time.time() + expires_in
@@ -1283,7 +1265,9 @@ class ServerClient(Generic[TStoreOptions]):
         while time.time() < end_time:
             # Make token request
             try:
-                token_response = await self.backchannel_authentication_grant(auth_req_id, store_options=store_options)
+                token_response = await self.backchannel_authentication_grant(
+                    auth_req_id, store_options=store_options
+                )
                 return token_response
 
             except Exception as e:
@@ -1299,17 +1283,14 @@ class ServerClient(Generic[TStoreOptions]):
                 raise ApiError(
                     "backchannel_error",
                     f"Backchannel authentication failed: {str(e) or 'Unknown error'}",
-                    e
+                    e,
                 )
 
         # If we get here, we've timed out
-        raise ApiError(
-            "timeout", "Backchannel authentication timed out")
+        raise ApiError("timeout", "Backchannel authentication timed out")
 
     async def initiate_backchannel_authentication(
-            self,
-            options: dict[str, Any],
-            store_options: Optional[dict[str, Any]] = None
+        self, options: dict[str, Any], store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
         Start backchannel authentication with Auth0.
@@ -1339,18 +1320,13 @@ class ServerClient(Generic[TStoreOptions]):
             https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow
         """
 
-        sub = options.get('login_hint', {}).get("sub")
+        sub = options.get("login_hint", {}).get("sub")
         if not sub:
-            raise MissingRequiredArgumentError(
-                "login_hint.sub"
-            )
+            raise MissingRequiredArgumentError("login_hint.sub")
 
-        authorization_params = options.get('authorization_params')
+        authorization_params = options.get("authorization_params")
         if authorization_params is not None and not isinstance(authorization_params, dict):
-            raise ApiError(
-                "invalid_argument",
-                "authorization_params must be a dict"
-            )
+            raise ApiError("invalid_argument", "authorization_params must be a dict")
 
         if authorization_params:
             requested_expiry = authorization_params.get("requested_expiry")
@@ -1358,7 +1334,7 @@ class ServerClient(Generic[TStoreOptions]):
                 if not isinstance(requested_expiry, int) or requested_expiry <= 0:
                     raise ApiError(
                         "invalid_argument",
-                        "authorization_params.requested_expiry must be a positive integer"
+                        "authorization_params.requested_expiry must be a positive integer",
                     )
 
         try:
@@ -1367,24 +1343,18 @@ class ServerClient(Generic[TStoreOptions]):
             metadata = await self._get_oidc_metadata_cached(domain)
 
             # Get the issuer from metadata
-            issuer = metadata.get(
-                "issuer") or f"https://{domain}/"
+            issuer = metadata.get("issuer") or f"https://{domain}/"
 
             # Get backchannel authentication endpoint
-            backchannel_endpoint = metadata.get(
-                "backchannel_authentication_endpoint")
+            backchannel_endpoint = metadata.get("backchannel_authentication_endpoint")
             if not backchannel_endpoint:
                 raise ApiError(
                     "configuration_error",
-                    "Backchannel authentication is not supported by the authorization server"
+                    "Backchannel authentication is not supported by the authorization server",
                 )
 
             # Prepare login hint in the required format
-            login_hint = json.dumps({
-                "format": "iss_sub",
-                "iss": issuer,
-                "sub": sub
-            })
+            login_hint = json.dumps({"format": "iss_sub", "iss": issuer, "sub": sub})
 
             # The Request Parameters
             params = {
@@ -1394,8 +1364,8 @@ class ServerClient(Generic[TStoreOptions]):
             }
 
             # Add binding message if provided
-            if options.get('binding_message'):
-                params["binding_message"] = options.get('binding_message')
+            if options.get("binding_message"):
+                params["binding_message"] = options.get("binding_message")
 
             # Add any additional authorization parameters
             if self._default_authorization_params:
@@ -1407,9 +1377,7 @@ class ServerClient(Generic[TStoreOptions]):
             # Make the backchannel authentication request
             async with self._get_http_client() as client:
                 backchannel_response = await client.post(
-                    backchannel_endpoint,
-                    data=params,
-                    auth=(self._client_id, self._client_secret)
+                    backchannel_endpoint, data=params, auth=(self._client_id, self._client_secret)
                 )
 
                 if backchannel_response.status_code != 200:
@@ -1417,7 +1385,8 @@ class ServerClient(Generic[TStoreOptions]):
                     raise ApiError(
                         error_data.get("error", "backchannel_error"),
                         error_data.get(
-                            "error_description", "Backchannel authentication request failed")
+                            "error_description", "Backchannel authentication request failed"
+                        ),
                     )
 
                 backchannel_data = backchannel_response.json()
@@ -1426,7 +1395,7 @@ class ServerClient(Generic[TStoreOptions]):
                 if not auth_req_id:
                     raise ApiError(
                         "invalid_response",
-                        "Missing auth_req_id in backchannel authentication response"
+                        "Missing auth_req_id in backchannel authentication response",
                     )
 
                 return backchannel_data
@@ -1437,13 +1406,11 @@ class ServerClient(Generic[TStoreOptions]):
             raise ApiError(
                 "backchannel_error",
                 f"Backchannel authentication failed: {str(e) or 'Unknown error'}",
-                e
+                e,
             )
 
     async def backchannel_authentication_grant(
-        self,
-        auth_req_id: str,
-        store_options: Optional[dict[str, Any]] = None
+        self, auth_req_id: str, store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
         Retrieves a token by exchanging an auth_req_id.
@@ -1468,23 +1435,20 @@ class ServerClient(Generic[TStoreOptions]):
 
             token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
-                raise ApiError("configuration_error",
-                               "Token endpoint missing in OIDC metadata")
+                raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
 
             # Prepare the token request parameters
             token_params = {
                 "grant_type": "urn:openid:params:grant-type:ciba",
                 "auth_req_id": auth_req_id,
                 "client_id": self._client_id,
-                "client_secret": self._client_secret
+                "client_secret": self._client_secret,
             }
 
             # Exchange the auth_req_id for an access token
             async with self._get_http_client() as client:
                 response = await client.post(
-                    token_endpoint,
-                    data=token_params,
-                    auth=(self._client_id, self._client_secret)
+                    token_endpoint, data=token_params, auth=(self._client_id, self._client_secret)
                 )
 
                 if response.status_code != 200:
@@ -1493,23 +1457,18 @@ class ServerClient(Generic[TStoreOptions]):
                     interval = int(retry_after) if retry_after is not None else None
                     raise PollingApiError(
                         error_data.get("error", "auth_req_id_error"),
-                        error_data.get("error_description",
-                                       "Failed to exchange auth_req_id"),
-                        interval
+                        error_data.get("error_description", "Failed to exchange auth_req_id"),
+                        interval,
                     )
 
                 try:
                     token_response = response.json()
                 except json.JSONDecodeError:
-                    raise ApiError(
-                        "invalid_response",
-                        "Failed to parse token response as JSON"
-                    )
+                    raise ApiError("invalid_response", "Failed to parse token response as JSON")
 
                 # Add required fields if they are missing
                 if "expires_in" in token_response and "expires_at" not in token_response:
-                    token_response["expires_at"] = int(
-                        time.time()) + token_response["expires_in"]
+                    token_response["expires_at"] = int(time.time()) + token_response["expires_in"]
 
                 return token_response
 
@@ -1519,7 +1478,7 @@ class ServerClient(Generic[TStoreOptions]):
             raise AccessTokenError(
                 AccessTokenErrorCode.AUTH_REQ_ID_ERROR,
                 "There was an error while trying to exchange the auth_req_id for an access token.",
-                e
+                e,
             )
 
     # ============================================================================
@@ -1528,11 +1487,7 @@ class ServerClient(Generic[TStoreOptions]):
     # to a user's Auth0 profile.
     # ============================================================================
 
-    async def start_link_user(
-        self,
-        options,
-        store_options: Optional[dict[str, Any]] = None
-    ):
+    async def start_link_user(self, options, store_options: Optional[dict[str, Any]] = None):
         """
         Starts the user linking process, and returns a URL to redirect the user-agent to.
 
@@ -1559,13 +1514,9 @@ class ServerClient(Generic[TStoreOptions]):
                 state_data = state_data.dict()
             session_domain = self._get_session_domain(state_data)
             if not session_domain:
-                raise StartLinkUserError(
-                    "Session domain does not match the current domain."
-                )
+                raise StartLinkUserError("Session domain does not match the current domain.")
             if self._normalize_url(session_domain) != self._normalize_url(origin_domain):
-                raise StartLinkUserError(
-                    "Session domain does not match the current domain."
-                )
+                raise StartLinkUserError("Session domain does not match the current domain.")
 
         # Generate PKCE and state for security
         code_verifier = PKCE.generate_code_verifier()
@@ -1579,7 +1530,7 @@ class ServerClient(Generic[TStoreOptions]):
             code_verifier=code_verifier,
             state=state,
             authorization_params=options.get("authorization_params"),
-            domain=origin_domain
+            domain=origin_domain,
         )
 
         # Store transaction data
@@ -1590,17 +1541,13 @@ class ServerClient(Generic[TStoreOptions]):
         )
 
         await self._transaction_store.set(
-            f"{self._transaction_identifier}:{state}",
-            transaction_data,
-            options=store_options
+            f"{self._transaction_identifier}:{state}", transaction_data, options=store_options
         )
 
         return link_user_url
 
     async def complete_link_user(
-        self,
-        url: str,
-        store_options: Optional[dict[str, Any]] = None
+        self, url: str, store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
         Completes the user linking process.
@@ -1617,15 +1564,9 @@ class ServerClient(Generic[TStoreOptions]):
         result = await self.complete_interactive_login(url, store_options)
 
         # Return just the app state as specified
-        return {
-            "app_state": result.get("app_state")
-        }
+        return {"app_state": result.get("app_state")}
 
-    async def start_unlink_user(
-        self,
-        options,
-        store_options: Optional[dict[str, Any]] = None
-    ):
+    async def start_unlink_user(self, options, store_options: Optional[dict[str, Any]] = None):
         """
         Starts the user unlinking process, and returns a URL to redirect the user-agent to.
 
@@ -1652,13 +1593,9 @@ class ServerClient(Generic[TStoreOptions]):
                 state_data = state_data.dict()
             session_domain = self._get_session_domain(state_data)
             if not session_domain:
-                raise StartLinkUserError(
-                    "Session domain does not match the current domain."
-                )
+                raise StartLinkUserError("Session domain does not match the current domain.")
             if self._normalize_url(session_domain) != self._normalize_url(origin_domain):
-                raise StartLinkUserError(
-                    "Session domain does not match the current domain."
-                )
+                raise StartLinkUserError("Session domain does not match the current domain.")
 
         # Generate PKCE and state for security
         code_verifier = PKCE.generate_code_verifier()
@@ -1671,7 +1608,7 @@ class ServerClient(Generic[TStoreOptions]):
             code_verifier=code_verifier,
             state=state,
             authorization_params=options.get("authorization_params"),
-            domain=origin_domain
+            domain=origin_domain,
         )
 
         # Store transaction data
@@ -1682,17 +1619,13 @@ class ServerClient(Generic[TStoreOptions]):
         )
 
         await self._transaction_store.set(
-            f"{self._transaction_identifier}:{state}",
-            transaction_data,
-            options=store_options
+            f"{self._transaction_identifier}:{state}", transaction_data, options=store_options
         )
 
         return link_user_url
 
     async def complete_unlink_user(
-        self,
-        url: str,
-        store_options: Optional[dict[str, Any]] = None
+        self, url: str, store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
         Completes the user unlinking process.
@@ -1709,9 +1642,7 @@ class ServerClient(Generic[TStoreOptions]):
         result = await self.complete_interactive_login(url, store_options)
 
         # Return just the app state as specified
-        return {
-            "app_state": result.get("app_state")
-        }
+        return {"app_state": result.get("app_state")}
 
     async def _build_link_user_url(
         self,
@@ -1721,7 +1652,7 @@ class ServerClient(Generic[TStoreOptions]):
         state: str,
         connection_scope: Optional[str] = None,
         authorization_params: Optional[dict[str, Any]] = None,
-        domain: Optional[str] = None
+        domain: Optional[str] = None,
     ) -> str:
         """Build a URL for linking user accounts"""
         # Generate code challenge from verifier
@@ -1732,8 +1663,9 @@ class ServerClient(Generic[TStoreOptions]):
         metadata = await self._get_oidc_metadata_cached(resolved_domain)
 
         # Get authorization endpoint
-        auth_endpoint = metadata.get("authorization_endpoint",
-                                     f"https://{resolved_domain}/authorize")
+        auth_endpoint = metadata.get(
+            "authorization_endpoint", f"https://{resolved_domain}/authorize"
+        )
 
         # Build params
         params = {
@@ -1746,7 +1678,7 @@ class ServerClient(Generic[TStoreOptions]):
             "response_type": "code",
             "id_token_hint": id_token,
             "scope": "openid link_account",
-            "audience": "my-account"
+            "audience": "my-account",
         }
 
         # Add connection scope if provided
@@ -1765,7 +1697,7 @@ class ServerClient(Generic[TStoreOptions]):
         code_verifier: str,
         state: str,
         authorization_params: Optional[dict[str, Any]] = None,
-        domain: Optional[str] = None
+        domain: Optional[str] = None,
     ) -> str:
         """Build a URL for unlinking user accounts"""
         # Generate code challenge from verifier
@@ -1776,8 +1708,9 @@ class ServerClient(Generic[TStoreOptions]):
         metadata = await self._get_oidc_metadata_cached(resolved_domain)
 
         # Get authorization endpoint
-        auth_endpoint = metadata.get("authorization_endpoint",
-                                     f"https://{resolved_domain}/authorize")
+        auth_endpoint = metadata.get(
+            "authorization_endpoint", f"https://{resolved_domain}/authorize"
+        )
 
         # Build params
         params = {
@@ -1789,7 +1722,7 @@ class ServerClient(Generic[TStoreOptions]):
             "response_type": "code",
             "id_token_hint": id_token,
             "scope": "openid unlink_account",
-            "audience": "my-account"
+            "audience": "my-account",
         }
         # Add any additional parameters
         if authorization_params:
@@ -1804,9 +1737,7 @@ class ServerClient(Generic[TStoreOptions]):
     # ============================================================================
 
     async def get_access_token_for_connection(
-        self,
-        options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
+        self, options: dict[str, Any], store_options: Optional[dict[str, Any]] = None
     ) -> str:
         """
         Retrieves an access token for a connection.
@@ -1840,13 +1771,13 @@ class ServerClient(Generic[TStoreOptions]):
             if not session_domain:
                 raise AccessTokenForConnectionError(
                     AccessTokenForConnectionErrorCode.MISSING_SESSION_DOMAIN,
-                    "Session domain does not match the current domain."
+                    "Session domain does not match the current domain.",
                 )
             current_domain = await self._resolve_current_domain(store_options)
             if self._normalize_url(session_domain) != self._normalize_url(current_domain):
                 raise AccessTokenForConnectionError(
                     AccessTokenForConnectionErrorCode.DOMAIN_MISMATCH,
-                    "Session domain does not match the current domain."
+                    "Session domain does not match the current domain.",
                 )
 
         # Find existing connection token
@@ -1865,21 +1796,24 @@ class ServerClient(Generic[TStoreOptions]):
         if not state_data_dict or not state_data_dict.get("refresh_token"):
             raise AccessTokenForConnectionError(
                 AccessTokenForConnectionErrorCode.MISSING_REFRESH_TOKEN,
-                "A refresh token was not found but is required to be able to retrieve an access token for a connection."
+                "A refresh token was not found but is required to be able to retrieve an access token for a connection.",
             )
         # Get new token for connection
         # Use session's domain for token exchange
         session_domain = state_data_dict.get("domain") or self._domain
-        token_endpoint_response = await self.get_token_for_connection({
-            "connection": options.get("connection"),
-            "login_hint": options.get("login_hint"),
-            "refresh_token": state_data_dict["refresh_token"],
-            "domain": session_domain
-        })
+        token_endpoint_response = await self.get_token_for_connection(
+            {
+                "connection": options.get("connection"),
+                "login_hint": options.get("login_hint"),
+                "refresh_token": state_data_dict["refresh_token"],
+                "domain": session_domain,
+            }
+        )
 
         # Update state data with new token
         updated_state_data = State.update_state_data_for_connection_token_set(
-            options, state_data_dict, token_endpoint_response)
+            options, state_data_dict, token_endpoint_response
+        )
 
         # Store updated state
         await self._state_store.set(self._state_identifier, updated_state_data, store_options)
@@ -1903,8 +1837,12 @@ class ServerClient(Generic[TStoreOptions]):
         """
         # Constants
         SUBJECT_TYPE_REFRESH_TOKEN = "urn:ietf:params:oauth:token-type:refresh_token"
-        REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "http://auth0.com/oauth/token-type/federated-connection-access-token"
-        GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"
+        REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = (
+            "http://auth0.com/oauth/token-type/federated-connection-access-token"
+        )
+        GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = (
+            "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"
+        )
         try:
             # Use session domain if provided, otherwise fallback to static domain
             domain = options.get("domain") or self._domain
@@ -1914,8 +1852,7 @@ class ServerClient(Generic[TStoreOptions]):
 
             token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
-                raise ApiError("configuration_error",
-                               "Token endpoint missing in OIDC metadata")
+                raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
 
             # Prepare parameters
             params = {
@@ -1924,7 +1861,7 @@ class ServerClient(Generic[TStoreOptions]):
                 "subject_token": options["refresh_token"],
                 "requested_token_type": REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN,
                 "grant_type": GRANT_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN,
-                "client_id": self._client_id
+                "client_id": self._client_id,
             }
 
             # Add login_hint if provided
@@ -1934,38 +1871,41 @@ class ServerClient(Generic[TStoreOptions]):
             # Make the request
             async with self._get_http_client() as client:
                 response = await client.post(
-                    token_endpoint,
-                    data=params,
-                    auth=(self._client_id, self._client_secret)
+                    token_endpoint, data=params, auth=(self._client_id, self._client_secret)
                 )
 
                 if response.status_code != 200:
-                    error_data = response.json() if response.headers.get(
-                        "content-type") == "application/json" else {}
+                    error_data = (
+                        response.json()
+                        if response.headers.get("content-type") == "application/json"
+                        else {}
+                    )
                     raise ApiError(
                         error_data.get("error", "connection_token_error"),
                         error_data.get(
-                            "error_description", f"Failed to get token for connection: {response.status_code}")
+                            "error_description",
+                            f"Failed to get token for connection: {response.status_code}",
+                        ),
                     )
 
                 token_endpoint_response = response.json()
 
                 return {
                     "access_token": token_endpoint_response.get("access_token"),
-                    "expires_at": int(time.time()) + int(token_endpoint_response.get("expires_in", 3600)),
-                    "scope": token_endpoint_response.get("scope", "")
+                    "expires_at": int(time.time())
+                    + int(token_endpoint_response.get("expires_in", 3600)),
+                    "scope": token_endpoint_response.get("scope", ""),
                 }
 
         except Exception as e:
             if isinstance(e, ApiError):
                 raise AccessTokenForConnectionError(
-                    AccessTokenForConnectionErrorCode.API_ERROR,
-                    str(e)
+                    AccessTokenForConnectionErrorCode.API_ERROR, str(e)
                 )
             raise AccessTokenForConnectionError(
                 AccessTokenForConnectionErrorCode.FETCH_ERROR,
                 "There was an error while trying to retrieve an access token for a connection.",
-                e
+                e,
             )
 
     # ============================================================================
@@ -1975,9 +1915,7 @@ class ServerClient(Generic[TStoreOptions]):
     # ============================================================================
 
     async def start_connect_account(
-        self,
-        options: ConnectAccountOptions,
-        store_options: dict = None
+        self, options: ConnectAccountOptions, store_options: dict = None
     ) -> str:
         """
         Initiates the connect account flow for linking a third-party account to the user's profile.
@@ -2002,26 +1940,25 @@ class ServerClient(Generic[TStoreOptions]):
         code_verifier = PKCE.generate_code_verifier()
         code_challenge = PKCE.generate_code_challenge(code_verifier)
 
-        state= PKCE.generate_random_string(32)
+        state = PKCE.generate_random_string(32)
 
         connect_request = ConnectAccountRequest(
             connection=options.connection,
             scopes=options.scopes,
-            redirect_uri = redirect_uri,
+            redirect_uri=redirect_uri,
             code_challenge=code_challenge,
             code_challenge_method="S256",
             state=state,
-            authorization_params=options.authorization_params
+            authorization_params=options.authorization_params,
         )
 
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="create:me:connected_accounts",
-            store_options=store_options
+            store_options=store_options,
         )
         connect_response = await self._my_account_client.connect_account(
-            access_token=access_token,
-            request=connect_request
+            access_token=access_token, request=connect_request
         )
 
         # Build the transaction data to store
@@ -2029,24 +1966,29 @@ class ServerClient(Generic[TStoreOptions]):
             code_verifier=code_verifier,
             app_state=options.app_state,
             auth_session=connect_response.auth_session,
-            redirect_uri=redirect_uri
+            redirect_uri=redirect_uri,
         )
 
         # Store the transaction data
         await self._transaction_store.set(
-            f"{self._transaction_identifier}:{state}",
-            transaction_data,
-            options=store_options
+            f"{self._transaction_identifier}:{state}", transaction_data, options=store_options
         )
 
         parsedUrl = urlparse(connect_response.connect_uri)
         query = urlencode({"ticket": connect_response.connect_params.ticket})
-        return urlunparse((parsedUrl.scheme, parsedUrl.netloc, parsedUrl.path, parsedUrl.params, query, parsedUrl.fragment))
+        return urlunparse(
+            (
+                parsedUrl.scheme,
+                parsedUrl.netloc,
+                parsedUrl.path,
+                parsedUrl.params,
+                query,
+                parsedUrl.fragment,
+            )
+        )
 
     async def complete_connect_account(
-        self,
-        url: str,
-        store_options: dict = None
+        self, url: str, store_options: dict = None
     ) -> CompleteConnectAccountResponse:
         """
         Handles the redirect callback to complete the connect account flow for linking a third-party
@@ -2078,7 +2020,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Retrieve the transaction data using the state
         transaction_identifier = f"{self._transaction_identifier}:{state}"
-        transaction_data = await self._transaction_store.get(transaction_identifier, options=store_options)
+        transaction_data = await self._transaction_store.get(
+            transaction_identifier, options=store_options
+        )
 
         if not transaction_data:
             raise MissingTransactionError()
@@ -2086,18 +2030,19 @@ class ServerClient(Generic[TStoreOptions]):
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="create:me:connected_accounts",
-            store_options=store_options
+            store_options=store_options,
         )
 
         request = CompleteConnectAccountRequest(
             auth_session=transaction_data.auth_session,
             connect_code=connect_code,
             redirect_uri=transaction_data.redirect_uri,
-            code_verifier=transaction_data.code_verifier
+            code_verifier=transaction_data.code_verifier,
         )
         try:
             response = await self._my_account_client.complete_connect_account(
-                access_token=access_token, request=request)
+                access_token=access_token, request=request
+            )
             if transaction_data.app_state is not None:
                 response.app_state = transaction_data.app_state
         finally:
@@ -2111,7 +2056,7 @@ class ServerClient(Generic[TStoreOptions]):
         connection: Optional[str] = None,
         from_param: Optional[str] = None,
         take: Optional[int] = None,
-        store_options: dict = None
+        store_options: dict = None,
     ) -> ListConnectedAccountsResponse:
         """
         Retrieves a list of connected accounts for the authenticated user.
@@ -2135,15 +2080,14 @@ class ServerClient(Generic[TStoreOptions]):
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="read:me:connected_accounts",
-            store_options=store_options
+            store_options=store_options,
         )
         return await self._my_account_client.list_connected_accounts(
-            access_token=access_token, connection=connection, from_param=from_param, take=take)
+            access_token=access_token, connection=connection, from_param=from_param, take=take
+        )
 
     async def delete_connected_account(
-        self,
-        connected_account_id: str,
-        store_options: dict = None
+        self, connected_account_id: str, store_options: dict = None
     ) -> None:
         """
         Deletes a connected account.
@@ -2162,16 +2106,17 @@ class ServerClient(Generic[TStoreOptions]):
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="delete:me:connected_accounts",
-            store_options=store_options
+            store_options=store_options,
         )
         await self._my_account_client.delete_connected_account(
-            access_token=access_token, connected_account_id=connected_account_id)
+            access_token=access_token, connected_account_id=connected_account_id
+        )
 
     async def list_connected_account_connections(
         self,
         from_param: Optional[str] = None,
         take: Optional[int] = None,
-        store_options: dict = None
+        store_options: dict = None,
     ) -> ListConnectedAccountConnectionsResponse:
         """
         Retrieves a list of available connections that can be used connected accounts for the authenticated user.
@@ -2194,10 +2139,11 @@ class ServerClient(Generic[TStoreOptions]):
         access_token = await self.get_access_token(
             audience=self._my_account_client.audience,
             scope="read:me:connected_accounts",
-            store_options=store_options
+            store_options=store_options,
         )
         return await self._my_account_client.list_connected_account_connections(
-            access_token=access_token, from_param=from_param, take=take)
+            access_token=access_token, from_param=from_param, take=take
+        )
 
     # ============================================================================
     # CUSTOM TOKEN EXCHANGE (RFC 8693)
@@ -2205,9 +2151,7 @@ class ServerClient(Generic[TStoreOptions]):
     # ============================================================================
 
     async def custom_token_exchange(
-        self,
-        options: CustomTokenExchangeOptions,
-        store_options: Optional[dict[str, Any]] = None
+        self, options: CustomTokenExchangeOptions, store_options: Optional[dict[str, Any]] = None
     ) -> TokenExchangeResponse:
         """
         Exchanges a custom token for Auth0 tokens using RFC 8693.
@@ -2280,7 +2224,12 @@ class ServerClient(Generic[TStoreOptions]):
             # Merge additional authorization params
             if options.authorization_params:
                 # Prevent override of critical parameters
-                forbidden_params = {"grant_type", "client_id", "subject_token", "subject_token_type"}
+                forbidden_params = {
+                    "grant_type",
+                    "client_id",
+                    "subject_token",
+                    "subject_token_type",
+                }
                 for key, value in options.authorization_params.items():
                     if key not in forbidden_params:
                         params[key] = value
@@ -2288,17 +2237,20 @@ class ServerClient(Generic[TStoreOptions]):
             # Make the token exchange request
             async with self._get_http_client() as client:
                 response = await client.post(
-                    token_endpoint,
-                    data=params,
-                    auth=(self._client_id, self._client_secret)
+                    token_endpoint, data=params, auth=(self._client_id, self._client_secret)
                 )
 
                 if response.status_code != 200:
-                    error_data = response.json() if response.headers.get(
-                        "content-type", "").startswith("application/json") else {}
+                    error_data = (
+                        response.json()
+                        if response.headers.get("content-type", "").startswith("application/json")
+                        else {}
+                    )
                     raise CustomTokenExchangeError(
                         error_data.get("error", CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED),
-                        error_data.get("error_description", f"Token exchange failed: {response.status_code}")
+                        error_data.get(
+                            "error_description", f"Token exchange failed: {response.status_code}"
+                        ),
                     )
 
                 try:
@@ -2306,7 +2258,7 @@ class ServerClient(Generic[TStoreOptions]):
                 except json.JSONDecodeError:
                     raise CustomTokenExchangeError(
                         CustomTokenExchangeErrorCode.INVALID_RESPONSE,
-                        "Failed to parse token response as JSON"
+                        "Failed to parse token response as JSON",
                     )
 
                 # Validate and return response
@@ -2315,7 +2267,7 @@ class ServerClient(Generic[TStoreOptions]):
         except ValidationError as e:
             raise CustomTokenExchangeError(
                 CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
-                f"Token validation failed: {str(e)}"
+                f"Token validation failed: {str(e)}",
             )
         except Exception as e:
             if isinstance(e, (CustomTokenExchangeError, ApiError)):
@@ -2323,13 +2275,13 @@ class ServerClient(Generic[TStoreOptions]):
             raise CustomTokenExchangeError(
                 CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
                 f"Token exchange failed: {str(e)}",
-                e
+                e,
             )
 
     async def login_with_custom_token_exchange(
         self,
         options: LoginWithCustomTokenExchangeOptions,
-        store_options: Optional[dict[str, Any]] = None
+        store_options: Optional[dict[str, Any]] = None,
     ) -> LoginWithCustomTokenExchangeResult:
         """
         Performs token exchange and establishes a user session.
@@ -2374,10 +2326,12 @@ class ServerClient(Generic[TStoreOptions]):
                 actor_token=options.actor_token,
                 actor_token_type=options.actor_token_type,
                 organization=options.organization,
-                authorization_params=options.authorization_params
+                authorization_params=options.authorization_params,
             )
 
-            token_response = await self.custom_token_exchange(exchange_options, store_options=store_options)
+            token_response = await self.custom_token_exchange(
+                exchange_options, store_options=store_options
+            )
 
             # Resolve domain and fetch metadata for verification
             domain = await self._resolve_current_domain(store_options)
@@ -2409,28 +2363,18 @@ class ServerClient(Generic[TStoreOptions]):
                     raise ApiError("jwks_key_not_found", str(e))
                 except jwt.InvalidSignatureError as e:
                     raise ApiError(
-                        "invalid_signature",
-                        f"ID token signature verification failed: {str(e)}",
-                        e
+                        "invalid_signature", f"ID token signature verification failed: {str(e)}", e
                     )
                 except jwt.InvalidAudienceError as e:
                     raise ApiError(
                         "invalid_audience",
                         f"ID token audience mismatch. Expected: {self._client_id}: {str(e)}",
-                        e
+                        e,
                     )
                 except jwt.ExpiredSignatureError as e:
-                    raise ApiError(
-                        "token_expired",
-                        f"ID token has expired: {str(e)}",
-                        e
-                    )
+                    raise ApiError("token_expired", f"ID token has expired: {str(e)}", e)
                 except jwt.InvalidTokenError as e:
-                    raise ApiError(
-                        "invalid_token",
-                        f"ID token verification failed: {str(e)}",
-                        e
-                    )
+                    raise ApiError("invalid_token", f"ID token verification failed: {str(e)}", e)
 
             # Determine audience for token set
             audience = options.audience or self.DEFAULT_AUDIENCE_STATE_KEY
@@ -2440,7 +2384,7 @@ class ServerClient(Generic[TStoreOptions]):
                 audience=audience,
                 access_token=token_response.access_token,
                 scope=token_response.scope or options.scope or "",
-                expires_at=int(time.time()) + token_response.expires_in
+                expires_at=int(time.time()) + token_response.expires_in,
             )
 
             # Construct state data
@@ -2450,19 +2394,14 @@ class ServerClient(Generic[TStoreOptions]):
                 refresh_token=token_response.refresh_token,
                 token_sets=[token_set],
                 domain=domain,
-                internal={
-                    "sid": sid,
-                    "created_at": int(time.time())
-                }
+                internal={"sid": sid, "created_at": int(time.time())},
             )
 
             # Store session
             await self._state_store.set(self._state_identifier, state_data, options=store_options)
 
             # Build result
-            result = LoginWithCustomTokenExchangeResult(
-                state_data=state_data.dict()
-            )
+            result = LoginWithCustomTokenExchangeResult(state_data=state_data.dict())
 
             return result
 
@@ -2472,8 +2411,290 @@ class ServerClient(Generic[TStoreOptions]):
             raise CustomTokenExchangeError(
                 CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
                 f"Login with custom token exchange failed: {str(e)}",
-                e
+                e,
             )
+
+    # ============================================================================
+    # PASSKEY AUTHENTICATION (Category 1)
+    # ============================================================================
+
+    GRANT_TYPE_PASSKEY = "urn:okta:params:oauth:grant-type:webauthn"
+
+    async def passkey_signup_challenge(
+        self,
+        name: Optional[str] = None,
+        email: Optional[str] = None,
+        username: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        given_name: Optional[str] = None,
+        family_name: Optional[str] = None,
+        nickname: Optional[str] = None,
+        picture: Optional[str] = None,
+        user_metadata: Optional[dict[str, Any]] = None,
+        connection: Optional[str] = None,
+        organization: Optional[str] = None,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> PasskeySignupChallengeResponse:
+        """
+        Step 1 of 2: Initiate a passkey signup challenge (POST /passkey/register).
+
+        Pass the returned authn_params_public_key to navigator.credentials.create(),
+        then call signin_with_passkey() with the auth_session and credential result.
+
+        Args:
+            name: User's full name.
+            email: User's email address.
+            username: Username for the new account.
+            phone_number: User's phone number.
+            given_name: User's given (first) name.
+            family_name: User's family (last) name.
+            nickname: User's nickname.
+            picture: URL to the user's profile picture.
+            user_metadata: Arbitrary user metadata dict.
+            connection: Auth0 database connection name (realm).
+            organization: Auth0 organization ID or name.
+            store_options: Optional options for domain resolution.
+
+        Returns:
+            PasskeySignupChallengeResponse with auth_session and authn_params_public_key.
+
+        Raises:
+            ApiError: If the challenge request fails.
+        """
+        try:
+            domain = await self._resolve_current_domain(store_options)
+
+            user_profile: dict[str, Any] = {}
+            if email is not None:
+                user_profile["email"] = email
+            if name is not None:
+                user_profile["name"] = name
+            if username is not None:
+                user_profile["username"] = username
+            if phone_number is not None:
+                user_profile["phone_number"] = phone_number
+            if given_name is not None:
+                user_profile["given_name"] = given_name
+            if family_name is not None:
+                user_profile["family_name"] = family_name
+            if nickname is not None:
+                user_profile["nickname"] = nickname
+            if picture is not None:
+                user_profile["picture"] = picture
+            if user_metadata is not None:
+                user_profile["user_metadata"] = user_metadata
+
+            body: dict[str, Any] = {"client_id": self._client_id}
+            if self._client_secret:
+                body["client_secret"] = self._client_secret
+            if user_profile:
+                body["user_profile"] = user_profile
+            if connection:
+                body["realm"] = connection
+            if organization:
+                body["organization"] = organization
+
+            url = f"https://{domain}/passkey/register"
+
+            async with self._get_http_client() as client:
+                response = await client.post(url, json=body)
+
+                if response.status_code != 200:
+                    try:
+                        error_data = response.json()
+                    except (json.JSONDecodeError, ValueError):
+                        raise ApiError(
+                            "passkey_challenge_error",
+                            f"Passkey signup challenge failed with status {response.status_code}",
+                        )
+                    raise ApiError(
+                        error_data.get("error", "passkey_challenge_error"),
+                        error_data.get("error_description", "Passkey signup challenge failed"),
+                    )
+
+                try:
+                    data = response.json()
+                except (json.JSONDecodeError, ValueError):
+                    raise ApiError(
+                        "invalid_response",
+                        "Failed to parse passkey signup challenge response as JSON",
+                    )
+
+                return PasskeySignupChallengeResponse.model_validate(data)
+
+        except Exception as e:
+            if isinstance(e, (ApiError, MissingRequiredArgumentError, ValidationError)):
+                raise
+            raise ApiError("passkey_challenge_error", "Passkey signup challenge failed", e)
+
+    async def passkey_login_challenge(
+        self,
+        username: Optional[str] = None,
+        connection: Optional[str] = None,
+        organization: Optional[str] = None,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> PasskeyLoginChallengeResponse:
+        """
+        Step 1 of 2: Initiate a passkey login challenge (POST /passkey/challenge).
+
+        Pass the returned authn_params_public_key to navigator.credentials.get(),
+        then call signin_with_passkey() with the auth_session and credential result.
+
+        Args:
+            username: Optional username hint for conditional UI.
+            connection: Auth0 database connection name (realm).
+            organization: Auth0 organization ID or name.
+            store_options: Optional options for domain resolution.
+
+        Returns:
+            PasskeyLoginChallengeResponse with auth_session and authn_params_public_key.
+
+        Raises:
+            ApiError: If the challenge request fails.
+        """
+        try:
+            domain = await self._resolve_current_domain(store_options)
+
+            body: dict[str, Any] = {"client_id": self._client_id}
+            if self._client_secret:
+                body["client_secret"] = self._client_secret
+            if username:
+                body["username"] = username
+            if connection:
+                body["realm"] = connection
+            if organization:
+                body["organization"] = organization
+
+            url = f"https://{domain}/passkey/challenge"
+
+            async with self._get_http_client() as client:
+                response = await client.post(url, json=body)
+
+                if response.status_code != 200:
+                    try:
+                        error_data = response.json()
+                    except (json.JSONDecodeError, ValueError):
+                        raise ApiError(
+                            "passkey_challenge_error",
+                            f"Passkey login challenge failed with status {response.status_code}",
+                        )
+                    raise ApiError(
+                        error_data.get("error", "passkey_challenge_error"),
+                        error_data.get("error_description", "Passkey login challenge failed"),
+                    )
+
+                try:
+                    data = response.json()
+                except (json.JSONDecodeError, ValueError):
+                    raise ApiError(
+                        "invalid_response",
+                        "Failed to parse passkey login challenge response as JSON",
+                    )
+
+                return PasskeyLoginChallengeResponse.model_validate(data)
+
+        except Exception as e:
+            if isinstance(e, (ApiError, MissingRequiredArgumentError, ValidationError)):
+                raise
+            raise ApiError("passkey_challenge_error", "Passkey login challenge failed", e)
+
+    async def signin_with_passkey(
+        self,
+        auth_session: str,
+        authn_response: PasskeyAuthResponse,
+        store_options: Optional[dict[str, Any]] = None,
+        connection: Optional[str] = None,
+        organization: Optional[str] = None,
+        scope: Optional[str] = None,
+        audience: Optional[str] = None,
+    ) -> PasskeyTokenResponse:
+        """
+        Completes passkey authentication by exchanging the WebAuthn assertion
+        for tokens (POST /oauth/token with webauthn grant).
+
+        This is step 2 of 2: call passkey_signup_challenge or passkey_login_challenge
+        first to obtain auth_session and the WebAuthn challenge options.
+
+        Uses Content-Type: application/json (required for nested authn_response).
+
+        Args:
+            auth_session: Session credential from passkey_signup_challenge or passkey_login_challenge.
+            authn_response: Serialized WebAuthn credential from navigator.credentials.create/get.
+            store_options: Optional options for domain resolution and state store.
+            connection: Auth0 database connection name (realm).
+            organization: Auth0 organization ID or name.
+            scope: OAuth2 scope string.
+            audience: Target API audience.
+
+        Returns:
+            PasskeyTokenResponse containing access_token, id_token, expires_in, etc.
+
+        Raises:
+            MissingRequiredArgumentError: If auth_session or authn_response is missing.
+            ApiError: If token exchange fails.
+        """
+        if not auth_session:
+            raise MissingRequiredArgumentError("auth_session")
+        if authn_response is None:
+            raise MissingRequiredArgumentError("authn_response")
+
+        try:
+            domain = await self._resolve_current_domain(store_options)
+            metadata = await self._get_oidc_metadata_cached(domain)
+
+            token_endpoint = metadata.get("token_endpoint")
+            if not token_endpoint:
+                raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
+
+            body: dict[str, Any] = {
+                "grant_type": self.GRANT_TYPE_PASSKEY,
+                "client_id": self._client_id,
+                "auth_session": auth_session,
+                "authn_response": authn_response.model_dump(by_alias=True, exclude_none=True),
+            }
+            if self._client_secret:
+                body["client_secret"] = self._client_secret
+            if connection:
+                body["realm"] = connection
+            if organization:
+                body["organization"] = organization
+            if scope:
+                body["scope"] = scope
+            if audience:
+                body["audience"] = audience
+
+            async with self._get_http_client() as client:
+                response = await client.post(token_endpoint, json=body)
+
+                if response.status_code != 200:
+                    try:
+                        error_data = response.json()
+                    except (json.JSONDecodeError, ValueError):
+                        raise ApiError(
+                            "passkey_token_error",
+                            f"Passkey token exchange failed with status {response.status_code}",
+                        )
+                    raise ApiError(
+                        error_data.get("error", "passkey_token_error"),
+                        error_data.get("error_description", "Passkey token exchange failed"),
+                    )
+
+                try:
+                    token_data = response.json()
+                except (json.JSONDecodeError, ValueError):
+                    raise ApiError(
+                        "invalid_response", "Failed to parse passkey token response as JSON"
+                    )
+
+                if "expires_in" in token_data and "expires_at" not in token_data:
+                    token_data["expires_at"] = int(time.time()) + token_data["expires_in"]
+
+                return PasskeyTokenResponse.model_validate(token_data)
+
+        except Exception as e:
+            if isinstance(e, (ApiError, MissingRequiredArgumentError, ValidationError)):
+                raise
+            raise ApiError("passkey_token_error", "Passkey sign-in failed", e)
 
     # ============================================================================
     # MFA (Multi-Factor Authentication)
