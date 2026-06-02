@@ -132,12 +132,13 @@ async def test_passkey_signup_challenge_user_profile_fields(server_client, mocke
     body = mock_client.post.call_args.kwargs["json"]
     assert body["user_profile"]["email"] == "u@e.com"
     assert body["user_profile"]["username"] == "jdoe"
-    assert body["user_profile"]["phone_number"] == "+1234567890"
-    assert body["user_profile"]["given_name"] == "Jane"
-    assert body["user_profile"]["family_name"] == "Doe"
+    assert body["user_profile"]["phoneNumber"] == "+1234567890"
+    assert body["user_profile"]["givenName"] == "Jane"
+    assert body["user_profile"]["familyName"] == "Doe"
     assert body["user_profile"]["nickname"] == "jd"
     assert body["user_profile"]["picture"] == "https://example.com/pic.jpg"
-    assert body["user_profile"]["user_metadata"] == {"role": "admin"}
+    assert "user_metadata" not in body["user_profile"]
+    assert body["userMetadata"] == {"role": "admin"}
     assert body["organization"] == "org_123"
 
 
