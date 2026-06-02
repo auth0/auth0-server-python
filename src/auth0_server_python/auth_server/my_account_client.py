@@ -643,10 +643,14 @@ class MyAccountClient:
                         "Enrollment succeeded (201) but Location header is missing",
                     )
 
-                authentication_method_id = (
-                    location.split("?")[0].split("#")[0].rstrip("/").split("/")[-1]
-                )
-                if not authentication_method_id:
+                path = location.split("?")[0].split("#")[0].rstrip("/")
+                segments = path.split("/")
+                authentication_method_id = segments[-1] if len(segments) > 1 else ""
+                if not authentication_method_id or authentication_method_id in (
+                    "authentication-methods",
+                    "v1",
+                    "me",
+                ):
                     raise ApiError(
                         "enroll_authentication_method_error",
                         "Enrollment succeeded (201) but could not extract ID from Location header",

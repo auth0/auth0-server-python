@@ -521,3 +521,65 @@ def test_passkey_token_response_repr_redacts_tokens():
     assert "secret_rt_value" not in repr_str
     assert "[REDACTED]" in repr_str
     assert "86400" in repr_str
+
+
+# =============================================================================
+# expires_at edge cases
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_preserves_server_expires_at(
+    server_client, authn_response, mocker
+):
+    token_data = {
+        "access_token": "at_123",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "expires_at": 9999999999,
+    }
+    mock_response = _mock_response(200, token_data)
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mocker.patch.object(server_client, "_get_http_client", return_value=mock_client)
+    mocker.patch.object(
+        server_client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+    )
+
+    result = await server_client.signin_with_passkey(
+        auth_session="session", authn_response=authn_response
+    )
+
+    assert result.expires_at == 9999999999
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_missing_expires_at_calculates(
+    server_client, authn_response, mocker
+):
+    token_data = {
+        "access_token": "at_123",
+        "token_type": "Bearer",
+        "expires_in": 60,
+    }
+    mock_response = _mock_response(200, token_data)
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mocker.patch.object(server_client, "_get_http_client", return_value=mock_client)
+    mocker.patch.object(
+        server_client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+    )
+
+    result = await server_client.signin_with_passkey(
+        auth_session="session", authn_response=authn_response
+    )
+
+    assert abs(result.expires_at - (int(time.time()) + 60)) <= 2

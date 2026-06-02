@@ -471,3 +471,360 @@ async def test_get_factors_with_dpop_key(mocker):
     mock_get.assert_awaited_once()
     call_kwargs = mock_get.call_args[1]
     assert isinstance(call_kwargs["auth"], DPoPAuth)
+
+
+# =============================================================================
+# DPoP integration(mock) tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_list_authentication_methods_with_dpop_key(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 200
+    response.json = MagicMock(return_value={"authentication_methods": []})
+    mock_get = mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
+
+    dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
+    await client.list_authentication_methods(access_token="token123", dpop_key=dpop_key)
+
+    assert isinstance(mock_get.call_args[1]["auth"], DPoPAuth)
+
+
+@pytest.mark.asyncio
+async def test_get_authentication_method_with_dpop_key(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 200
+    response.json = MagicMock(
+        return_value={"id": "am_1", "type": "passkey", "created_at": "2026-01-01T00:00:00Z"}
+    )
+    mock_get = mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
+
+    dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
+    await client.get_authentication_method(
+        access_token="token123", authentication_method_id="am_1", dpop_key=dpop_key
+    )
+
+    assert isinstance(mock_get.call_args[1]["auth"], DPoPAuth)
+
+
+@pytest.mark.asyncio
+async def test_delete_authentication_method_with_dpop_key(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 204
+    mock_delete = mocker.patch(
+        "httpx.AsyncClient.delete", new_callable=AsyncMock, return_value=response
+    )
+
+    dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
+    await client.delete_authentication_method(
+        access_token="token123", authentication_method_id="am_1", dpop_key=dpop_key
+    )
+
+    assert isinstance(mock_delete.call_args[1]["auth"], DPoPAuth)
+
+
+@pytest.mark.asyncio
+async def test_update_authentication_method_with_dpop_key(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 200
+    response.json = MagicMock(
+        return_value={"id": "am_1", "type": "passkey", "created_at": "2026-01-01T00:00:00Z"}
+    )
+    mock_patch = mocker.patch(
+        "httpx.AsyncClient.patch", new_callable=AsyncMock, return_value=response
+    )
+
+    dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
+    req = UpdateAuthenticationMethodRequest(name="New Name")
+    await client.update_authentication_method(
+        access_token="token123", authentication_method_id="am_1", request=req, dpop_key=dpop_key
+    )
+
+    assert isinstance(mock_patch.call_args[1]["auth"], DPoPAuth)
+
+
+@pytest.mark.asyncio
+async def test_enroll_authentication_method_with_dpop_key(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 201
+    response.headers = {"location": "/me/v1/authentication-methods/passkey|new"}
+    response.json = MagicMock(return_value={"auth_session": "session_abc"})
+    mock_post = mocker.patch(
+        "httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response
+    )
+
+    dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
+    req = EnrollAuthenticationMethodRequest(type="passkey")
+    await client.enroll_authentication_method(
+        access_token="token123", request=req, dpop_key=dpop_key
+    )
+
+    assert isinstance(mock_post.call_args[1]["auth"], DPoPAuth)
+
+
+@pytest.mark.asyncio
+async def test_verify_authentication_method_with_dpop_key(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 200
+    response.json = MagicMock(
+        return_value={"id": "am_1", "type": "passkey", "created_at": "2026-01-01T00:00:00Z"}
+    )
+    mock_post = mocker.patch(
+        "httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response
+    )
+
+    dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
+    req = VerifyAuthenticationMethodRequest(auth_session="session_abc", otp_code="123456")
+    await client.verify_authentication_method(
+        access_token="token123",
+        authentication_method_id="am_1",
+        request=req,
+        dpop_key=dpop_key,
+    )
+
+    assert isinstance(mock_post.call_args[1]["auth"], DPoPAuth)
+
+
+# =============================================================================
+# API error and network error tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_list_authentication_methods_api_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 403
+    response.json = MagicMock(
+        return_value={
+            "title": "Forbidden",
+            "type": "forbidden",
+            "detail": "Insufficient scope",
+            "status": 403,
+        }
+    )
+    mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
+
+    with pytest.raises(MyAccountApiError) as exc:
+        await client.list_authentication_methods(access_token="token123")
+    assert exc.value.status == 403
+
+
+@pytest.mark.asyncio
+async def test_list_authentication_methods_network_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    mocker.patch(
+        "httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=Exception("Connection refused")
+    )
+
+    with pytest.raises(ApiError):
+        await client.list_authentication_methods(access_token="token123")
+
+
+@pytest.mark.asyncio
+async def test_get_authentication_method_api_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 404
+    response.json = MagicMock(
+        return_value={
+            "title": "Not Found",
+            "type": "not_found",
+            "detail": "Not found",
+            "status": 404,
+        }
+    )
+    mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
+
+    with pytest.raises(MyAccountApiError) as exc:
+        await client.get_authentication_method(
+            access_token="token123", authentication_method_id="am_1"
+        )
+    assert exc.value.status == 404
+
+
+@pytest.mark.asyncio
+async def test_get_authentication_method_network_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=Exception("timeout"))
+
+    with pytest.raises(ApiError):
+        await client.get_authentication_method(
+            access_token="token123", authentication_method_id="am_1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_authentication_method_api_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 404
+    response.json = MagicMock(
+        return_value={
+            "title": "Not Found",
+            "type": "not_found",
+            "detail": "Not found",
+            "status": 404,
+        }
+    )
+    mocker.patch("httpx.AsyncClient.delete", new_callable=AsyncMock, return_value=response)
+
+    with pytest.raises(MyAccountApiError) as exc:
+        await client.delete_authentication_method(
+            access_token="token123", authentication_method_id="am_1"
+        )
+    assert exc.value.status == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_authentication_method_network_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    mocker.patch(
+        "httpx.AsyncClient.delete",
+        new_callable=AsyncMock,
+        side_effect=Exception("Connection reset"),
+    )
+
+    with pytest.raises(ApiError):
+        await client.delete_authentication_method(
+            access_token="token123", authentication_method_id="am_1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_authentication_method_api_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 422
+    response.json = MagicMock(
+        return_value={
+            "title": "Unprocessable",
+            "type": "validation_error",
+            "detail": "Invalid",
+            "status": 422,
+        }
+    )
+    mocker.patch("httpx.AsyncClient.patch", new_callable=AsyncMock, return_value=response)
+
+    req = UpdateAuthenticationMethodRequest(name="x")
+    with pytest.raises(MyAccountApiError) as exc:
+        await client.update_authentication_method(
+            access_token="token123", authentication_method_id="am_1", request=req
+        )
+    assert exc.value.status == 422
+
+
+@pytest.mark.asyncio
+async def test_update_authentication_method_network_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    mocker.patch(
+        "httpx.AsyncClient.patch", new_callable=AsyncMock, side_effect=Exception("timeout")
+    )
+
+    req = UpdateAuthenticationMethodRequest(name="x")
+    with pytest.raises(ApiError):
+        await client.update_authentication_method(
+            access_token="token123", authentication_method_id="am_1", request=req
+        )
+
+
+@pytest.mark.asyncio
+async def test_enroll_authentication_method_api_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 403
+    response.json = MagicMock(
+        return_value={
+            "title": "Forbidden",
+            "type": "forbidden",
+            "detail": "Scope missing",
+            "status": 403,
+        }
+    )
+    mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+    req = EnrollAuthenticationMethodRequest(type="passkey")
+    with pytest.raises(MyAccountApiError) as exc:
+        await client.enroll_authentication_method(access_token="token123", request=req)
+    assert exc.value.status == 403
+
+
+@pytest.mark.asyncio
+async def test_enroll_authentication_method_network_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    mocker.patch(
+        "httpx.AsyncClient.post",
+        new_callable=AsyncMock,
+        side_effect=Exception("Connection refused"),
+    )
+
+    req = EnrollAuthenticationMethodRequest(type="passkey")
+    with pytest.raises(ApiError):
+        await client.enroll_authentication_method(access_token="token123", request=req)
+
+
+@pytest.mark.asyncio
+async def test_verify_authentication_method_api_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 400
+    response.json = MagicMock(
+        return_value={
+            "title": "Bad Request",
+            "type": "invalid_request",
+            "detail": "Invalid OTP",
+            "status": 400,
+        }
+    )
+    mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+    req = VerifyAuthenticationMethodRequest(auth_session="session_abc", otp_code="000000")
+    with pytest.raises(MyAccountApiError) as exc:
+        await client.verify_authentication_method(
+            access_token="token123", authentication_method_id="am_1", request=req
+        )
+    assert exc.value.status == 400
+
+
+@pytest.mark.asyncio
+async def test_verify_authentication_method_network_error(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    mocker.patch(
+        "httpx.AsyncClient.post",
+        new_callable=AsyncMock,
+        side_effect=Exception("Connection refused"),
+    )
+
+    req = VerifyAuthenticationMethodRequest(auth_session="session_abc", otp_code="123456")
+    with pytest.raises(ApiError):
+        await client.verify_authentication_method(
+            access_token="token123", authentication_method_id="am_1", request=req
+        )
+
+
+# =============================================================================
+# Location header extraction edge case
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_enroll_authentication_method_location_collection_url(mocker):
+    """Rejects Location header that ends at collection path without resource ID."""
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 201
+    response.headers = {"location": "/me/v1/authentication-methods/"}
+    response.json = MagicMock(return_value={"auth_session": "session_abc"})
+    mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+    req = EnrollAuthenticationMethodRequest(type="passkey")
+    with pytest.raises(ApiError) as exc:
+        await client.enroll_authentication_method(access_token="token123", request=req)
+    assert "could not extract ID" in str(exc.value)
