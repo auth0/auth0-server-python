@@ -17,6 +17,10 @@ class DPoPAuth(httpx.Auth):
         public_jwk = key.export_public(as_dict=True)
         if public_jwk.get("kty") != "EC" or public_jwk.get("crv") != "P-256":
             raise ValueError("DPoP key must be an EC P-256 key")
+        try:
+            token.encode("ascii")
+        except UnicodeEncodeError:
+            raise ValueError("Access token must contain only ASCII characters")
         self._token = token
         self._key = key
         self._public_jwk = public_jwk

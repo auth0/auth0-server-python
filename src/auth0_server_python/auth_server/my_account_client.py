@@ -1,10 +1,8 @@
 import json
 from typing import TYPE_CHECKING, Optional
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import httpx
-from pydantic import ValidationError
-
 from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
 from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
 from auth0_server_python.auth_types import (
@@ -416,7 +414,7 @@ class MyAccountClient:
                 return GetFactorsResponse.model_validate(response.json())
 
         except Exception as e:
-            if isinstance(e, (MyAccountApiError, ApiError, ValidationError)):
+            if isinstance(e, (MyAccountApiError, ApiError)):
                 raise
             raise ApiError(
                 "get_factors_error",
@@ -464,7 +462,7 @@ class MyAccountClient:
                 return ListAuthenticationMethodsResponse.model_validate(response.json())
 
         except Exception as e:
-            if isinstance(e, (MyAccountApiError, ApiError, ValidationError)):
+            if isinstance(e, (MyAccountApiError, ApiError)):
                 raise
             raise ApiError(
                 "list_authentication_methods_error",
@@ -509,7 +507,7 @@ class MyAccountClient:
                 return AuthenticationMethod.model_validate(response.json())
 
         except Exception as e:
-            if isinstance(e, (MyAccountApiError, ApiError, ValidationError)):
+            if isinstance(e, (MyAccountApiError, ApiError)):
                 raise
             raise ApiError(
                 "get_authentication_method_error",
@@ -552,7 +550,7 @@ class MyAccountClient:
                     )
 
         except Exception as e:
-            if isinstance(e, (MyAccountApiError, ApiError, ValidationError)):
+            if isinstance(e, (MyAccountApiError, ApiError)):
                 raise
             raise ApiError(
                 "delete_authentication_method_error",
@@ -601,7 +599,7 @@ class MyAccountClient:
                 return AuthenticationMethod.model_validate(response.json())
 
         except Exception as e:
-            if isinstance(e, (MyAccountApiError, ApiError, ValidationError)):
+            if isinstance(e, (MyAccountApiError, ApiError)):
                 raise
             raise ApiError(
                 "update_authentication_method_error",
@@ -661,7 +659,7 @@ class MyAccountClient:
 
                 path = location.split("?")[0].split("#")[0].rstrip("/")
                 segments = path.split("/")
-                authentication_method_id = segments[-1] if len(segments) > 1 else ""
+                authentication_method_id = unquote(segments[-1]) if len(segments) > 1 else ""
                 if not authentication_method_id or authentication_method_id in (
                     "authentication-methods",
                     "v1",
@@ -696,7 +694,7 @@ class MyAccountClient:
                 )
 
         except Exception as e:
-            if isinstance(e, (MyAccountApiError, ApiError, ValidationError)):
+            if isinstance(e, (MyAccountApiError, ApiError)):
                 raise
             raise ApiError(
                 "enroll_authentication_method_error",
@@ -749,7 +747,7 @@ class MyAccountClient:
                 return AuthenticationMethod.model_validate(response.json())
 
         except Exception as e:
-            if isinstance(e, (MyAccountApiError, ApiError, ValidationError)):
+            if isinstance(e, (MyAccountApiError, ApiError)):
                 raise
             raise ApiError(
                 "verify_authentication_method_error",

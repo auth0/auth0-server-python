@@ -553,9 +553,9 @@ class VerifyAuthenticationMethodRequest(BaseModel):
     def _check_at_least_one_method(self) -> "VerifyAuthenticationMethodRequest":
         has_method = (
             self.authn_response is not None
-            or self.otp_code is not None
-            or self.recovery_code is not None
-            or self.password is not None
+            or (self.otp_code is not None and self.otp_code.strip() != "")
+            or (self.recovery_code is not None and self.recovery_code.strip() != "")
+            or (self.password is not None and self.password.strip() != "")
         )
         if not has_method:
             raise ValueError(
