@@ -2472,23 +2472,23 @@ class ServerClient(Generic[TStoreOptions]):
             if username is not None:
                 user_profile["username"] = username
             if phone_number is not None:
-                user_profile["phoneNumber"] = phone_number
+                user_profile["phone_number"] = phone_number
             if given_name is not None:
-                user_profile["givenName"] = given_name
+                user_profile["given_name"] = given_name
             if family_name is not None:
-                user_profile["familyName"] = family_name
+                user_profile["family_name"] = family_name
             if nickname is not None:
                 user_profile["nickname"] = nickname
             if picture is not None:
                 user_profile["picture"] = picture
+            if user_metadata is not None:
+                user_profile["user_metadata"] = user_metadata
 
             body: dict[str, Any] = {"client_id": self._client_id}
             if self._client_secret:
                 body["client_secret"] = self._client_secret
             if user_profile:
                 body["user_profile"] = user_profile
-            if user_metadata is not None:
-                body["userMetadata"] = user_metadata
             if connection:
                 body["realm"] = connection
             if organization:
