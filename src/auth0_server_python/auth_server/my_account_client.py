@@ -74,7 +74,9 @@ class MyAccountClient:
         return f"https://{self._domain}/me/"
 
     async def connect_account(
-        self, access_token: str, request: ConnectAccountRequest
+        self,
+        access_token: str,
+        request: ConnectAccountRequest
     ) -> ConnectAccountResponse:
         """
         Initiate the connected account flow.
@@ -95,7 +97,7 @@ class MyAccountClient:
                 response = await client.post(
                     url=f"{self.audience}v1/connected-accounts/connect",
                     json=request.model_dump(exclude_none=True),
-                    auth=BearerAuth(access_token),
+                    auth=BearerAuth(access_token)
                 )
 
                 if response.status_code != 201:
@@ -105,7 +107,7 @@ class MyAccountClient:
                         type=error_data.get("type", None),
                         detail=error_data.get("detail", None),
                         status=error_data.get("status", None),
-                        validation_errors=error_data.get("validation_errors", None),
+                        validation_errors=error_data.get("validation_errors", None)
                     )
 
                 data = response.json()
@@ -118,11 +120,13 @@ class MyAccountClient:
             raise ApiError(
                 "connect_account_error",
                 f"Connected Accounts connect request failed: {str(e) or 'Unknown error'}",
-                e,
+                e
             )
 
     async def complete_connect_account(
-        self, access_token: str, request: CompleteConnectAccountRequest
+        self,
+        access_token: str,
+        request: CompleteConnectAccountRequest
     ) -> CompleteConnectAccountResponse:
         """
         Complete the connected account flow after user authorization.
@@ -143,7 +147,7 @@ class MyAccountClient:
                 response = await client.post(
                     url=f"{self.audience}v1/connected-accounts/complete",
                     json=request.model_dump(exclude_none=True),
-                    auth=BearerAuth(access_token),
+                    auth=BearerAuth(access_token)
                 )
 
                 if response.status_code != 201:
@@ -153,7 +157,7 @@ class MyAccountClient:
                         type=error_data.get("type", None),
                         detail=error_data.get("detail", None),
                         status=error_data.get("status", None),
-                        validation_errors=error_data.get("validation_errors", None),
+                        validation_errors=error_data.get("validation_errors", None)
                     )
 
                 data = response.json()
@@ -166,7 +170,7 @@ class MyAccountClient:
             raise ApiError(
                 "connect_account_error",
                 f"Connected Accounts complete request failed: {str(e) or 'Unknown error'}",
-                e,
+                e
             )
 
     async def list_connected_accounts(
@@ -174,7 +178,7 @@ class MyAccountClient:
         access_token: str,
         connection: Optional[str] = None,
         from_param: Optional[str] = None,
-        take: Optional[int] = None,
+        take: Optional[int] = None
     ) -> ListConnectedAccountsResponse:
         """
         List connected accounts for the authenticated user.
@@ -213,7 +217,7 @@ class MyAccountClient:
                 response = await client.get(
                     url=f"{self.audience}v1/connected-accounts/accounts",
                     params=params,
-                    auth=BearerAuth(access_token),
+                    auth=BearerAuth(access_token)
                 )
 
                 if response.status_code != 200:
@@ -223,7 +227,7 @@ class MyAccountClient:
                         type=error_data.get("type", None),
                         detail=error_data.get("detail", None),
                         status=error_data.get("status", None),
-                        validation_errors=error_data.get("validation_errors", None),
+                        validation_errors=error_data.get("validation_errors", None)
                     )
 
                 data = response.json()
@@ -236,10 +240,15 @@ class MyAccountClient:
             raise ApiError(
                 "connect_account_error",
                 f"Connected Accounts list request failed: {str(e) or 'Unknown error'}",
-                e,
+                e
             )
 
-    async def delete_connected_account(self, access_token: str, connected_account_id: str) -> None:
+
+    async def delete_connected_account(
+        self,
+        access_token: str,
+        connected_account_id: str
+    ) -> None:
         """
         Delete a connected account for the authenticated user.
 
@@ -266,7 +275,7 @@ class MyAccountClient:
             async with self._get_http_client() as client:
                 response = await client.delete(
                     url=f"{self.audience}v1/connected-accounts/accounts/{connected_account_id}",
-                    auth=BearerAuth(access_token),
+                    auth=BearerAuth(access_token)
                 )
 
                 if response.status_code != 204:
@@ -276,7 +285,7 @@ class MyAccountClient:
                         type=error_data.get("type", None),
                         detail=error_data.get("detail", None),
                         status=error_data.get("status", None),
-                        validation_errors=error_data.get("validation_errors", None),
+                        validation_errors=error_data.get("validation_errors", None)
                     )
 
         except Exception as e:
@@ -285,11 +294,14 @@ class MyAccountClient:
             raise ApiError(
                 "connect_account_error",
                 f"Connected Accounts delete request failed: {str(e) or 'Unknown error'}",
-                e,
+                e
             )
 
     async def list_connected_account_connections(
-        self, access_token: str, from_param: Optional[str] = None, take: Optional[int] = None
+        self,
+        access_token: str,
+        from_param: Optional[str] = None,
+        take: Optional[int] = None
     ) -> ListConnectedAccountConnectionsResponse:
         """
         List available connections that support connected accounts.
@@ -325,7 +337,7 @@ class MyAccountClient:
                 response = await client.get(
                     url=f"{self.audience}v1/connected-accounts/connections",
                     params=params,
-                    auth=BearerAuth(access_token),
+                    auth=BearerAuth(access_token)
                 )
 
                 if response.status_code != 200:
@@ -335,7 +347,7 @@ class MyAccountClient:
                         type=error_data.get("type", None),
                         detail=error_data.get("detail", None),
                         status=error_data.get("status", None),
-                        validation_errors=error_data.get("validation_errors", None),
+                        validation_errors=error_data.get("validation_errors", None)
                     )
 
                 data = response.json()
@@ -348,8 +360,12 @@ class MyAccountClient:
             raise ApiError(
                 "connect_account_error",
                 f"Connected Accounts list connections request failed: {str(e) or 'Unknown error'}",
-                e,
+                e
             )
+
+    # ============================================================================
+    # AUTHENTICATION METHODS & FACTORS (Passkey / MyAccount API)
+    # ============================================================================
 
     async def get_factors(
         self,
