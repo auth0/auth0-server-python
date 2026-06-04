@@ -70,6 +70,39 @@ access_token = await server_client.get_access_token(store_options=store_options)
 
 Read more above in [Configuring the Store](./ConfigureStore.md).
 
+## Session Expiry from the Upstream IdP
+
+For enterprise connections, the upstream identity provider can impose a ceiling on how long the user's session may live. When the connection is configured to honor it, Auth0 includes a `session_expiry` claim (an absolute Unix timestamp, in seconds) in the ID token. The SDK reads this value at login, stores it with the session, and enforces it on every subsequent read.
+
+Once the ceiling is reached, the read methods behave as follows:
+
+- `get_user()` returns `None`, as if no session exists.
+- `get_session()` returns `None`, as if no session exists.
+- `get_access_token()` raises an `AccessTokenError` with code `session_expired`.
+
+```python
+from auth0_server_python.error import AccessTokenError, AccessTokenErrorCode
+
+try:
+    access_token = await server_client.get_access_token(store_options=store_options)
+except AccessTokenError as error:
+    if error.code == AccessTokenErrorCode.SESSION_EXPIRED:
+        # The upstream session ceiling has been reached; start a new login.
+        ...
+```
+
+When the ceiling is reached, the SDK deletes the stored session before returning, so the next request starts clean.
+
+The `session_expiry` value is also surfaced through the user claims, so you can read it without triggering enforcement:
+
+```python
+user = await server_client.get_user(store_options=store_options)
+session_expires_at = (user or {}).get("session_expiry")
+```
+
+> [!NOTE]
+> Enforcement applies a small negative leeway (30 seconds) to account for clock skew, so a session is treated as expired slightly before the exact `session_expiry` timestamp. The refresh-token grant preserves the original ceiling - refreshing an access token does not extend the upstream session.
+
 ## Multi-Resource Refresh Tokens (MRRT)
 
 Multi-Resource Refresh Tokens allow using a single refresh token to obtain access tokens for multiple audiences, simplifying token management in applications that interact with multiple backend services.

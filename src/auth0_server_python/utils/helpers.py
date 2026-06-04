@@ -37,6 +37,48 @@ class PKCE:
 
 
 class State:
+    # IPSIE session_expiry: clock-skew leeway (seconds). The session is treated
+    # as expired slightly *before* the wall-clock ceiling so the SDK never
+    # serves a session the Auth0 platform has already revoked. Per SDK Product
+    # Spec guidance.
+    SESSION_EXPIRY_LEEWAY_SECONDS = 30
+
+    @classmethod
+    def extract_session_expiry(cls, claims: Optional[dict[str, Any]]) -> Optional[int]:
+        """
+        Read the IPSIE `session_expiry` claim (Unix seconds) from decoded ID
+        token claims. Returns None when absent or invalid so existing session
+        behavior is preserved (the feature is opt-in via the upstream
+        connection option).
+
+        The IPSIE SL1 profile defines `session_expiry` as a JSON integer of
+        seconds since epoch. Non-integer or non-positive values are rejected
+        rather than trusted as a session ceiling.
+        """
+        if not claims:
+            return None
+        value = claims.get("session_expiry")
+        if value is None:
+            return None
+        # bool is an int subclass — exclude it explicitly.
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        if value <= 0:
+            return None
+        return value
+
+    @classmethod
+    def is_session_expiry_reached(cls, session_expires_at: Optional[int]) -> bool:
+        """
+        True when the IPSIE session ceiling has been reached (applying negative
+        leeway for clock skew). None means no ceiling was asserted, so the
+        session is never expired on this basis.
+        """
+        if session_expires_at is None:
+            return False
+        now = int(time.time())
+        return now >= (session_expires_at - cls.SESSION_EXPIRY_LEEWAY_SECONDS)
+
     @classmethod
     def update_state_data(
         cls,
@@ -91,12 +133,20 @@ class State:
                     else ts
                     for ts in token_sets
                 ]
+            # Preserve the IPSIE session_expiry ceiling stamped at login. The
+            # platform does not re-emit session_expiry on a refresh-token grant
+            # (it doesn't round-trip the upstream IdP), so the value from the
+            # refreshed ID token must NOT overwrite or erase the original
+            # ceiling — doing so would let the session outlive its bound.
+            internal = dict(state_data_dict.get("internal") or {})
+
             # Return updated state data
             return {
                 **state_data_dict,
                 "id_token": token_endpoint_response.get("id_token"),
                 "refresh_token": token_endpoint_response.get("refresh_token") or state_data_dict.get("refresh_token"),
-                "token_sets": token_sets
+                "token_sets": token_sets,
+                "internal": internal
             }
         else:
             # Create completely new state data

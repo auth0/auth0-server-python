@@ -22,6 +22,8 @@ class UserClaims(BaseModel):
     email: Optional[str] = None
     email_verified: Optional[bool] = None
     org_id: Optional[str] = None
+    # IPSIE SL1 claim: upstream IdP-asserted RP session ceiling (Unix seconds).
+    session_expiry: Optional[int] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
@@ -54,6 +56,10 @@ class InternalStateData(BaseModel):
     """
     sid: str
     created_at: int
+    # IPSIE session_expiry ceiling (Unix seconds), stamped at session creation
+    # from the ID token's session_expiry claim. None when the upstream IdP did
+    # not assert one — in which case existing session behavior is unchanged.
+    session_expires_at: Optional[int] = None
 
 
 class SessionData(BaseModel):

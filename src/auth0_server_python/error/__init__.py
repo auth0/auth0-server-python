@@ -198,6 +198,7 @@ class AccessTokenErrorCode:
     INCORRECT_AUDIENCE = "incorrect_audience"
     MISSING_SESSION_DOMAIN = "missing_session_domain"
     DOMAIN_MISMATCH = "domain_mismatch"
+    SESSION_EXPIRED = "session_expired"
 
 
 class AccessTokenForConnectionErrorCode:
