@@ -5154,21 +5154,25 @@ async def test_passkey_login_challenge_network_error(mocker):
 
 @pytest.mark.asyncio
 async def test_signin_with_passkey_success(mocker):
-    from auth0_server_python.auth_types import PasskeyTokenResponse
-    from auth0_server_python.error import PasskeyError
+    from auth0_server_python.auth_types import PasskeyLoginResult
+    state_store = AsyncMock()
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
         client_secret="test_client_secret",
-        state_store=AsyncMock(),
+        state_store=state_store,
         transaction_store=AsyncMock(),
         secret="test-secret-value",
     )
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
-        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
     )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "name": "Jane", "iss": "https://auth0.local/", "sid": "sid_abc"
+    })
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
     mock_response.status_code = 200
@@ -5185,10 +5189,13 @@ async def test_signin_with_passkey_success(mocker):
         organization="org_abc",
     )
 
-    assert isinstance(result, PasskeyTokenResponse)
-    assert result.access_token == "at_passkey_123"
-    assert result.token_type == "Bearer"
-    assert abs(result.expires_at - (int(time.time()) + 86400)) <= 2
+    assert isinstance(result, PasskeyLoginResult)
+    assert "token_sets" in result.state_data
+    assert result.state_data["token_sets"][0]["access_token"] == "at_passkey_123"
+    assert result.state_data["token_sets"][0]["audience"] == "https://api.example.com"
+
+    # Session must be persisted
+    state_store.set.assert_awaited_once()
 
     mock_post.assert_awaited_once()
     args, kwargs = mock_post.call_args
@@ -5219,8 +5226,12 @@ async def test_signin_with_passkey_uses_json_content_type(mocker):
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
-        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
     )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
     mock_response.status_code = 200
@@ -5365,8 +5376,12 @@ async def test_signin_with_passkey_no_client_secret(mocker):
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
-        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
     )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
     mock_response.status_code = 200
@@ -5434,8 +5449,12 @@ async def test_signin_with_passkey_preserves_server_expires_at(mocker):
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
-        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
     )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
     mock_response.status_code = 200
@@ -5447,12 +5466,11 @@ async def test_signin_with_passkey_preserves_server_expires_at(mocker):
     })
     mock_post.return_value = mock_response
 
-    from auth0_server_python.auth_types import PasskeyTokenResponse
     result = await client.signin_with_passkey(
         auth_session="session",
         authn_response=_make_passkey_authn_response(),
     )
-    assert result.expires_at == 9999999999
+    assert result.state_data["token_sets"][0]["expires_at"] == 9999999999
 
 
 @pytest.mark.asyncio
@@ -5468,8 +5486,12 @@ async def test_signin_with_passkey_missing_expires_at_calculates(mocker):
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
-        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
     )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
     mock_response.status_code = 200
@@ -5484,7 +5506,7 @@ async def test_signin_with_passkey_missing_expires_at_calculates(mocker):
         auth_session="session",
         authn_response=_make_passkey_authn_response(),
     )
-    assert abs(result.expires_at - (int(time.time()) + 60)) <= 2
+    assert abs(result.state_data["token_sets"][0]["expires_at"] - (int(time.time()) + 60)) <= 2
 
 
 @pytest.mark.asyncio
@@ -5503,8 +5525,12 @@ async def test_signin_with_passkey_dpop_attaches_proof_header(mocker):
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
-        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
     )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
     mock_response.status_code = 200
@@ -5548,8 +5574,12 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
-        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
     )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
 
     nonce_response = AsyncMock()
@@ -5571,7 +5601,7 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
     )
 
     assert mock_post.await_count == 2
-    assert result.access_token == "at_passkey_123"
+    assert result.state_data["token_sets"][0]["access_token"] == "at_passkey_123"
 
     # Second call must include the nonce in the DPoP proof
     second_call_kwargs = mock_post.call_args_list[1][1]
@@ -5595,8 +5625,12 @@ async def test_signin_with_passkey_without_dpop_no_dpop_header(mocker):
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
-        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
     )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
     mock_response.status_code = 200
@@ -5610,3 +5644,97 @@ async def test_signin_with_passkey_without_dpop_no_dpop_header(mocker):
 
     args, kwargs = mock_post.call_args
     assert "DPoP" not in kwargs.get("headers", {})
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_creates_session_in_state_store(mocker):
+    """signin_with_passkey must persist a session — consistent with complete_interactive_login."""
+    from auth0_server_python.auth_types import PasskeyLoginResult
+    state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=state_store,
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123",
+        "name": "Jane Doe",
+        "email": "jane@example.com",
+        "iss": "https://auth0.local/",
+        "sid": "session_sid_abc",
+    })
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    mock_post.return_value = mock_response
+
+    result = await client.signin_with_passkey(
+        auth_session="session_xyz",
+        authn_response=_make_passkey_authn_response(),
+    )
+
+    # State store must be called exactly once
+    state_store.set.assert_awaited_once()
+
+    # Result must be PasskeyLoginResult, not bare tokens
+    assert isinstance(result, PasskeyLoginResult)
+
+    # State data must contain user, token_sets, domain, internal
+    sd = result.state_data
+    assert sd["user"]["sub"] == "auth0|user123"
+    assert sd["user"]["name"] == "Jane Doe"
+    assert sd["token_sets"][0]["access_token"] == "at_passkey_123"
+    assert sd["id_token"] == "eyJ.test.jwt"
+    assert sd["refresh_token"] is None
+    assert sd["domain"] == "auth0.local"
+    assert sd["internal"]["sid"] == "session_sid_abc"
+    assert "created_at" in sd["internal"]
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_session_without_id_token(mocker):
+    """When no id_token is returned, session is still created with user=None."""
+    from auth0_server_python.auth_types import PasskeyLoginResult
+    state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=state_store,
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={
+        "access_token": "at_no_id_token",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+    })
+    mock_post.return_value = mock_response
+
+    result = await client.signin_with_passkey(
+        auth_session="session_xyz",
+        authn_response=_make_passkey_authn_response(),
+    )
+
+    assert isinstance(result, PasskeyLoginResult)
+    state_store.set.assert_awaited_once()
+    assert result.state_data["user"] is None
+    assert result.state_data["token_sets"][0]["access_token"] == "at_no_id_token"

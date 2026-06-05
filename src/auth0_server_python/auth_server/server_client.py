@@ -37,6 +37,7 @@ from auth0_server_python.auth_types import (
     MfaRequirements,
     PasskeyAuthResponse,
     PasskeyLoginChallengeResponse,
+    PasskeyLoginResult,
     PasskeySignupChallengeResponse,
     PasskeyUserProfile,
     PasskeyTokenResponse,
@@ -2653,20 +2654,22 @@ class ServerClient(Generic[TStoreOptions]):
         scope: Optional[str] = None,
         audience: Optional[str] = None,
         dpop_key: Optional["jwk.JWK"] = None,
-    ) -> PasskeyTokenResponse:
+    ) -> PasskeyLoginResult:
         """
         Completes passkey authentication by exchanging the WebAuthn assertion
-        for tokens (POST /oauth/token with webauthn grant).
+        for tokens and establishing a server-side session.
 
         This is step 2 of 2: call passkey_signup_challenge or passkey_login_challenge
         first to obtain auth_session and the WebAuthn challenge options.
 
         Uses Content-Type: application/json (required for nested authn_response).
+        Persists the session to the state store (same as complete_interactive_login).
 
         Args:
             auth_session: Session credential from passkey_signup_challenge or passkey_login_challenge.
             authn_response: Serialized WebAuthn credential from navigator.credentials.create/get.
-            store_options: Optional options for domain resolution and state store.
+            store_options: Options passed to the state store (e.g., request/response for cookies).
+                           When None, session storage is skipped (stateless deployments).
             connection: Auth0 database connection name (realm).
             organization: Auth0 organization ID or name.
             scope: OAuth2 scope string.
@@ -2676,11 +2679,12 @@ class ServerClient(Generic[TStoreOptions]):
                       (token_type: DPoP). Required when the tenant mandates DPoP binding.
 
         Returns:
-            PasskeyTokenResponse containing access_token, id_token, expires_in, etc.
+            PasskeyLoginResult containing state_data with user claims and token sets,
+            consistent with complete_interactive_login and login_with_custom_token_exchange.
 
         Raises:
             MissingRequiredArgumentError: If auth_session or authn_response is missing.
-            PasskeyError: If token exchange fails.
+            PasskeyError: If token exchange or session creation fails.
         """
         if not auth_session:
             raise MissingRequiredArgumentError("auth_session")
@@ -2755,9 +2759,57 @@ class ServerClient(Generic[TStoreOptions]):
                 if "expires_in" in token_data and "expires_at" not in token_data:
                     token_data["expires_at"] = int(time.time()) + token_data["expires_in"]
 
-                return PasskeyTokenResponse.model_validate(token_data)
+                token_response = PasskeyTokenResponse.model_validate(token_data)
+
+            # Extract user claims from ID token if present
+            user_claims = None
+            sid = PKCE.generate_random_string(32)
+            if token_response.id_token:
+                jwks = await self._get_jwks_cached(domain, metadata)
+                try:
+                    claims = await self._verify_and_decode_jwt(
+                        token_response.id_token, jwks, audience=self._client_id
+                    )
+                    origin_issuer = metadata.get("issuer")
+                    token_issuer = claims.get("iss", "")
+                    if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
+                        raise IssuerValidationError(
+                            "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+                        )
+                    user_claims = UserClaims.parse_obj(claims)
+                    sid = claims.get("sid", sid)
+                except ValueError as e:
+                    raise ApiError("jwks_key_not_found", str(e))
+                except jwt.InvalidSignatureError as e:
+                    raise ApiError("invalid_signature", f"ID token signature verification failed: {str(e)}", e)
+                except jwt.InvalidAudienceError as e:
+                    raise ApiError("invalid_audience", f"ID token audience mismatch: {str(e)}", e)
+                except jwt.ExpiredSignatureError as e:
+                    raise ApiError("token_expired", f"ID token has expired: {str(e)}", e)
+                except jwt.InvalidTokenError as e:
+                    raise ApiError("invalid_token", f"ID token verification failed: {str(e)}", e)
+
+            # Build token set and session state
+            token_set = TokenSet(
+                audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
+                access_token=token_response.access_token,
+                scope=token_response.scope or scope or "",
+                expires_at=token_response.expires_at or int(time.time()) + token_response.expires_in,
+            )
+            state_data = StateData(
+                user=user_claims,
+                id_token=token_response.id_token,
+                refresh_token=token_response.refresh_token,
+                token_sets=[token_set],
+                domain=domain,
+                internal={"sid": sid, "created_at": int(time.time())},
+            )
+
+            await self._state_store.set(self._state_identifier, state_data, options=store_options)
+
+            return PasskeyLoginResult(state_data=state_data.dict())
 
         except Exception as e:
-            if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError)):
+            if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError, ApiError, IssuerValidationError)):
                 raise
             raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Passkey sign-in failed", e) from e
