@@ -7,12 +7,16 @@ import asyncio
 import json
 import time
 from collections import OrderedDict
-from typing import Any, Callable, Generic, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Callable, Generic, Optional, TypeVar, Union
+
+if TYPE_CHECKING:
+    from jwcrypto import jwk
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 import jwt
 from authlib.integrations.base_client.errors import OAuthError
+from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth, make_dpop_proof_for_token_endpoint
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import ValidationError
 
@@ -34,6 +38,7 @@ from auth0_server_python.auth_types import (
     PasskeyAuthResponse,
     PasskeyLoginChallengeResponse,
     PasskeySignupChallengeResponse,
+    PasskeyUserProfile,
     PasskeyTokenResponse,
     StartInteractiveLoginOptions,
     StateData,
@@ -58,6 +63,8 @@ from auth0_server_python.error import (
     MfaRequiredError,
     MissingRequiredArgumentError,
     MissingTransactionError,
+    PasskeyError,
+    PasskeyErrorCode,
     PollingApiError,
     StartLinkUserError,
 )
@@ -82,6 +89,9 @@ class ServerClient(Generic[TStoreOptions]):
     and token operations using Authlib for OIDC functionality.
     """
     DEFAULT_AUDIENCE_STATE_KEY = "default"
+    GRANT_TYPE_PASSKEY = "urn:okta:params:oauth:grant-type:webauthn"
+    PASSKEY_REGISTER_PATH = "/passkey/register"
+    PASSKEY_CHALLENGE_PATH = "/passkey/challenge"
 
     # ============================================================================
     # INITIALIZATION
@@ -2480,22 +2490,21 @@ class ServerClient(Generic[TStoreOptions]):
             )
 
     # ============================================================================
+    # MFA (Multi-Factor Authentication)
+    # ============================================================================
+
+    @property
+    def mfa(self) -> MfaClient:
+        """Access the MFA client for multi-factor authentication operations."""
+        return self._mfa_client
+
+    # ============================================================================
     # PASSKEY AUTHENTICATION
     # ============================================================================
 
-    GRANT_TYPE_PASSKEY = "urn:okta:params:oauth:grant-type:webauthn"
-
     async def passkey_signup_challenge(
         self,
-        name: Optional[str] = None,
-        email: Optional[str] = None,
-        username: Optional[str] = None,
-        phone_number: Optional[str] = None,
-        given_name: Optional[str] = None,
-        family_name: Optional[str] = None,
-        nickname: Optional[str] = None,
-        picture: Optional[str] = None,
-        user_metadata: Optional[dict[str, Any]] = None,
+        user_profile: Optional[PasskeyUserProfile] = None,
         connection: Optional[str] = None,
         organization: Optional[str] = None,
         store_options: Optional[dict[str, Any]] = None,
@@ -2507,15 +2516,8 @@ class ServerClient(Generic[TStoreOptions]):
         then call signin_with_passkey() with the auth_session and credential result.
 
         Args:
-            name: User's full name.
-            email: User's email address.
-            username: Username for the new account.
-            phone_number: User's phone number.
-            given_name: User's given (first) name.
-            family_name: User's family (last) name.
-            nickname: User's nickname.
-            picture: URL to the user's profile picture.
-            user_metadata: Arbitrary user metadata dict.
+            user_profile: Optional user profile data (email, name, username, etc.).
+                          Use PasskeyUserProfile — supports extra fields for forward compatibility.
             connection: Auth0 database connection name (realm).
             organization: Auth0 organization ID or name.
             store_options: Optional options for domain resolution.
@@ -2524,73 +2526,52 @@ class ServerClient(Generic[TStoreOptions]):
             PasskeySignupChallengeResponse with auth_session and authn_params_public_key.
 
         Raises:
-            ApiError: If the challenge request fails.
+            PasskeyError: If the challenge request fails.
         """
         try:
             domain = await self._resolve_current_domain(store_options)
-
-            user_profile: dict[str, Any] = {}
-            if email is not None:
-                user_profile["email"] = email
-            if name is not None:
-                user_profile["name"] = name
-            if username is not None:
-                user_profile["username"] = username
-            if phone_number is not None:
-                user_profile["phone_number"] = phone_number
-            if given_name is not None:
-                user_profile["given_name"] = given_name
-            if family_name is not None:
-                user_profile["family_name"] = family_name
-            if nickname is not None:
-                user_profile["nickname"] = nickname
-            if picture is not None:
-                user_profile["picture"] = picture
-            if user_metadata is not None:
-                user_profile["user_metadata"] = user_metadata
 
             body: dict[str, Any] = {"client_id": self._client_id}
             if self._client_secret:
                 body["client_secret"] = self._client_secret
             if user_profile:
-                body["user_profile"] = user_profile
+                body["user_profile"] = user_profile.model_dump(exclude_none=True)
             if connection:
                 body["realm"] = connection
             if organization:
                 body["organization"] = organization
 
-            url = f"https://{domain}/passkey/register"
-
             async with self._get_http_client() as client:
+                url = f"https://{domain}{self.PASSKEY_REGISTER_PATH}"
                 response = await client.post(url, json=body)
 
                 if response.status_code != 200:
                     try:
                         error_data = response.json()
                     except (json.JSONDecodeError, ValueError):
-                        raise ApiError(
-                            "passkey_challenge_error",
+                        raise PasskeyError(
+                            PasskeyErrorCode.CHALLENGE_FAILED,
                             f"Passkey signup challenge failed with status {response.status_code}",
                         )
-                    raise ApiError(
-                        error_data.get("error", "passkey_challenge_error"),
+                    raise PasskeyError(
+                        error_data.get("error", PasskeyErrorCode.CHALLENGE_FAILED),
                         error_data.get("error_description", "Passkey signup challenge failed"),
                     )
 
                 try:
                     data = response.json()
                 except (json.JSONDecodeError, ValueError):
-                    raise ApiError(
-                        "invalid_response",
+                    raise PasskeyError(
+                        PasskeyErrorCode.INVALID_RESPONSE,
                         "Failed to parse passkey signup challenge response as JSON",
                     )
 
                 return PasskeySignupChallengeResponse.model_validate(data)
 
         except Exception as e:
-            if isinstance(e, (ApiError, MissingRequiredArgumentError, ValidationError)):
+            if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError)):
                 raise
-            raise ApiError("passkey_challenge_error", "Passkey signup challenge failed", e)
+            raise PasskeyError(PasskeyErrorCode.CHALLENGE_FAILED, "Passkey signup challenge failed", e) from e
 
     async def passkey_login_challenge(
         self,
@@ -2630,38 +2611,37 @@ class ServerClient(Generic[TStoreOptions]):
             if organization:
                 body["organization"] = organization
 
-            url = f"https://{domain}/passkey/challenge"
-
             async with self._get_http_client() as client:
+                url = f"https://{domain}{self.PASSKEY_CHALLENGE_PATH}"
                 response = await client.post(url, json=body)
 
                 if response.status_code != 200:
                     try:
                         error_data = response.json()
                     except (json.JSONDecodeError, ValueError):
-                        raise ApiError(
-                            "passkey_challenge_error",
+                        raise PasskeyError(
+                            PasskeyErrorCode.CHALLENGE_FAILED,
                             f"Passkey login challenge failed with status {response.status_code}",
                         )
-                    raise ApiError(
-                        error_data.get("error", "passkey_challenge_error"),
+                    raise PasskeyError(
+                        error_data.get("error", PasskeyErrorCode.CHALLENGE_FAILED),
                         error_data.get("error_description", "Passkey login challenge failed"),
                     )
 
                 try:
                     data = response.json()
                 except (json.JSONDecodeError, ValueError):
-                    raise ApiError(
-                        "invalid_response",
+                    raise PasskeyError(
+                        PasskeyErrorCode.INVALID_RESPONSE,
                         "Failed to parse passkey login challenge response as JSON",
                     )
 
                 return PasskeyLoginChallengeResponse.model_validate(data)
 
         except Exception as e:
-            if isinstance(e, (ApiError, MissingRequiredArgumentError, ValidationError)):
+            if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError)):
                 raise
-            raise ApiError("passkey_challenge_error", "Passkey login challenge failed", e)
+            raise PasskeyError(PasskeyErrorCode.CHALLENGE_FAILED, "Passkey login challenge failed", e) from e
 
     async def signin_with_passkey(
         self,
@@ -2672,6 +2652,7 @@ class ServerClient(Generic[TStoreOptions]):
         organization: Optional[str] = None,
         scope: Optional[str] = None,
         audience: Optional[str] = None,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> PasskeyTokenResponse:
         """
         Completes passkey authentication by exchanging the WebAuthn assertion
@@ -2690,13 +2671,16 @@ class ServerClient(Generic[TStoreOptions]):
             organization: Auth0 organization ID or name.
             scope: OAuth2 scope string.
             audience: Target API audience.
+            dpop_key: Optional EC P-256 JWK for DPoP-bound token exchange. When provided,
+                      attaches a DPoP proof header so Auth0 issues a DPoP-bound token
+                      (token_type: DPoP). Required when the tenant mandates DPoP binding.
 
         Returns:
             PasskeyTokenResponse containing access_token, id_token, expires_in, etc.
 
         Raises:
             MissingRequiredArgumentError: If auth_session or authn_response is missing.
-            ApiError: If token exchange fails.
+            PasskeyError: If token exchange fails.
         """
         if not auth_session:
             raise MissingRequiredArgumentError("auth_session")
@@ -2709,7 +2693,7 @@ class ServerClient(Generic[TStoreOptions]):
 
             token_endpoint = metadata.get("token_endpoint")
             if not token_endpoint:
-                raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
+                raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Token endpoint missing in OIDC metadata")
 
             body: dict[str, Any] = {
                 "grant_type": self.GRANT_TYPE_PASSKEY,
@@ -2729,26 +2713,43 @@ class ServerClient(Generic[TStoreOptions]):
                 body["audience"] = audience
 
             async with self._get_http_client() as client:
-                response = await client.post(token_endpoint, json=body)
+                headers = {}
+                if dpop_key is not None:
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint
+                    )
+                response = await client.post(token_endpoint, json=body, headers=headers)
+
+                # RFC 9449 §8.2 — nonce retry for DPoP token endpoint calls
+                if (
+                    dpop_key is not None
+                    and response.status_code == 401
+                    and response.headers.get("DPoP-Nonce")
+                ):
+                    nonce = response.headers["DPoP-Nonce"]
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint, nonce=nonce
+                    )
+                    response = await client.post(token_endpoint, json=body, headers=headers)
 
                 if response.status_code != 200:
                     try:
                         error_data = response.json()
                     except (json.JSONDecodeError, ValueError):
-                        raise ApiError(
-                            "passkey_token_error",
+                        raise PasskeyError(
+                            PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
                             f"Passkey token exchange failed with status {response.status_code}",
                         )
-                    raise ApiError(
-                        error_data.get("error", "passkey_token_error"),
+                    raise PasskeyError(
+                        error_data.get("error", PasskeyErrorCode.TOKEN_EXCHANGE_FAILED),
                         error_data.get("error_description", "Passkey token exchange failed"),
                     )
 
                 try:
                     token_data = response.json()
                 except (json.JSONDecodeError, ValueError):
-                    raise ApiError(
-                        "invalid_response", "Failed to parse passkey token response as JSON"
+                    raise PasskeyError(
+                        PasskeyErrorCode.INVALID_RESPONSE, "Failed to parse passkey token response as JSON"
                     )
 
                 if "expires_in" in token_data and "expires_at" not in token_data:
@@ -2757,15 +2758,6 @@ class ServerClient(Generic[TStoreOptions]):
                 return PasskeyTokenResponse.model_validate(token_data)
 
         except Exception as e:
-            if isinstance(e, (ApiError, MissingRequiredArgumentError, ValidationError)):
+            if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError)):
                 raise
-            raise ApiError("passkey_token_error", "Passkey sign-in failed", e)
-
-    # ============================================================================
-    # MFA (Multi-Factor Authentication)
-    # ============================================================================
-
-    @property
-    def mfa(self) -> MfaClient:
-        """Access the MFA client for multi-factor authentication operations."""
-        return self._mfa_client
+            raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Passkey sign-in failed", e) from e

@@ -619,7 +619,7 @@ class MyAccountClient:
         navigator.credentials.create(), then call verify_authentication_method()
         with the auth_session and credential result.
 
-        Requires scope: create:me:authentication_methods
+        Requires scope: create:me:authentication-methods
         """
         if not access_token:
             raise MissingRequiredArgumentError("access_token")
@@ -634,7 +634,7 @@ class MyAccountClient:
                     auth=_make_auth(access_token, dpop_key),
                 )
 
-                if response.status_code != 201:
+                if response.status_code != 202:
                     try:
                         error_data = response.json()
                     except (json.JSONDecodeError, ValueError):
@@ -711,7 +711,7 @@ class MyAccountClient:
     ) -> AuthenticationMethod:
         """Step 2 of 2: Verify enrollment (POST /me/v1/authentication-methods/{id}/verify).
 
-        Requires scope: create:me:authentication_methods
+        Requires scope: create:me:authentication-methods
         """
         if not access_token:
             raise MissingRequiredArgumentError("access_token")
@@ -728,7 +728,7 @@ class MyAccountClient:
                     auth=_make_auth(access_token, dpop_key),
                 )
 
-                if response.status_code != 200:
+                if response.status_code != 201:
                     try:
                         error_data = response.json()
                     except (json.JSONDecodeError, ValueError):

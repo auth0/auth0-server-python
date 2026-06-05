@@ -466,200 +466,6 @@ class ListConnectedAccountConnectionsResponse(BaseModel):
 
 
 # =============================================================================
-# Passkey & MyAccount Authentication Methods Types
-# =============================================================================
-
-
-class PasskeyRpInfo(BaseModel):
-    id: str
-    name: str
-
-
-class PasskeyUserInfo(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-    id: str
-    name: str
-    display_name: Optional[str] = Field(None, alias="displayName")
-
-
-class PasskeyPubKeyCredParam(BaseModel):
-    type: str
-    alg: int
-
-
-class PasskeyAuthenticatorSelection(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-    resident_key: Optional[str] = Field(None, alias="residentKey")
-    user_verification: Optional[str] = Field(None, alias="userVerification")
-
-
-class PasskeyPublicKeyOptions(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-    challenge: str
-    rp: Optional[PasskeyRpInfo] = None
-    rp_id: Optional[str] = Field(None, alias="rpId")
-    user: Optional[PasskeyUserInfo] = None
-    pub_key_cred_params: Optional[list[PasskeyPubKeyCredParam]] = Field(
-        None, alias="pubKeyCredParams"
-    )
-    authenticator_selection: Optional[PasskeyAuthenticatorSelection] = Field(
-        None, alias="authenticatorSelection"
-    )
-    timeout: Optional[int] = None
-    user_verification: Optional[str] = Field(None, alias="userVerification")
-
-
-class EnrollAuthenticationMethodRequest(BaseModel):
-    type: str
-    email: Optional[str] = None
-    phone_number: Optional[str] = None
-    preferred_authentication_method: Optional[str] = None
-    user_identity_id: Optional[str] = None
-    connection: Optional[str] = None
-
-
-class EnrollmentChallengeResponse(BaseModel):
-    authentication_method_id: str
-    auth_session: str
-    authn_params_public_key: Optional[PasskeyPublicKeyOptions] = None
-
-    def __repr__(self) -> str:
-        return (
-            f"EnrollmentChallengeResponse("
-            f"authentication_method_id={self.authentication_method_id!r}, "
-            f"auth_session=[REDACTED], "
-            f"authn_params_public_key={self.authn_params_public_key!r})"
-        )
-
-
-class PasskeyAuthResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-    id: str
-    raw_id: str = Field(alias="rawId")
-    type: str
-    authenticator_attachment: Optional[str] = Field(None, alias="authenticatorAttachment")
-    response: dict[str, str]
-    client_extension_results: Optional[dict] = Field(None, alias="clientExtensionResults")
-
-
-class VerifyAuthenticationMethodRequest(BaseModel):
-    auth_session: str
-    authn_response: Optional[PasskeyAuthResponse] = None
-    otp_code: Optional[str] = None
-    recovery_code: Optional[str] = None
-    password: Optional[str] = None
-
-    @model_validator(mode="after")
-    def _check_at_least_one_method(self) -> "VerifyAuthenticationMethodRequest":
-        has_method = (
-            self.authn_response is not None
-            or (self.otp_code is not None and self.otp_code.strip() != "")
-            or (self.recovery_code is not None and self.recovery_code.strip() != "")
-            or (self.password is not None and self.password.strip() != "")
-        )
-        if not has_method:
-            raise ValueError(
-                "At least one verification method must be provided: "
-                "authn_response, otp_code, recovery_code, or password"
-            )
-        return self
-
-
-class AuthenticationMethod(BaseModel):
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
-
-    id: str
-    type: str
-    created_at: str
-    confirmed: Optional[bool] = None
-    usage: Optional[list[str]] = None
-    identity_user_id: Optional[str] = None
-    credential_device_type: Optional[str] = None
-    credential_backed_up: Optional[bool] = None
-    key_id: Optional[str] = None
-    public_key: Optional[str] = None
-    transports: Optional[list[str]] = None
-    user_agent: Optional[str] = None
-    user_handle: Optional[str] = None
-    aaguid: Optional[str] = None
-    relying_party_id: Optional[str] = None
-    phone_number: Optional[str] = None
-    preferred_authentication_method: Optional[str] = None
-    email: Optional[str] = None
-    name: Optional[str] = None
-    last_password_reset: Optional[str] = None
-
-
-class UpdateAuthenticationMethodRequest(BaseModel):
-    name: Optional[str] = None
-    preferred_authentication_method: Optional[str] = None
-
-
-class ListAuthenticationMethodsResponse(BaseModel):
-    authentication_methods: list[AuthenticationMethod]
-
-
-class Factor(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    name: str
-    enabled: Optional[bool] = None
-    trial_expired: Optional[bool] = None
-
-
-class GetFactorsResponse(BaseModel):
-    factors: list[Factor]
-
-
-class PasskeySignupChallengeResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-    auth_session: str
-    authn_params_public_key: PasskeyPublicKeyOptions
-
-    def __repr__(self) -> str:
-        return (
-            f"PasskeySignupChallengeResponse("
-            f"auth_session=[REDACTED], "
-            f"authn_params_public_key={self.authn_params_public_key!r})"
-        )
-
-
-class PasskeyLoginChallengeResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-    auth_session: str
-    authn_params_public_key: PasskeyPublicKeyOptions
-
-    def __repr__(self) -> str:
-        return (
-            f"PasskeyLoginChallengeResponse("
-            f"auth_session=[REDACTED], "
-            f"authn_params_public_key={self.authn_params_public_key!r})"
-        )
-
-
-class PasskeyTokenResponse(BaseModel):
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
-    access_token: str
-    token_type: str = "Bearer"
-    expires_in: int
-    expires_at: Optional[int] = None
-    scope: Optional[str] = None
-    id_token: Optional[str] = None
-    refresh_token: Optional[str] = None
-
-    def __repr__(self) -> str:
-        return (
-            f"PasskeyTokenResponse("
-            f"token_type={self.token_type!r}, "
-            f"expires_in={self.expires_in!r}, "
-            f"expires_at={self.expires_at!r}, "
-            f"scope={self.scope!r}, "
-            f"access_token=[REDACTED], "
-            f"id_token=[REDACTED], "
-            f"refresh_token=[REDACTED])"
-        )
-
-
-# =============================================================================
 # MFA Types
 # =============================================================================
 
@@ -839,3 +645,197 @@ class MfaTokenContext(BaseModel):
     scope: str
     mfa_requirements: Optional[MfaRequirements] = None
     created_at: int
+
+
+# =============================================================================
+# Passkey & MyAccount Authentication Methods Types
+# =============================================================================
+
+
+class PasskeyRpInfo(BaseModel):
+    id: str
+    name: str
+
+
+class PasskeyUserInfo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    id: str
+    name: str
+    display_name: Optional[str] = Field(None, alias="displayName")
+
+
+class PasskeyPubKeyCredParam(BaseModel):
+    type: str
+    alg: int
+
+
+class PasskeyAuthenticatorSelection(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    resident_key: Optional[str] = Field(None, alias="residentKey")
+    user_verification: Optional[str] = Field(None, alias="userVerification")
+
+
+class PasskeyPublicKeyOptions(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    challenge: str
+    rp: Optional[PasskeyRpInfo] = None
+    rp_id: Optional[str] = Field(None, alias="rpId")
+    user: Optional[PasskeyUserInfo] = None
+    pub_key_cred_params: Optional[list[PasskeyPubKeyCredParam]] = Field(
+        None, alias="pubKeyCredParams"
+    )
+    authenticator_selection: Optional[PasskeyAuthenticatorSelection] = Field(
+        None, alias="authenticatorSelection"
+    )
+    timeout: Optional[int] = None
+    user_verification: Optional[str] = Field(None, alias="userVerification")
+
+
+EnrollmentType = Literal["passkey", "email", "phone", "totp", "push-notification", "recovery-code", "password"]
+PreferredAuthMethod = Literal["sms", "voice"]
+
+
+class EnrollAuthenticationMethodRequest(BaseModel):
+    type: EnrollmentType
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    preferred_authentication_method: Optional[PreferredAuthMethod] = None
+    user_identity_id: Optional[str] = None
+    connection: Optional[str] = None
+
+
+class EnrollmentChallengeResponse(BaseModel):
+    authentication_method_id: str
+    auth_session: str
+    authn_params_public_key: Optional[PasskeyPublicKeyOptions] = None
+
+    def __repr__(self) -> str:
+        return (
+            f"EnrollmentChallengeResponse("
+            f"authentication_method_id={self.authentication_method_id!r}, "
+            f"auth_session=[REDACTED], "
+            f"authn_params_public_key={self.authn_params_public_key!r})"
+        )
+
+
+class PasskeyAuthResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    id: str
+    raw_id: str = Field(alias="rawId")
+    type: str
+    authenticator_attachment: Optional[str] = Field(None, alias="authenticatorAttachment")
+    response: dict[str, str]
+    client_extension_results: Optional[dict] = Field(None, alias="clientExtensionResults")
+
+
+class VerifyAuthenticationMethodRequest(BaseModel):
+    auth_session: str
+    authn_response: Optional[PasskeyAuthResponse] = None
+    otp_code: Optional[str] = None
+    recovery_code: Optional[str] = None
+    password: Optional[str] = None
+
+
+class AuthenticationMethod(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    type: str
+    created_at: str
+    confirmed: Optional[bool] = None
+    usage: Optional[list[str]] = None
+    identity_user_id: Optional[str] = None
+    credential_device_type: Optional[str] = None
+    credential_backed_up: Optional[bool] = None
+    key_id: Optional[str] = None
+    public_key: Optional[str] = None
+    transports: Optional[list[str]] = None
+    user_agent: Optional[str] = None
+    user_handle: Optional[str] = None
+    aaguid: Optional[str] = None
+    relying_party_id: Optional[str] = None
+    phone_number: Optional[str] = None
+    preferred_authentication_method: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    last_password_reset: Optional[str] = None
+
+
+class UpdateAuthenticationMethodRequest(BaseModel):
+    name: Optional[str] = None
+    preferred_authentication_method: Optional[str] = None
+
+
+class ListAuthenticationMethodsResponse(BaseModel):
+    authentication_methods: list[AuthenticationMethod]
+
+
+class Factor(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str
+    enabled: Optional[bool] = None
+    trial_expired: Optional[bool] = None
+
+
+class GetFactorsResponse(BaseModel):
+    factors: list[Factor]
+
+
+class PasskeyUserProfile(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    email: Optional[str] = None
+    name: Optional[str] = None
+    username: Optional[str] = None
+    phone_number: Optional[str] = None
+    given_name: Optional[str] = None
+    family_name: Optional[str] = None
+    nickname: Optional[str] = None
+    picture: Optional[str] = None
+    user_metadata: Optional[dict[str, Any]] = None
+
+
+class PasskeySignupChallengeResponse(BaseModel):
+    auth_session: str
+    authn_params_public_key: PasskeyPublicKeyOptions
+
+    def __repr__(self) -> str:
+        return (
+            f"PasskeySignupChallengeResponse("
+            f"auth_session=[REDACTED], "
+            f"authn_params_public_key={self.authn_params_public_key!r})"
+        )
+
+
+class PasskeyLoginChallengeResponse(BaseModel):
+    auth_session: str
+    authn_params_public_key: PasskeyPublicKeyOptions
+
+    def __repr__(self) -> str:
+        return (
+            f"PasskeyLoginChallengeResponse("
+            f"auth_session=[REDACTED], "
+            f"authn_params_public_key={self.authn_params_public_key!r})"
+        )
+
+
+class PasskeyTokenResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    expires_at: Optional[int] = None
+    scope: Optional[str] = None
+    id_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+
+    def __repr__(self) -> str:
+        return (
+            f"PasskeyTokenResponse("
+            f"token_type={self.token_type!r}, "
+            f"expires_in={self.expires_in!r}, "
+            f"expires_at={self.expires_at!r}, "
+            f"scope={self.scope!r}, "
+            f"access_token=[REDACTED], "
+            f"id_token=[REDACTED], "
+            f"refresh_token=[REDACTED])"
+        )
