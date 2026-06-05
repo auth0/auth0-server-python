@@ -688,7 +688,7 @@ class PasskeyAuthenticatorSelection(BaseModel):
 
 
 class PasskeyPublicKeyOptions(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
     challenge: str
     rp: Optional[PasskeyRpInfo] = None
     rp_id: Optional[str] = Field(None, alias="rpId")
@@ -717,6 +717,7 @@ class EnrollAuthenticationMethodRequest(BaseModel):
 
 
 class EnrollmentChallengeResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
     authentication_method_id: str
     auth_session: str
     authn_params_public_key: Optional[PasskeyPublicKeyOptions] = None
@@ -737,7 +738,7 @@ class PasskeyAuthResponse(BaseModel):
     type: str
     authenticator_attachment: Optional[str] = Field(None, alias="authenticatorAttachment")
     response: dict[str, str]
-    client_extension_results: Optional[dict] = Field(None, alias="clientExtensionResults")
+    client_extension_results: Optional[dict[str, Any]] = Field(None, alias="clientExtensionResults")
 
 
 class VerifyAuthenticationMethodRequest(BaseModel):
@@ -803,31 +804,26 @@ class PasskeyUserProfile(BaseModel):
     family_name: Optional[str] = None
     nickname: Optional[str] = None
     picture: Optional[str] = None
-    user_metadata: Optional[dict[str, Any]] = None
 
 
-class PasskeySignupChallengeResponse(BaseModel):
+class _PasskeyChallengeResponseBase(BaseModel):
     auth_session: str
     authn_params_public_key: PasskeyPublicKeyOptions
 
     def __repr__(self) -> str:
         return (
-            f"PasskeySignupChallengeResponse("
+            f"{self.__class__.__name__}("
             f"auth_session=[REDACTED], "
             f"authn_params_public_key={self.authn_params_public_key!r})"
         )
 
 
-class PasskeyLoginChallengeResponse(BaseModel):
-    auth_session: str
-    authn_params_public_key: PasskeyPublicKeyOptions
+class PasskeySignupChallengeResponse(_PasskeyChallengeResponseBase):
+    pass
 
-    def __repr__(self) -> str:
-        return (
-            f"PasskeyLoginChallengeResponse("
-            f"auth_session=[REDACTED], "
-            f"authn_params_public_key={self.authn_params_public_key!r})"
-        )
+
+class PasskeyLoginChallengeResponse(_PasskeyChallengeResponseBase):
+    pass
 
 
 class PasskeyTokenResponse(BaseModel):

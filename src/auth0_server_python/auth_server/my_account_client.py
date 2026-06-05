@@ -1,8 +1,9 @@
 import json
 from typing import TYPE_CHECKING, Optional
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 
 import httpx
+
 from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
 from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
 from auth0_server_python.auth_types import (
@@ -654,12 +655,12 @@ class MyAccountClient:
                 if not location:
                     raise ApiError(
                         "enroll_authentication_method_error",
-                        "Enrollment succeeded (201) but Location header is missing",
+                        "Enrollment succeeded (202) but Location header is missing",
                     )
 
-                path = location.split("?")[0].split("#")[0].rstrip("/")
-                segments = path.split("/")
-                authentication_method_id = unquote(segments[-1]) if len(segments) > 1 else ""
+                parsed_path = urlparse(location).path.rstrip("/")
+                raw_id = parsed_path.rsplit("/", 1)[-1] if "/" in parsed_path else ""
+                authentication_method_id = unquote(raw_id)
                 if not authentication_method_id or authentication_method_id in (
                     "authentication-methods",
                     "v1",
@@ -667,7 +668,7 @@ class MyAccountClient:
                 ):
                     raise ApiError(
                         "enroll_authentication_method_error",
-                        "Enrollment succeeded (201) but could not extract ID from Location header",
+                        "Enrollment succeeded (202) but could not extract ID from Location header",
                     )
 
                 try:
@@ -675,21 +676,21 @@ class MyAccountClient:
                 except (json.JSONDecodeError, ValueError):
                     raise ApiError(
                         "enroll_authentication_method_error",
-                        "Enrollment succeeded (201) but response body is not valid JSON",
+                        "Enrollment succeeded (202) but response body is not valid JSON",
                     )
 
                 auth_session = data.get("auth_session")
                 if not auth_session:
                     raise ApiError(
                         "enroll_authentication_method_error",
-                        "Enrollment succeeded (201) but auth_session is missing from response",
+                        "Enrollment succeeded (202) but auth_session is missing from response",
                     )
 
                 return EnrollmentChallengeResponse.model_validate(
                     {
+                        **data,
                         "authentication_method_id": authentication_method_id,
                         "auth_session": auth_session,
-                        "authn_params_public_key": data.get("authn_params_public_key"),
                     }
                 )
 

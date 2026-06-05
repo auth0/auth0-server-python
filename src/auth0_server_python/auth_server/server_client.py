@@ -16,10 +16,10 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import httpx
 import jwt
 from authlib.integrations.base_client.errors import OAuthError
-from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth, make_dpop_proof_for_token_endpoint
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import ValidationError
 
+from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_types import (
@@ -39,8 +39,8 @@ from auth0_server_python.auth_types import (
     PasskeyLoginChallengeResponse,
     PasskeyLoginResult,
     PasskeySignupChallengeResponse,
-    PasskeyUserProfile,
     PasskeyTokenResponse,
+    PasskeyUserProfile,
     StartInteractiveLoginOptions,
     StateData,
     TokenExchangeResponse,
@@ -2508,6 +2508,7 @@ class ServerClient(Generic[TStoreOptions]):
         user_profile: Optional[PasskeyUserProfile] = None,
         connection: Optional[str] = None,
         organization: Optional[str] = None,
+        user_metadata: Optional[dict[str, Any]] = None,
         store_options: Optional[dict[str, Any]] = None,
     ) -> PasskeySignupChallengeResponse:
         """
@@ -2521,6 +2522,8 @@ class ServerClient(Generic[TStoreOptions]):
                           Use PasskeyUserProfile — supports extra fields for forward compatibility.
             connection: Auth0 database connection name (realm).
             organization: Auth0 organization ID or name.
+            user_metadata: Optional custom metadata added at the root of the request body,
+                           not nested inside user_profile (per Auth0 API spec).
             store_options: Optional options for domain resolution.
 
         Returns:
@@ -2537,6 +2540,8 @@ class ServerClient(Generic[TStoreOptions]):
                 body["client_secret"] = self._client_secret
             if user_profile:
                 body["user_profile"] = user_profile.model_dump(exclude_none=True)
+            if user_metadata:
+                body["user_metadata"] = user_metadata
             if connection:
                 body["realm"] = connection
             if organization:
@@ -2669,7 +2674,7 @@ class ServerClient(Generic[TStoreOptions]):
             auth_session: Session credential from passkey_signup_challenge or passkey_login_challenge.
             authn_response: Serialized WebAuthn credential from navigator.credentials.create/get.
             store_options: Options passed to the state store (e.g., request/response for cookies).
-                           When None, session storage is skipped (stateless deployments).
+                           Passed through to the store on every call.
             connection: Auth0 database connection name (realm).
             organization: Auth0 organization ID or name.
             scope: OAuth2 scope string.
@@ -2761,6 +2766,13 @@ class ServerClient(Generic[TStoreOptions]):
 
                 token_response = PasskeyTokenResponse.model_validate(token_data)
 
+                if dpop_key is not None and token_response.token_type.lower() != "dpop":
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
+                        f"DPoP token binding failed: expected token_type 'DPoP', "
+                        f"got '{token_response.token_type}'",
+                    )
+
             # Extract user claims from ID token if present
             user_claims = None
             sid = PKCE.generate_random_string(32)
@@ -2771,12 +2783,16 @@ class ServerClient(Generic[TStoreOptions]):
                         token_response.id_token, jwks, audience=self._client_id
                     )
                     origin_issuer = metadata.get("issuer")
+                    if not origin_issuer:
+                        raise IssuerValidationError(
+                            "Issuer missing from OIDC metadata. Cannot validate ID token issuer."
+                        )
                     token_issuer = claims.get("iss", "")
                     if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
                         raise IssuerValidationError(
                             "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
                         )
-                    user_claims = UserClaims.parse_obj(claims)
+                    user_claims = UserClaims.model_validate(claims)
                     sid = claims.get("sid", sid)
                 except ValueError as e:
                     raise ApiError("jwks_key_not_found", str(e))
@@ -2794,7 +2810,7 @@ class ServerClient(Generic[TStoreOptions]):
                 audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
                 access_token=token_response.access_token,
                 scope=token_response.scope or scope or "",
-                expires_at=token_response.expires_at or int(time.time()) + token_response.expires_in,
+                expires_at=token_response.expires_at if token_response.expires_at is not None else int(time.time()) + token_response.expires_in,
             )
             state_data = StateData(
                 user=user_claims,
@@ -2807,7 +2823,7 @@ class ServerClient(Generic[TStoreOptions]):
 
             await self._state_store.set(self._state_identifier, state_data, options=store_options)
 
-            return PasskeyLoginResult(state_data=state_data.dict())
+            return PasskeyLoginResult(state_data=state_data.model_dump())
 
         except Exception as e:
             if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError, ApiError, IssuerValidationError)):

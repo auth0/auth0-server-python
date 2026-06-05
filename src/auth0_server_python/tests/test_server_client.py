@@ -4855,6 +4855,14 @@ _PASSKEY_TOKEN_RESPONSE = {
     "scope": "openid profile",
 }
 
+_PASSKEY_TOKEN_RESPONSE_DPOP = {
+    "access_token": "at_passkey_dpop_123",
+    "id_token": "eyJ.test.jwt",
+    "token_type": "DPoP",
+    "expires_in": 86400,
+    "scope": "openid profile",
+}
+
 
 def _make_passkey_authn_response():
     from auth0_server_python.auth_types import PasskeyAuthResponse
@@ -4939,8 +4947,8 @@ async def test_passkey_signup_challenge_user_profile_fields(mocker):
             family_name="Doe",
             nickname="jd",
             picture="https://example.com/pic.jpg",
-            user_metadata={"role": "admin"},
         ),
+        user_metadata={"role": "admin"},
         organization="org_123",
     )
 
@@ -4953,7 +4961,8 @@ async def test_passkey_signup_challenge_user_profile_fields(mocker):
     assert body["user_profile"]["family_name"] == "Doe"
     assert body["user_profile"]["nickname"] == "jd"
     assert body["user_profile"]["picture"] == "https://example.com/pic.jpg"
-    assert body["user_profile"]["user_metadata"] == {"role": "admin"}
+    assert "user_metadata" not in body["user_profile"]
+    assert body["user_metadata"] == {"role": "admin"}
     assert body["organization"] == "org_123"
 
 
@@ -4979,8 +4988,36 @@ async def test_passkey_signup_challenge_minimal_body(mocker):
     body = kwargs["json"]
     assert body == {"client_id": "test_client_id", "client_secret": "test_client_secret"}
     assert "user_profile" not in body
+    assert "user_metadata" not in body
     assert "realm" not in body
     assert "organization" not in body
+
+
+@pytest.mark.asyncio
+async def test_passkey_signup_challenge_user_metadata_root_level(mocker):
+    """user_metadata must be sent at root level, not nested inside user_profile."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_SIGNUP_CHALLENGE_RESPONSE)
+    mock_post.return_value = mock_response
+
+    await client.passkey_signup_challenge(
+        user_metadata={"preferred_language": "en"},
+    )
+
+    args, kwargs = mock_post.call_args
+    body = kwargs["json"]
+    assert body["user_metadata"] == {"preferred_language": "en"}
+    assert "user_profile" not in body
 
 
 @pytest.mark.asyncio
@@ -5085,6 +5122,34 @@ async def test_passkey_login_challenge_success(mocker):
     assert body["client_id"] == "test_client_id"
     assert body["realm"] == "Username-Password-Authentication"
     assert body["organization"] == "org_abc"
+    assert "username" not in body
+
+
+@pytest.mark.asyncio
+async def test_passkey_login_challenge_minimal_body(mocker):
+    """No optional fields sent when called with no arguments."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_LOGIN_CHALLENGE_RESPONSE)
+    mock_post.return_value = mock_response
+
+    await client.passkey_login_challenge()
+
+    args, kwargs = mock_post.call_args
+    body = kwargs["json"]
+    assert body == {"client_id": "test_client_id", "client_secret": "test_client_secret"}
+    assert "username" not in body
+    assert "realm" not in body
+    assert "organization" not in body
 
 
 @pytest.mark.asyncio
@@ -5534,7 +5599,7 @@ async def test_signin_with_passkey_dpop_attaches_proof_header(mocker):
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
     mock_response.status_code = 200
-    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE_DPOP)
     mock_post.return_value = mock_response
 
     dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
@@ -5589,7 +5654,7 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
 
     success_response = AsyncMock()
     success_response.status_code = 200
-    success_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    success_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE_DPOP)
 
     mock_post.side_effect = [nonce_response, success_response]
 
@@ -5601,7 +5666,7 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
     )
 
     assert mock_post.await_count == 2
-    assert result.state_data["token_sets"][0]["access_token"] == "at_passkey_123"
+    assert result.state_data["token_sets"][0]["access_token"] == "at_passkey_dpop_123"
 
     # Second call must include the nonce in the DPoP proof
     second_call_kwargs = mock_post.call_args_list[1][1]
@@ -5610,6 +5675,74 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
     padding = 4 - len(payload_b64) % 4
     payload = _json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
     assert payload["nonce"] == "server-nonce-abc"
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_dpop_rejects_bearer_downgrade(mocker):
+    """Server returning token_type=Bearer when DPoP was requested must raise PasskeyError."""
+    from auth0_server_python.error import PasskeyError
+    from jwcrypto import jwk as jwk_module
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    mock_post.return_value = mock_response
+
+    dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
+    with pytest.raises(PasskeyError) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_xyz",
+            authn_response=_make_passkey_authn_response(),
+            dpop_key=dpop_key,
+        )
+    assert "DPoP" in str(exc.value) or "token_type" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_missing_issuer_in_metadata(mocker):
+    """Missing 'issuer' in OIDC metadata must raise IssuerValidationError, not silently pass."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    mock_post.return_value = mock_response
+
+    with pytest.raises(Exception) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_xyz",
+            authn_response=_make_passkey_authn_response(),
+        )
+    assert "issuer" in str(exc.value).lower()
 
 
 @pytest.mark.asyncio

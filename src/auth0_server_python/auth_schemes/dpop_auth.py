@@ -61,8 +61,7 @@ class DPoPAuth(httpx.Auth):
 
         # RFC 9449 §8.2 — server-nonce retry
         if (
-            response is not None
-            and response.status_code == 401
+            response.status_code == 401
             and response.headers.get("DPoP-Nonce")
         ):
             nonce = response.headers["DPoP-Nonce"]

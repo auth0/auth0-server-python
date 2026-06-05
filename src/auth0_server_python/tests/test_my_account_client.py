@@ -805,6 +805,36 @@ async def test_enroll_authentication_method_success(mocker):
 
 
 @pytest.mark.asyncio
+async def test_enroll_authentication_method_public_key_extra_fields_preserved(mocker):
+    """Unknown WebAuthn fields (excludeCredentials, attestation, extensions) must not be dropped."""
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 202
+    response.headers = {"location": "/me/v1/authentication-methods/passkey|new"}
+    response.json = MagicMock(return_value={
+        "auth_session": "session_abc",
+        "authn_params_public_key": {
+            "challenge": "dGVzdA",
+            "rp": {"id": "auth0.local", "name": "My App"},
+            "user": {"id": "dXNlcl8x", "name": "user@test.com"},
+            "pubKeyCredParams": [{"type": "public-key", "alg": -7}],
+            "excludeCredentials": [{"type": "public-key", "id": "Y3JlZA"}],
+            "attestation": "direct",
+            "extensions": {"appid": "https://auth0.local"},
+        },
+    })
+    mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+    req = EnrollAuthenticationMethodRequest(type="passkey")
+    result = await client.enroll_authentication_method(access_token="token123", request=req)
+
+    pk = result.authn_params_public_key
+    assert pk.model_extra["excludeCredentials"] == [{"type": "public-key", "id": "Y3JlZA"}]
+    assert pk.model_extra["attestation"] == "direct"
+    assert pk.model_extra["extensions"] == {"appid": "https://auth0.local"}
+
+
+@pytest.mark.asyncio
 async def test_enroll_authentication_method_missing_location(mocker):
     client = MyAccountClient(domain="auth0.local")
     response = AsyncMock()
@@ -846,6 +876,49 @@ async def test_enroll_authentication_method_location_absolute_url(mocker):
     req = EnrollAuthenticationMethodRequest(type="passkey")
     result = await client.enroll_authentication_method(access_token="token123", request=req)
     assert result.authentication_method_id == "am_xyz"
+
+
+@pytest.mark.asyncio
+async def test_enroll_authentication_method_totp_preserves_secret(mocker):
+    """TOTP enrollment response includes totp_secret and barcode_uri — must not be dropped."""
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 202
+    response.headers = {"location": "/me/v1/authentication-methods/totp|new"}
+    response.json = MagicMock(return_value={
+        "auth_session": "session_totp",
+        "totp_secret": "JBSWY3DPEHPK3PXP",
+        "barcode_uri": "otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP",
+    })
+    mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+    req = EnrollAuthenticationMethodRequest(type="totp")
+    result = await client.enroll_authentication_method(access_token="token123", request=req)
+
+    assert result.authentication_method_id == "totp|new"
+    assert result.auth_session == "session_totp"
+    assert result.model_extra["totp_secret"] == "JBSWY3DPEHPK3PXP"
+    assert result.model_extra["barcode_uri"].startswith("otpauth://")
+
+
+@pytest.mark.asyncio
+async def test_enroll_authentication_method_oob_preserves_oob_code(mocker):
+    """OOB (email/phone) enrollment response includes oob_code — must not be dropped."""
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 202
+    response.headers = {"location": "/me/v1/authentication-methods/email|new"}
+    response.json = MagicMock(return_value={
+        "auth_session": "session_oob",
+        "oob_code": "oob_abc123",
+    })
+    mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+    req = EnrollAuthenticationMethodRequest(type="email")
+    result = await client.enroll_authentication_method(access_token="token123", request=req)
+
+    assert result.authentication_method_id == "email|new"
+    assert result.model_extra["oob_code"] == "oob_abc123"
 
 
 @pytest.mark.asyncio
