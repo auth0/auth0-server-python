@@ -231,8 +231,7 @@ class ServerClient(Generic[TStoreOptions]):
                 )
             if actual != expected_org:
                 raise OrganizationTokenValidationError(
-                    f"Organization Id (org_id) claim value mismatch in the ID token; "
-                    f"expected {expected_org}, found {actual}"
+                    "Organization Id (org_id) claim value mismatch in the ID token"
                 )
         else:
             actual = claims.get("org_name")
@@ -245,8 +244,7 @@ class ServerClient(Generic[TStoreOptions]):
             # false rejections without risk of false matches.
             if unicodedata.normalize("NFC", actual).lower() != unicodedata.normalize("NFC", expected_org).lower():
                 raise OrganizationTokenValidationError(
-                    f"Organization Name (org_name) claim value mismatch in the ID token; "
-                    f"expected {expected_org}, found {actual}"
+                    "Organization Name (org_name) claim value mismatch in the ID token"
                 )
 
     async def _resolve_current_domain(self, store_options=None) -> str:

@@ -1,5 +1,6 @@
 import json
 import time
+import unicodedata
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -4948,8 +4949,6 @@ async def test_org_by_id_wrong_claim_raises(mocker):
     with pytest.raises(OrganizationTokenValidationError) as exc:
         await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
     assert "mismatch" in str(exc.value)
-    assert "org_abc123" in str(exc.value)
-    assert "org_attacker" in str(exc.value)
 
 
 
@@ -5034,8 +5033,6 @@ async def test_org_by_name_wrong_claim_raises(mocker):
     with pytest.raises(OrganizationTokenValidationError) as exc:
         await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
     assert "mismatch" in str(exc.value)
-    assert "acme-corp" in str(exc.value)
-    assert "evil-corp" in str(exc.value)
 
 
 
@@ -5445,6 +5442,27 @@ async def test_adv_org_in_untyped_dict_does_not_leak_into_transaction(mocker):
     assert "org_legitimate" in org_values
 
 
+@pytest.mark.asyncio
+async def test_adv_unicode_nfc_nfd_org_name_matches(mocker):
+    """ADV-005: NFC and NFD representations of the same org name are treated as equal."""
+    # "café" NFC: é is U+00E9 (single precomposed codepoint)
+    # "café" NFD: é is U+0065 U+0301 (base letter + combining accent)
+    nfc_name = unicodedata.normalize("NFC", "café")
+    nfd_name = unicodedata.normalize("NFD", "café")
+    assert nfc_name != nfd_name, "precondition: NFC and NFD byte sequences differ"
+
+    client = _make_org_client(
+        mocker,
+        TransactionData(code_verifier="cv", domain="tenant.auth0.com", organization=nfd_name),
+    )
+    mocker.patch("jwt.decode", return_value={
+        "sub": "u1", "iss": "https://tenant.auth0.com/", "aud": "test_client",
+        "org_name": nfc_name,
+    })
+    result = await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
+    assert result is not None
+
+
 # Error class properties
 
 def test_organization_token_validation_error_code():
@@ -5520,7 +5538,6 @@ async def test_org_userinfo_path_wrong_org_id_raises(mocker):
     with pytest.raises(OrganizationTokenValidationError) as exc:
         await client.complete_interactive_login("http://localhost/cb?code=abc&state=xyz")
     assert "mismatch" in str(exc.value)
-    assert "org_abc123" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -5669,7 +5686,6 @@ async def test_ciba_org_id_mismatch_raises(mocker):
             "auth_req_123", organization="org_abc123"
         )
     assert "mismatch" in str(exc.value)
-    assert "org_abc123" in str(exc.value)
 
 
 
@@ -5854,7 +5870,6 @@ async def test_refresh_response_wrong_org_id_raises(mocker):
             "organization": "org_abc123",
         })
     assert "mismatch" in str(exc.value)
-    assert "org_abc123" in str(exc.value)
 
 
 
