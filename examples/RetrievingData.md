@@ -93,6 +93,21 @@ except AccessTokenError as error:
 
 When the ceiling is reached, the SDK deletes the stored session before returning, so the next request starts clean.
 
+If the upstream IdP asserts a ceiling that is already in the past at login time, `complete_interactive_login()` raises a `SessionExpiredError` rather than persisting an already-expired session:
+
+```python
+from auth0_server_python.error import SessionExpiredError
+
+try:
+    await server_client.complete_interactive_login(url, store_options=store_options)
+except SessionExpiredError:
+    # The session was already past its ceiling on arrival; start a new login.
+    ...
+```
+
+> [!NOTE]
+> **Upgrading:** with this feature enabled, `get_user()` and `get_session()` can return `None` for a user who was previously logged in, once the upstream ceiling passes. Applications that assumed these always return a value after login should add a null check and route the user back through login.
+
 The `session_expiry` value is also surfaced through the user claims, so you can read it without triggering enforcement:
 
 ```python

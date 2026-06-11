@@ -37,47 +37,9 @@ class PKCE:
 
 
 class State:
-    # IPSIE session_expiry: clock-skew leeway (seconds). The session is treated
-    # as expired slightly *before* the wall-clock ceiling so the SDK never
-    # serves a session the Auth0 platform has already revoked. Per SDK Product
-    # Spec guidance.
+    # Clock-skew leeway (seconds): treat the session as expired slightly before
+    # the ceiling so the SDK never serves a session the platform has revoked.
     SESSION_EXPIRY_LEEWAY_SECONDS = 30
-
-    @classmethod
-    def extract_session_expiry(cls, claims: Optional[dict[str, Any]]) -> Optional[int]:
-        """
-        Read the IPSIE `session_expiry` claim (Unix seconds) from decoded ID
-        token claims. Returns None when absent or invalid so existing session
-        behavior is preserved (the feature is opt-in via the upstream
-        connection option).
-
-        The IPSIE SL1 profile defines `session_expiry` as a JSON integer of
-        seconds since epoch. Non-integer or non-positive values are rejected
-        rather than trusted as a session ceiling.
-        """
-        if not claims:
-            return None
-        value = claims.get("session_expiry")
-        if value is None:
-            return None
-        # bool is an int subclass — exclude it explicitly.
-        if isinstance(value, bool) or not isinstance(value, int):
-            return None
-        if value <= 0:
-            return None
-        return value
-
-    @classmethod
-    def is_session_expiry_reached(cls, session_expires_at: Optional[int]) -> bool:
-        """
-        True when the IPSIE session ceiling has been reached (applying negative
-        leeway for clock skew). None means no ceiling was asserted, so the
-        session is never expired on this basis.
-        """
-        if session_expires_at is None:
-            return False
-        now = int(time.time())
-        return now >= (session_expires_at - cls.SESSION_EXPIRY_LEEWAY_SECONDS)
 
     @classmethod
     def update_state_data(
@@ -226,6 +188,56 @@ class State:
             **state_data,
             "connection_token_sets": connection_token_sets
         }
+
+    @classmethod
+    def extract_epoch_claim(cls, claims: Optional[dict[str, Any]], name: str) -> Optional[int]:
+        """
+        Read a Unix-seconds claim (e.g. `session_expiry`, `iat`) from decoded ID
+        token claims, or None when absent or invalid.
+
+        The value must be a positive JSON integer; non-integer or non-positive
+        values are rejected rather than trusted.
+        """
+        if not claims:
+            return None
+        value = claims.get(name)
+        if value is None:
+            return None
+        # bool is an int subclass — exclude it explicitly.
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        if value <= 0:
+            return None
+        return value
+
+    @classmethod
+    def is_session_ceiling_reached(cls, session_expires_at: Optional[int]) -> bool:
+        """
+        True when the session ceiling has been reached (applying negative
+        leeway for clock skew). None means no ceiling was asserted, so the
+        session is never expired on this basis.
+        """
+        if session_expires_at is None:
+            return False
+        now = int(time.time())
+        return now >= (session_expires_at - cls.SESSION_EXPIRY_LEEWAY_SECONDS)
+
+    @classmethod
+    def is_session_ceiling_in_past(
+        cls, session_expires_at: Optional[int], issued_at: Optional[int] = None
+    ) -> bool:
+        """
+        True when the session ceiling is already in the past at login.
+
+        Compares the ceiling against the ID token `iat`, or wall-clock now when
+        `iat` is absent, using the same leeway as is_session_ceiling_reached. A
+        None ceiling means none was asserted and is never treated as expired.
+        """
+        if session_expires_at is None:
+            return False
+        reference = issued_at if issued_at else int(time.time())
+        return session_expires_at <= (reference + cls.SESSION_EXPIRY_LEEWAY_SECONDS)
+
 
 class URL:
     @staticmethod

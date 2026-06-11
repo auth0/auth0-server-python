@@ -211,6 +211,19 @@ class AccessTokenForConnectionErrorCode:
     DOMAIN_MISMATCH = "domain_mismatch"
 
 
+class SessionExpiredError(Auth0Error):
+    """
+    Error raised when a session is rejected at login because its
+    session_expiry ceiling is already in the past.
+    """
+    code = AccessTokenErrorCode.SESSION_EXPIRED
+
+    def __init__(self, message: Optional[str] = None, cause=None):
+        super().__init__(message or "The session has expired and the user must re-authenticate.")
+        self.name = "SessionExpiredError"
+        self.cause = cause
+
+
 class CustomTokenExchangeError(Auth0Error):
     """
     Error raised during custom token exchange operations.
