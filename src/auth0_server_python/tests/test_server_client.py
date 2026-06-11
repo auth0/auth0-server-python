@@ -4824,30 +4824,6 @@ async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
 # =============================================================================
 
 
-def test_extract_epoch_claim_valid():
-    assert State.extract_epoch_claim({"session_expiry": 1893456000}, "session_expiry") == 1893456000
-
-
-def test_extract_epoch_claim_reused_for_iat():
-    # Same extractor/validator serves any Unix-seconds claim, e.g. iat.
-    assert State.extract_epoch_claim({"iat": 1893456000}, "iat") == 1893456000
-
-
-def test_extract_epoch_claim_absent_or_empty():
-    assert State.extract_epoch_claim(None, "session_expiry") is None
-    assert State.extract_epoch_claim({}, "session_expiry") is None
-    assert State.extract_epoch_claim({"session_expiry": None}, "session_expiry") is None
-
-
-def test_extract_epoch_claim_rejects_non_int_and_non_positive():
-    # bool is an int subclass but must be rejected
-    assert State.extract_epoch_claim({"session_expiry": True}, "session_expiry") is None
-    assert State.extract_epoch_claim({"session_expiry": "1893456000"}, "session_expiry") is None
-    assert State.extract_epoch_claim({"session_expiry": 1893456000.0}, "session_expiry") is None
-    assert State.extract_epoch_claim({"session_expiry": 0}, "session_expiry") is None
-    assert State.extract_epoch_claim({"session_expiry": -5}, "session_expiry") is None
-
-
 def test_is_session_ceiling_reached_none_never_expires():
     assert State.is_session_ceiling_reached(None) is False
 

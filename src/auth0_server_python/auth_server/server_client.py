@@ -648,8 +648,8 @@ class ServerClient(Generic[TStoreOptions]):
             user_claims = UserClaims.parse_obj(user_info)
             # authlib populates `userinfo` from parsed ID token claims, so the
             # IPSIE session_expiry claim may surface here.
-            session_expires_at = State.extract_epoch_claim(user_info, "session_expiry")
-            issued_at = State.extract_epoch_claim(user_info, "iat")
+            session_expires_at = user_info.get("session_expiry")
+            issued_at = user_info.get("iat")
         elif id_token:
             # Fetch JWKS for signature verification
             jwks = await self._get_jwks_cached(origin_domain, metadata)
@@ -667,8 +667,8 @@ class ServerClient(Generic[TStoreOptions]):
 
                 user_claims = UserClaims.parse_obj(claims)
                 # IPSIE session_expiry ceiling from the verified ID token.
-                session_expires_at = State.extract_epoch_claim(claims, "session_expiry")
-                issued_at = State.extract_epoch_claim(claims, "iat")
+                session_expires_at = claims.get("session_expiry")
+                issued_at = claims.get("iat")
             except ValueError as e:
                 raise ApiError("jwks_key_not_found", str(e))
             except jwt.InvalidSignatureError as e:

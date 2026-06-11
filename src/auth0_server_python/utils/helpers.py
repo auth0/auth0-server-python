@@ -190,27 +190,6 @@ class State:
         }
 
     @classmethod
-    def extract_epoch_claim(cls, claims: Optional[dict[str, Any]], name: str) -> Optional[int]:
-        """
-        Read a Unix-seconds claim (e.g. `session_expiry`, `iat`) from decoded ID
-        token claims, or None when absent or invalid.
-
-        The value must be a positive JSON integer; non-integer or non-positive
-        values are rejected rather than trusted.
-        """
-        if not claims:
-            return None
-        value = claims.get(name)
-        if value is None:
-            return None
-        # bool is an int subclass — exclude it explicitly.
-        if isinstance(value, bool) or not isinstance(value, int):
-            return None
-        if value <= 0:
-            return None
-        return value
-
-    @classmethod
     def is_session_ceiling_reached(cls, session_expires_at: Optional[int]) -> bool:
         """
         True when the session ceiling has been reached (applying negative
