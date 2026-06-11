@@ -5111,10 +5111,11 @@ async def test_complete_interactive_login_rejects_already_expired_ceiling(mocker
         await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
 
     assert exc.value.code == AccessTokenErrorCode.SESSION_EXPIRED
-    # The already-expired session must never be persisted, and the transaction is
-    # left intact so the user can retry a fresh login.
+    # The already-expired session must never be persisted. The transaction is
+    # cleaned up because its authorization code was already spent and cannot be
+    # reused — a retry starts a fresh login with a new transaction.
     mock_state_store.set.assert_not_awaited()
-    mock_tx_store.delete.assert_not_awaited()
+    mock_tx_store.delete.assert_awaited_once()
 
 
 @pytest.mark.asyncio

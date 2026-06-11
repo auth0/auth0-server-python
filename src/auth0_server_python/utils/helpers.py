@@ -214,7 +214,7 @@ class State:
         """
         if session_expires_at is None:
             return False
-        reference = issued_at if issued_at else int(time.time())
+        reference = issued_at if issued_at is not None else int(time.time())
         return session_expires_at <= (reference + cls.SESSION_EXPIRY_LEEWAY_SECONDS)
 
 

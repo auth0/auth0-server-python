@@ -699,6 +699,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Refuse to persist a session whose ceiling is already in the past.
         if State.is_session_ceiling_in_past(session_expires_at, issued_at):
+            await self._transaction_store.delete(transaction_identifier, options=store_options)
             raise SessionExpiredError()
 
         # Build a token set using the token response data
