@@ -38,6 +38,7 @@ from auth0_server_python.utils.helpers import (
 )
 
 DEFAULT_MFA_TOKEN_TTL = 300  # 5 minutes
+MFA_PENDING_IDENTIFIER = "_a0_mfa_pending"
 
 
 class MfaClient:
@@ -47,9 +48,9 @@ class MfaClient:
     Provides methods for listing authenticators, enrolling new authenticators,
     deleting authenticators, challenging authenticators, and verifying MFA codes.
 
-    All API operations require a raw mfa_token. If the token was encrypted
-    (e.g. from MfaRequiredError raised by get_access_token()), use
-    decrypt_mfa_token() first to obtain the raw token.
+    All public API methods accept an encrypted mfa_token (as issued by
+    MfaRequiredError) and decrypt it internally. Callers never handle the
+    raw Auth0 mfa_token directly.
     """
 
     def __init__(
@@ -130,12 +131,62 @@ class MfaClient:
         except Exception:
             raise MfaTokenInvalidError()
 
-        # Check TTL
         elapsed = int(time.time()) - context.created_at
         if elapsed > DEFAULT_MFA_TOKEN_TTL:
             raise MfaTokenExpiredError()
 
         return context
+
+    # ============================================================================
+    # MFA STATE
+    # ============================================================================
+
+    async def store_pending_mfa(
+        self,
+        encrypted_token: str,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Save an in-progress MFA token so challenge and verify can proceed without the client carrying the token."""
+        if self._state_store:
+            await self._state_store.set(
+                MFA_PENDING_IDENTIFIER,
+                {"mfa_token": encrypted_token},
+                options=store_options,
+            )
+
+    async def get_pending_mfa(
+        self,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """Retrieve the in-progress MFA token if a challenge is pending for the current session, or None."""
+        if not self._state_store:
+            return None
+        data = await self._state_store.get(MFA_PENDING_IDENTIFIER, store_options)
+        if data and isinstance(data, dict):
+            return data.get("mfa_token")
+        return None
+
+    async def _clear_pending_mfa(
+        self,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Clear the in-progress MFA state after successful verification."""
+        if self._state_store:
+            await self._state_store.delete(MFA_PENDING_IDENTIFIER, store_options)
+
+    def _resolve_encrypted_token(
+        self,
+        options: dict[str, Any],
+    ) -> str:
+        """
+        Extract the encrypted mfa_token from options.
+
+        Raises MfaTokenInvalidError if the key is absent or empty.
+        """
+        token = options.get("mfa_token")
+        if not token:
+            raise MfaTokenInvalidError()
+        return token
 
     # ============================================================================
     # MFA API OPERATIONS
@@ -159,7 +210,7 @@ class MfaClient:
         Raises:
             MfaListAuthenticatorsError: When the request fails.
         """
-        mfa_token = options["mfa_token"]
+        context = self.decrypt_mfa_token(self._resolve_encrypted_token(options))
         base_url = await self._resolve_base_url(store_options)
         url = f"{base_url}/mfa/authenticators"
 
@@ -167,7 +218,7 @@ class MfaClient:
             async with self._get_http_client() as client:
                 response = await client.get(
                     url,
-                    auth=BearerAuth(mfa_token)
+                    auth=BearerAuth(context.mfa_token)
                 )
 
                 if response.status_code != 200:
@@ -207,7 +258,7 @@ class MfaClient:
         Raises:
             MfaEnrollmentError: When enrollment fails.
         """
-        mfa_token = options["mfa_token"]
+        context = self.decrypt_mfa_token(self._resolve_encrypted_token(options))
         factor_type = options["factor_type"]
         base_url = await self._resolve_base_url(store_options)
         url = f"{base_url}/mfa/associate"
@@ -243,7 +294,7 @@ class MfaClient:
                 response = await client.post(
                     url,
                     json=body,
-                    auth=BearerAuth(mfa_token),
+                    auth=BearerAuth(context.mfa_token),
                     headers={"Content-Type": "application/json"}
                 )
 
@@ -292,7 +343,7 @@ class MfaClient:
         Raises:
             MfaChallengeError: When the challenge fails.
         """
-        mfa_token = options["mfa_token"]
+        context = self.decrypt_mfa_token(self._resolve_encrypted_token(options))
         factor_type = options["factor_type"]
         base_url = await self._resolve_base_url(store_options)
         url = f"{base_url}/mfa/challenge"
@@ -308,7 +359,7 @@ class MfaClient:
             )
 
         body: dict[str, Any] = {
-            "mfa_token": mfa_token,
+            "mfa_token": context.mfa_token,
             "client_id": self._client_id,
             "client_secret": self._client_secret,
             "challenge_type": challenge_type
@@ -373,13 +424,12 @@ class MfaClient:
             MfaVerifyError: When verification fails.
             MfaRequiredError: When chained MFA is required.
         """
-        mfa_token = options["mfa_token"]
+        context = self.decrypt_mfa_token(self._resolve_encrypted_token(options))
 
-        # Determine grant type and build body
         body: dict[str, Any] = {
             "client_id": self._client_id,
             "client_secret": self._client_secret,
-            "mfa_token": mfa_token
+            "mfa_token": context.mfa_token
         }
 
         if "otp" in options:
@@ -412,19 +462,23 @@ class MfaClient:
                 if response.status_code != 200:
                     error_data = response.json()
 
-                    # Handle chained MFA — token is raw; encryption is the
-                    # framework SDK's responsibility (see ServerClient.get_access_token).
                     if error_data.get("error") == "mfa_required":
-                        new_mfa_token = error_data.get("mfa_token")
+                        new_raw_token = error_data.get("mfa_token")
                         mfa_requirements_data = error_data.get("mfa_requirements")
                         mfa_requirements = None
                         if mfa_requirements_data:
                             mfa_requirements = MfaRequirements(**mfa_requirements_data)
 
+                        new_encrypted = self._encrypt_mfa_token(
+                            raw_mfa_token=new_raw_token,
+                            audience=context.audience,
+                            scope=context.scope,
+                            mfa_requirements=mfa_requirements,
+                        )
                         raise MfaRequiredError(
                             error_data.get("error_description", "Additional MFA factor required"),
-                            mfa_token=new_mfa_token,
-                            mfa_requirements=mfa_requirements
+                            mfa_token=new_encrypted,
+                            mfa_requirements=mfa_requirements,
                         )
 
                     raise MfaVerifyError(
@@ -435,11 +489,12 @@ class MfaClient:
                 token_response = response.json()
                 verify_response = MfaVerifyResponse(**token_response)
 
-                # Persist tokens to state store if requested
+                await self._clear_pending_mfa(store_options)
+
                 if options.get("persist") and self._state_store:
                     await self._persist_mfa_tokens(
                         verify_response=verify_response,
-                        options=options,
+                        options={**options, "audience": options.get("audience") or context.audience, "scope": options.get("scope") or context.scope},
                         store_options=store_options
                     )
 

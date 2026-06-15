@@ -42,6 +42,12 @@ def _make_client() -> MfaClient:
     )
 
 
+def _enc(raw: str = "raw_mfa_tok", audience: str = "default", scope: str = "") -> str:
+    """Encrypt a raw MFA token using the shared test secret."""
+    client = _make_client()
+    return client._encrypt_mfa_token(raw, audience, scope)
+
+
 # ── Constructor ──────────────────────────────────────────────────────────────
 
 class TestMfaClientConstructor:
@@ -121,7 +127,7 @@ class TestDomainResolution:
         # list_authenticators wraps unexpected errors in MfaListAuthenticatorsError,
         # but DomainResolverError is NOT caught by the inner try/except — it propagates.
         with pytest.raises(DomainResolverError):
-            await client.list_authenticators({"mfa_token": "tok"})
+            await client.list_authenticators({"mfa_token": _enc()})
 
     @pytest.mark.asyncio
     async def test_store_options_forwarded_to_resolver(self):
@@ -234,7 +240,7 @@ class TestListAuthenticators:
         ])
         mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
 
-        result = await client.list_authenticators({"mfa_token": "mfa_tok"})
+        result = await client.list_authenticators({"mfa_token": _enc("mfa_tok")})
         assert len(result) == 2
         assert isinstance(result[0], AuthenticatorResponse)
         assert result[0].id == "auth|123"
@@ -252,7 +258,7 @@ class TestListAuthenticators:
         mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
 
         with pytest.raises(MfaListAuthenticatorsError) as exc:
-            await client.list_authenticators({"mfa_token": "bad_tok"})
+            await client.list_authenticators({"mfa_token": _enc("bad_tok")})
         assert "Invalid MFA token" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -261,7 +267,7 @@ class TestListAuthenticators:
         mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=Exception("network down"))
 
         with pytest.raises(MfaListAuthenticatorsError) as exc:
-            await client.list_authenticators({"mfa_token": "tok"})
+            await client.list_authenticators({"mfa_token": _enc()})
         assert "network down" in str(exc.value)
 
 
@@ -282,7 +288,7 @@ class TestEnrollAuthenticator:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.enroll_authenticator({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "factor_type": "otp"
         })
         assert isinstance(result, OtpEnrollmentResponse)
@@ -303,7 +309,7 @@ class TestEnrollAuthenticator:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.enroll_authenticator({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "factor_type": "sms",
             "phone_number": "+1234567890"
         })
@@ -323,7 +329,7 @@ class TestEnrollAuthenticator:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.enroll_authenticator({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "factor_type": "email",
             "email": "user@example.com"
         })
@@ -345,7 +351,7 @@ class TestEnrollAuthenticator:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.enroll_authenticator({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "factor_type": "auth0"
         })
         assert isinstance(result, OobEnrollmentResponse)
@@ -364,7 +370,7 @@ class TestEnrollAuthenticator:
 
         with pytest.raises(MfaEnrollmentError) as exc:
             await client.enroll_authenticator({
-                "mfa_token": "tok",
+                "mfa_token": _enc(),
                 "factor_type": "otp"
             })
         assert "Bad enrollment request" in str(exc.value)
@@ -381,7 +387,7 @@ class TestEnrollAuthenticator:
 
         with pytest.raises(MfaEnrollmentError) as exc:
             await client.enroll_authenticator({
-                "mfa_token": "tok",
+                "mfa_token": _enc(),
                 "factor_type": "unknown"
             })
         assert "Unsupported factor_type" in str(exc.value)
@@ -401,7 +407,7 @@ class TestChallengeAuthenticator:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.challenge_authenticator({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "factor_type": "otp"
         })
         assert isinstance(result, ChallengeResponse)
@@ -420,7 +426,7 @@ class TestChallengeAuthenticator:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.challenge_authenticator({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "factor_type": "sms",
             "authenticator_id": "auth|456"
         })
@@ -440,7 +446,7 @@ class TestChallengeAuthenticator:
 
         with pytest.raises(MfaChallengeError) as exc:
             await client.challenge_authenticator({
-                "mfa_token": "tok",
+                "mfa_token": _enc(),
                 "factor_type": "otp"
             })
         assert "Token expired" in str(exc.value)
@@ -459,7 +465,7 @@ class TestChallengeAuthenticator:
 
         with pytest.raises(MfaChallengeError) as exc:
             await client.challenge_authenticator({
-                "mfa_token": "expired_tok",
+                "mfa_token": _enc("expired_tok"),
                 "factor_type": "otp"
             })
         assert "mfa_token is expired" in str(exc.value)
@@ -478,7 +484,7 @@ class TestChallengeAuthenticator:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.challenge_authenticator({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "factor_type": "email",
             "authenticator_id": "email|dev_Fvx38nHufsGL5lWI"
         })
@@ -500,7 +506,7 @@ class TestChallengeAuthenticator:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.challenge_authenticator({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "factor_type": "sms",
             "authenticator_id": "sms|dev_h1uXXoVjQ5BpU9iQ"
         })
@@ -524,7 +530,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.verify({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "otp": "123456"
         })
         assert isinstance(result, MfaVerifyResponse)
@@ -543,7 +549,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.verify({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "oob_code": "oob_123",
             "binding_code": "bind_456"
         })
@@ -562,7 +568,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.verify({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "recovery_code": "ABCD-1234-EFGH"
         })
         assert isinstance(result, MfaVerifyResponse)
@@ -571,7 +577,7 @@ class TestVerify:
     async def test_verify_no_credential_raises(self):
         client = _make_client()
         with pytest.raises(MfaVerifyError) as exc:
-            await client.verify({"mfa_token": "tok"})
+            await client.verify({"mfa_token": _enc()})
         assert "No verification credential" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -596,7 +602,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new=mock_post)
 
         await client.verify({
-            "mfa_token": "my_mfa_token",
+            "mfa_token": _enc("my_mfa_token"),
             "otp": "123456"
         })
 
@@ -622,7 +628,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         with pytest.raises(MfaVerifyError) as exc:
-            await client.verify({"mfa_token": "expired_tok", "otp": "123456"})
+            await client.verify({"mfa_token": _enc("expired_tok"), "otp": "123456"})
         assert "mfa_token is expired" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -638,7 +644,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         with pytest.raises(MfaVerifyError) as exc:
-            await client.verify({"mfa_token": "tok", "recovery_code": "ABCD-1234"})
+            await client.verify({"mfa_token": _enc(), "recovery_code": "ABCD-1234"})
         assert "Invalid challenge type" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -656,7 +662,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.verify({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "recovery_code": "OLD-RECOVERY-CODE"
         })
         assert isinstance(result, MfaVerifyResponse)
@@ -676,7 +682,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.verify({
-            "mfa_token": "tok",
+            "mfa_token": _enc(),
             "oob_code": "oob_push_code",
             "binding_code": ""
         })
@@ -695,7 +701,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         with pytest.raises(MfaVerifyError) as exc:
-            await client.verify({"mfa_token": "tok", "otp": "000000"})
+            await client.verify({"mfa_token": _enc(), "otp": "000000"})
         assert "Invalid OTP" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -711,9 +717,12 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         with pytest.raises(MfaRequiredError) as exc:
-            await client.verify({"mfa_token": "tok", "otp": "123456"})
-        assert exc.value.mfa_token == "new_raw_mfa_token"
+            await client.verify({"mfa_token": _enc(), "otp": "123456"})
+        assert exc.value.mfa_token is not None
+        assert exc.value.mfa_token != "new_raw_mfa_token"  # must be encrypted
         assert exc.value.code == "mfa_required"
+        decrypted = client.decrypt_mfa_token(exc.value.mfa_token)
+        assert decrypted.mfa_token == "new_raw_mfa_token"
 
     @pytest.mark.asyncio
     async def test_verify_unexpected_error(self, mocker):
@@ -721,7 +730,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=Exception("connection reset"))
 
         with pytest.raises(MfaVerifyError) as exc:
-            await client.verify({"mfa_token": "tok", "otp": "123456"})
+            await client.verify({"mfa_token": _enc(), "otp": "123456"})
         assert "connection reset" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -751,7 +760,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         await client.verify(
-            {"mfa_token": "tok", "otp": "123456",
+            {"mfa_token": _enc(), "otp": "123456",
              "persist": True, "audience": "https://api.example.com"}
         )
 
@@ -762,8 +771,15 @@ class TestVerify:
         assert saved_state["token_sets"][0]["access_token"] == "new_at_from_mfa"
 
     @pytest.mark.asyncio
-    async def test_verify_persist_missing_audience_raises(self, mocker):
+    async def test_verify_persist_uses_context_audience_when_not_in_options(self, mocker):
+        """persist=True without explicit audience falls back to audience in encrypted token context."""
         store = AsyncMock()
+        store.get = AsyncMock(return_value={
+            "user": {"sub": "auth0|123"},
+            "id_token": "id",
+            "token_sets": [],
+            "internal": {"sid": "s", "created_at": 1000}
+        })
         client = MfaClient(
             domain=DOMAIN, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
             secret=SECRET, state_store=store
@@ -776,10 +792,14 @@ class TestVerify:
         })
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
-        with pytest.raises(MfaVerifyError, match="audience is required"):
-            await client.verify(
-                {"mfa_token": "tok", "otp": "123456", "persist": True}
-            )
+        result = await client.verify(
+            {"mfa_token": _enc(audience="https://api.example.com"), "otp": "123456", "persist": True}
+        )
+        assert result.access_token == "at"
+        store.set.assert_called_once()
+        saved_state = store.set.call_args[0][1]
+        saved_audience = saved_state["token_sets"][0]["audience"]
+        assert saved_audience == "https://api.example.com"
 
     @pytest.mark.asyncio
     async def test_verify_persist_no_existing_session_raises(self, mocker):
@@ -799,7 +819,7 @@ class TestVerify:
 
         with pytest.raises(MfaVerifyError, match="No existing session"):
             await client.verify(
-                {"mfa_token": "tok", "otp": "123456",
+                {"mfa_token": _enc(), "otp": "123456",
                  "persist": True, "audience": "https://api.example.com"}
             )
 
@@ -816,7 +836,7 @@ class TestVerify:
         mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
 
         result = await client.verify(
-            {"mfa_token": "tok", "otp": "123456",
+            {"mfa_token": _enc(), "otp": "123456",
              "persist": True, "audience": "https://api.example.com"}
         )
         assert result.access_token == "at"
@@ -843,6 +863,6 @@ class TestVerify:
 
         with pytest.raises(MfaVerifyError, match="Failed to persist"):
             await client.verify(
-                {"mfa_token": "tok", "otp": "123456",
+                {"mfa_token": _enc(), "otp": "123456",
                  "persist": True, "audience": "https://api.example.com"}
             )
