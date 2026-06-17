@@ -51,10 +51,13 @@ from auth0_server_python.error import (
     CustomTokenExchangeErrorCode,
     DomainResolverError,
     InvalidArgumentError,
+    InvitationError,
     IssuerValidationError,
     MfaRequiredError,
     MissingRequiredArgumentError,
     MissingTransactionError,
+    OrganizationAccessDeniedError,
+    OrganizationRequiredError,
     OrganizationTokenValidationError,
     PollingApiError,
     StartLinkUserError,
@@ -71,7 +74,42 @@ TStoreOptions = TypeVar('TStoreOptions')
 # redirect_uri is intentionally excluded — in MCD mode it is built
 # dynamically from the resolved domain at login time.
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
-                             "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
+                             "code_challenge", "code_challenge_method", "state", "nonce", "scope",
+                             "organization", "invitation"]
+
+_ORG_ACCESS_DENIED_FRAGMENTS = (
+    "is not part of the",
+    "connection is not enabled for this organization",
+    "quota exceeded",
+    "organization member limit",
+    "user_id that longer than 1024",
+)
+
+_ORG_INVALID_REQUEST_FRAGMENTS = (
+    "organization must be an organization id",
+    "organizations feature is not enabled",
+    "organizations feature is not supported",
+    "parameter organization is required",
+    "parameter organization is not allowed",
+    "client is missing",
+)
+
+
+def _classify_org_error(error: str, error_description: str) -> "ApiError":
+    desc_lower = error_description.lower()
+
+    if "invalid_user_invitation_ticket" in desc_lower or error == "invalid_user_invitation_ticket":
+        return InvitationError(error_description)
+
+    if error == "access_denied":
+        if any(f in desc_lower for f in _ORG_ACCESS_DENIED_FRAGMENTS):
+            return OrganizationAccessDeniedError(error_description)
+
+    if error == "invalid_request":
+        if any(f in desc_lower for f in _ORG_INVALID_REQUEST_FRAGMENTS):
+            return OrganizationRequiredError(error_description)
+
+    return ApiError(error, error_description)
 
 
 class ServerClient(Generic[TStoreOptions]):
@@ -540,6 +578,8 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Resolve organization: per-login value takes precedence over client-level default.
         resolved_org = options.organization or self._organization
+        if resolved_org and not resolved_org.strip():
+            raise InvalidArgumentError("organization", "organization must not be blank")
         if resolved_org:
             auth_params["organization"] = resolved_org
 
@@ -649,7 +689,7 @@ class ServerClient(Generic[TStoreOptions]):
         if "error" in query_params:
             error = query_params.get("error", [""])[0]
             error_description = query_params.get("error_description", [""])[0]
-            raise ApiError(error, error_description)
+            raise _classify_org_error(error, error_description)
 
         # Get the authorization code from the URL
         code = query_params.get("code", [""])[0]
@@ -1064,16 +1104,6 @@ class ServerClient(Generic[TStoreOptions]):
             if merged_scope:
                 get_refresh_token_options["scope"] = merged_scope
 
-            # Carry org context so refreshed tokens include org_id/org_name claims.
-            # Use org_id (stable) rather than org_name (mutable).
-            user_dict = state_data_dict.get("user") or {}
-            if isinstance(user_dict, dict):
-                session_org_id = user_dict.get("org_id")
-            else:
-                session_org_id = getattr(user_dict, "org_id", None)
-            if session_org_id is not None:
-                get_refresh_token_options["organization"] = session_org_id
-
             token_endpoint_response = await self.get_token_by_refresh_token(get_refresh_token_options)
 
             # Update state data with new token
@@ -1104,7 +1134,7 @@ class ServerClient(Generic[TStoreOptions]):
                         mfa_requirements=mfa_requirements
                     )
 
-            if isinstance(e, (AccessTokenError, OrganizationTokenValidationError)):
+            if isinstance(e, AccessTokenError):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
@@ -1162,10 +1192,6 @@ class ServerClient(Generic[TStoreOptions]):
             if merged_scope:
                 token_params["scope"] = merged_scope
 
-            organization = options.get("organization")
-            if organization is not None:
-                token_params["organization"] = organization
-
             # Exchange the refresh token for an access token
             async with self._get_http_client() as client:
                 response = await client.post(
@@ -1204,23 +1230,10 @@ class ServerClient(Generic[TStoreOptions]):
                     token_response["expires_at"] = int(
                         time.time()) + token_response["expires_in"]
 
-                # Validate org claims in the refreshed ID token when org context was sent.
-                # This ensures a refresh cannot silently downgrade or change org membership.
-                refresh_id_token = token_response.get("id_token")
-                if organization is not None and refresh_id_token:
-                    refresh_jwks = await self._get_jwks_cached(domain, metadata)
-                    try:
-                        refresh_claims = await self._verify_and_decode_jwt(
-                            refresh_id_token, refresh_jwks, audience=self._client_id
-                        )
-                    except Exception as e:
-                        raise ApiError("invalid_token", f"Refresh ID token verification failed: {str(e)}", e)
-                    self._validate_org_claims(refresh_claims, organization)
-
                 return token_response
 
         except Exception as e:
-            if isinstance(e, (ApiError, OrganizationTokenValidationError)):
+            if isinstance(e, ApiError):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
@@ -1298,12 +1311,10 @@ class ServerClient(Generic[TStoreOptions]):
         Returns:
             A dictionary containing the authorizationDetails (when RAR was used).
         """
-        resolved_org = options.get("organization") or self._organization
         token_endpoint_response = await self.backchannel_authentication({
             "binding_message": options.get("binding_message"),
             "login_hint": options.get("login_hint"),
             "authorization_params": options.get("authorization_params"),
-            "organization": resolved_org,
         }, store_options=store_options)
 
         existing_state_data = await self._state_store.get(self._state_identifier, store_options)
@@ -1362,7 +1373,6 @@ class ServerClient(Generic[TStoreOptions]):
             "expires_in", 120)  # Default to 2 minutes
         interval = backchannel_data.get(
             "interval", 5)  # Default to 5 seconds
-        organization = options.get("organization")
 
         # Calculate when to stop polling
         end_time = time.time() + expires_in
@@ -1373,7 +1383,6 @@ class ServerClient(Generic[TStoreOptions]):
             try:
                 token_response = await self.backchannel_authentication_grant(
                     auth_req_id,
-                    organization=organization,
                     store_options=store_options,
                 )
                 return token_response
@@ -1388,8 +1397,6 @@ class ServerClient(Generic[TStoreOptions]):
                         # Wait for the specified interval before polling again
                         await asyncio.sleep(e.interval or interval)
                         continue
-                if isinstance(e, OrganizationTokenValidationError):
-                    raise
                 raise ApiError(
                     "backchannel_error",
                     f"Backchannel authentication failed: {str(e) or 'Unknown error'}",
@@ -1498,12 +1505,6 @@ class ServerClient(Generic[TStoreOptions]):
             if authorization_params:
                 params.update(authorization_params)
 
-            # Organization: per-request value already resolved upstream in login_backchannel.
-            # Accept it here so it reaches the bc-authorize request body.
-            backchannel_org = options.get("organization")
-            if backchannel_org:
-                params["organization"] = backchannel_org
-
             # Make the backchannel authentication request
             async with self._get_http_client() as client:
                 backchannel_response = await client.post(
@@ -1543,7 +1544,6 @@ class ServerClient(Generic[TStoreOptions]):
     async def backchannel_authentication_grant(
         self,
         auth_req_id: str,
-        organization: Optional[str] = None,
         store_options: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
         """
@@ -1551,7 +1551,6 @@ class ServerClient(Generic[TStoreOptions]):
 
         Args:
             auth_req_id (str): The authentication request ID obtained from bc-authorize
-            organization: Organization value used at CIBA initiation, for ID token validation.
             store_options: Optional options used to pass to the Transaction and State Store.
 
         Raises:
@@ -1613,29 +1612,10 @@ class ServerClient(Generic[TStoreOptions]):
                     token_response["expires_at"] = int(
                         time.time()) + token_response["expires_in"]
 
-                # Validate org claims in the ID token when an org was requested.
-                # If org was requested but no id_token was returned, fail closed —
-                # we cannot verify org membership without an id_token.
-                id_token = token_response.get("id_token")
-                if organization:
-                    if not id_token:
-                        raise OrganizationTokenValidationError(
-                            "Organization was requested but the token response did not include an ID token; "
-                            "cannot verify organization membership"
-                        )
-                    jwks = await self._get_jwks_cached(domain)
-                    try:
-                        ciba_claims = await self._verify_and_decode_jwt(
-                            id_token, jwks, audience=self._client_id
-                        )
-                    except Exception as e:
-                        raise ApiError("invalid_token", f"CIBA ID token verification failed: {str(e)}", e)
-                    self._validate_org_claims(ciba_claims, organization)
-
                 return token_response
 
         except Exception as e:
-            if isinstance(e, (ApiError, PollingApiError, OrganizationTokenValidationError)):
+            if isinstance(e, (ApiError, PollingApiError)):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.AUTH_REQ_ID_ERROR,
@@ -2388,9 +2368,6 @@ class ServerClient(Generic[TStoreOptions]):
                     if key not in forbidden_params:
                         params[key] = value
 
-            if options.organization:
-                params["organization"] = options.organization
-
             # Make the token exchange request
             async with self._get_http_client() as client:
                 response = await client.post(
@@ -2479,7 +2456,6 @@ class ServerClient(Generic[TStoreOptions]):
                 scope=options.scope,
                 actor_token=options.actor_token,
                 actor_token_type=options.actor_token_type,
-                organization=options.organization,
                 authorization_params=options.authorization_params
             )
 
@@ -2492,12 +2468,6 @@ class ServerClient(Generic[TStoreOptions]):
             # Extract user claims from ID token if present
             user_claims = None
             sid = PKCE.generate_random_string(32)  # Default sid
-
-            if options.organization and not token_response.id_token:
-                raise OrganizationTokenValidationError(
-                    "Organization was requested but the token response did not include an ID token; "
-                    "cannot verify organization membership"
-                )
 
             if token_response.id_token:
                 # Fetch JWKS and verify ID token signature
@@ -2514,9 +2484,6 @@ class ServerClient(Generic[TStoreOptions]):
                         raise IssuerValidationError(
                             "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
                         )
-
-                    if options.organization:
-                        self._validate_org_claims(claims, options.organization)
 
                     user_claims = UserClaims.parse_obj(claims)
                     # Extract sid from token if available
@@ -2583,7 +2550,7 @@ class ServerClient(Generic[TStoreOptions]):
             return result
 
         except Exception as e:
-            if isinstance(e, (CustomTokenExchangeError, ApiError, OrganizationTokenValidationError, IssuerValidationError)):
+            if isinstance(e, (CustomTokenExchangeError, ApiError, IssuerValidationError)):
                 raise
             raise CustomTokenExchangeError(
                 CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
