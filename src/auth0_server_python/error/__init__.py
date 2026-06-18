@@ -225,16 +225,16 @@ class OrganizationAccessDeniedError(Auth0Error):
         self.cause = cause
 
 
-class InvitationError(Auth0Error):
+class OrganizationInvitationError(Auth0Error):
     """
     Raised when an organization invitation is rejected by Auth0 — the ticket is
     expired, already used, or otherwise invalid.
     """
-    code = "invitation_error"
+    code = "organization_invitation_error"
 
     def __init__(self, message: str, cause: Optional[Exception] = None):
         super().__init__(message)
-        self.name = "InvitationError"
+        self.name = "OrganizationInvitationError"
         self.cause = cause
 
 

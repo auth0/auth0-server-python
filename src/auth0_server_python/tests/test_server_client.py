@@ -41,7 +41,7 @@ from auth0_server_python.error import (
     CustomTokenExchangeErrorCode,
     DomainResolverError,
     InvalidArgumentError,
-    InvitationError,
+    OrganizationInvitationError,
     IssuerValidationError,
     MfaRequiredError,
     MissingRequiredArgumentError,
@@ -5466,13 +5466,34 @@ async def test_userinfo_non_dict_no_org_raises_api_error(mocker):
 
 def test_classify_org_error_invitation_ticket_in_description():
     err = _classify_org_error("invalid_request", "invalid_user_invitation_ticket: ticket has expired")
-    assert isinstance(err, InvitationError)
-    assert err.code == "invitation_error"
+    assert isinstance(err, OrganizationInvitationError)
+    assert err.code == "organization_invitation_error"
 
 
 def test_classify_org_error_invitation_ticket_as_error_code():
     err = _classify_org_error("invalid_user_invitation_ticket", "The invitation ticket is invalid.")
-    assert isinstance(err, InvitationError)
+    assert isinstance(err, OrganizationInvitationError)
+
+
+def test_classify_org_error_invitation_not_found_or_already_used():
+    err = _classify_org_error("invalid_request", "invitation not found or already used")
+    assert isinstance(err, OrganizationInvitationError)
+    assert err.code == "organization_invitation_error"
+
+
+def test_classify_org_error_invalid_invitation_ticket_client_mismatch():
+    err = _classify_org_error("invalid_request", "invalid invitation ticket (client_id mismatch)")
+    assert isinstance(err, OrganizationInvitationError)
+
+
+def test_classify_org_error_invalid_invitation_ticket_org_mismatch():
+    err = _classify_org_error("invalid_request", "invalid invitation ticket (organization mismatch)")
+    assert isinstance(err, OrganizationInvitationError)
+
+
+def test_classify_org_error_invalid_invitation_ticket_unknown_roles():
+    err = _classify_org_error("invalid_request", "invalid invitation ticket (unknown roles: role_abc123)")
+    assert isinstance(err, OrganizationInvitationError)
 
 
 def test_classify_org_error_user_not_member():
@@ -5482,8 +5503,9 @@ def test_classify_org_error_user_not_member():
     assert err.code == "organization_access_denied_error"
 
 
-def test_classify_org_error_connection_not_enabled():
-    err = _classify_org_error("access_denied", "connection is not enabled for this organization")
+def test_classify_org_error_connection_not_part_of_org():
+    desc = "user abc123 belongs to connection google that is not part of the org_xyz organization"
+    err = _classify_org_error("access_denied", desc)
     assert isinstance(err, OrganizationAccessDeniedError)
 
 
@@ -5538,6 +5560,34 @@ def test_classify_org_error_org_required_for_client():
 def test_classify_org_error_org_not_allowed_for_client():
     err = _classify_org_error("invalid_request", "parameter organization is not allowed for this client")
     assert isinstance(err, OrganizationRequiredError)
+
+
+def test_classify_org_error_org_invalid_not_found():
+    err = _classify_org_error("invalid_request", "parameter organization is invalid: org_doesnotexist")
+    assert isinstance(err, OrganizationRequiredError)
+    assert err.code == "organization_required_error"
+
+
+def test_classify_org_error_org_name_length_invalid():
+    err = _classify_org_error(
+        "invalid_request",
+        "organization name must have between 1 and 50 characters",
+    )
+    assert isinstance(err, OrganizationRequiredError)
+
+
+def test_classify_org_error_org_name_format_invalid():
+    err = _classify_org_error(
+        "invalid_request",
+        "organization must only contain lowercase characters, '-' and '_', and start and end with a letter or number",
+    )
+    assert isinstance(err, OrganizationRequiredError)
+
+
+def test_classify_org_error_client_missing():
+    err = _classify_org_error("invalid_request", "client is missing the organizations feature")
+    assert isinstance(err, OrganizationRequiredError)
+    assert err.code == "organization_required_error"
 
 
 def test_classify_org_error_unrelated_access_denied_passthrough():
@@ -5612,7 +5662,7 @@ async def test_callback_org_invalid_format_raises_typed_error():
 
 @pytest.mark.asyncio
 async def test_callback_invitation_error_raises_typed_error():
-    """Expired/invalid invitation ticket → InvitationError."""
+    """Expired/invalid invitation ticket → OrganizationInvitationError."""
     mock_tx_store = AsyncMock()
     mock_tx_store.get.return_value = TransactionData(
         code_verifier="cv", domain="tenant.auth0.com", organization="org_abc"
@@ -5620,14 +5670,14 @@ async def test_callback_invitation_error_raises_typed_error():
     client = _make_org_callback_client(mock_tx_store, AsyncMock(), org="org_abc")
     desc = "invalid_user_invitation_ticket: ticket has already been used"
     url = f"http://localhost/cb?state=xyz&error=invalid_request&error_description={desc}"
-    with pytest.raises(InvitationError) as exc:
+    with pytest.raises(OrganizationInvitationError) as exc:
         await client.complete_interactive_login(url)
-    assert exc.value.code == "invitation_error"
+    assert exc.value.code == "organization_invitation_error"
 
 
 @pytest.mark.asyncio
 async def test_callback_unrelated_access_denied_raises_api_error():
-    """access_denied not matching any org fragment → plain ApiError."""
+    """access_denied not matching any org error_description → plain ApiError."""
     mock_tx_store = AsyncMock()
     mock_tx_store.get.return_value = TransactionData(
         code_verifier="cv", domain="tenant.auth0.com",
@@ -5641,16 +5691,43 @@ async def test_callback_unrelated_access_denied_raises_api_error():
 
 
 @pytest.mark.asyncio
-async def test_callback_connection_not_enabled_for_org_raises_typed_error():
-    """access_denied for connection not enabled → OrganizationAccessDeniedError."""
+async def test_callback_connection_not_part_of_org_raises_typed_error():
+    """access_denied for connection not part of org → OrganizationAccessDeniedError."""
     mock_tx_store = AsyncMock()
     mock_tx_store.get.return_value = TransactionData(
         code_verifier="cv", domain="tenant.auth0.com", organization="org_abc"
     )
     client = _make_org_callback_client(mock_tx_store, AsyncMock(), org="org_abc")
-    desc = "connection is not enabled for this organization"
+    desc = "user u1 belongs to connection google that is not part of the org_abc organization"
     url = f"http://localhost/cb?state=xyz&error=access_denied&error_description={desc}"
     with pytest.raises(OrganizationAccessDeniedError):
+        await client.complete_interactive_login(url)
+
+
+@pytest.mark.asyncio
+async def test_callback_invitation_not_found_raises_typed_error():
+    """invitation not found or already used → OrganizationInvitationError."""
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="cv", domain="tenant.auth0.com", organization="org_abc"
+    )
+    client = _make_org_callback_client(mock_tx_store, AsyncMock(), org="org_abc")
+    url = "http://localhost/cb?state=xyz&error=invalid_request&error_description=invitation+not+found+or+already+used"
+    with pytest.raises(OrganizationInvitationError) as exc:
+        await client.complete_interactive_login(url)
+    assert exc.value.code == "organization_invitation_error"
+
+
+@pytest.mark.asyncio
+async def test_callback_org_invalid_not_found_raises_typed_error():
+    """parameter organization is invalid (org not found / third-party access denied) → OrganizationRequiredError."""
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="cv", domain="tenant.auth0.com", organization="org_abc"
+    )
+    client = _make_org_callback_client(mock_tx_store, AsyncMock(), org="org_abc")
+    url = "http://localhost/cb?state=xyz&error=invalid_request&error_description=parameter+organization+is+invalid%3A+org_doesnotexist"
+    with pytest.raises(OrganizationRequiredError):
         await client.complete_interactive_login(url)
 
 
@@ -5659,19 +5736,19 @@ def test_org_error_classes_are_auth0_errors():
     from auth0_server_python.error import Auth0Error  # noqa: PLC0415
     assert issubclass(OrganizationRequiredError, Auth0Error)
     assert issubclass(OrganizationAccessDeniedError, Auth0Error)
-    assert issubclass(InvitationError, Auth0Error)
+    assert issubclass(OrganizationInvitationError, Auth0Error)
 
 
 def test_org_error_codes():
     assert OrganizationRequiredError("x").code == "organization_required_error"
     assert OrganizationAccessDeniedError("x").code == "organization_access_denied_error"
-    assert InvitationError("x").code == "invitation_error"
+    assert OrganizationInvitationError("x").code == "organization_invitation_error"
 
 
 def test_org_error_names():
     assert OrganizationRequiredError("x").name == "OrganizationRequiredError"
     assert OrganizationAccessDeniedError("x").name == "OrganizationAccessDeniedError"
-    assert InvitationError("x").name == "InvitationError"
+    assert OrganizationInvitationError("x").name == "OrganizationInvitationError"
 
 
 def test_org_error_stores_cause():

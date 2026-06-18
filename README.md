@@ -173,6 +173,33 @@ The SDK handles per-domain OIDC discovery, JWKS fetching, issuer validation, and
 
 For more details and examples, see [examples/MultipleCustomDomains.md](examples/MultipleCustomDomains.md).
 
+### 6. Organizations
+
+To restrict login to a specific organization, set `organization` at client initialization (dedicated-org) or per login (multi-org):
+
+```python
+from auth0_server_python.auth_server.server_client import ServerClient
+from auth0_server_python.auth_types import StartInteractiveLoginOptions
+
+# Dedicated-org: every login enforces this organization
+auth0 = ServerClient(
+    domain='<AUTH0_DOMAIN>',
+    client_id='<AUTH0_CLIENT_ID>',
+    client_secret='<AUTH0_CLIENT_SECRET>',
+    secret='<AUTH0_SECRET>',
+    organization='org_abc123',
+    authorization_params={"redirect_uri": "<AUTH0_REDIRECT_URI>"}
+)
+
+# Multi-org: pass organization per login
+authorization_url = await auth0.start_interactive_login(
+    StartInteractiveLoginOptions(organization="org_xyz789"),
+    store_options={"request": request, "response": response}
+)
+```
+
+The SDK validates the `org_id` (or `org_name`) claim in the returned token automatically — no extra code needed at callback. For invitation flows, per-org error handling, and reading org data from the session, see [examples/Organizations.md](examples/Organizations.md).
+
 ## Feedback
 
 ### Contributing

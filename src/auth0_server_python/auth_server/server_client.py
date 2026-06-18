@@ -51,7 +51,7 @@ from auth0_server_python.error import (
     CustomTokenExchangeErrorCode,
     DomainResolverError,
     InvalidArgumentError,
-    InvitationError,
+    OrganizationInvitationError,
     IssuerValidationError,
     MfaRequiredError,
     MissingRequiredArgumentError,
@@ -77,36 +77,44 @@ INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
                              "code_challenge", "code_challenge_method", "state", "nonce", "scope",
                              "organization"]
 
-_ORG_ACCESS_DENIED_FRAGMENTS = (
+_ORG_ACCESS_DENIED_DESCRIPTIONS = (
     "is not part of the",
-    "connection is not enabled for this organization",
     "quota exceeded",
     "organization member limit",
     "user_id that longer than 1024",
 )
 
-_ORG_INVALID_REQUEST_FRAGMENTS = (
+_ORG_INVALID_REQUEST_DESCRIPTIONS = (
     "organization must be an organization id",
     "organizations feature is not enabled",
     "organizations feature is not supported",
     "parameter organization is required",
     "parameter organization is not allowed",
+    "parameter organization is invalid",
+    "organization name must have between",
+    "organization must only contain lowercase",
     "client is missing",
+)
+
+_INVITATION_DESCRIPTIONS = (
+    "invalid_user_invitation_ticket",
+    "invitation not found or already used",
+    "invalid invitation ticket",
 )
 
 
 def _classify_org_error(error: str, error_description: str) -> "ApiError":
     desc_lower = error_description.lower()
 
-    if "invalid_user_invitation_ticket" in desc_lower or error == "invalid_user_invitation_ticket":
-        return InvitationError(error_description)
+    if error == "invalid_user_invitation_ticket" or any(desc in desc_lower for desc in _INVITATION_DESCRIPTIONS):
+        return OrganizationInvitationError(error_description)
 
     if error == "access_denied":
-        if any(f in desc_lower for f in _ORG_ACCESS_DENIED_FRAGMENTS):
+        if any(desc in desc_lower for desc in _ORG_ACCESS_DENIED_DESCRIPTIONS):
             return OrganizationAccessDeniedError(error_description)
 
     if error == "invalid_request":
-        if any(f in desc_lower for f in _ORG_INVALID_REQUEST_FRAGMENTS):
+        if any(desc in desc_lower for desc in _ORG_INVALID_REQUEST_DESCRIPTIONS):
             return OrganizationRequiredError(error_description)
 
     return ApiError(error, error_description)
@@ -119,7 +127,9 @@ class ServerClient(Generic[TStoreOptions]):
     """
     DEFAULT_AUDIENCE_STATE_KEY = "default"
 
+    # ============================================================================
     # INITIALIZATION
+    # ============================================================================
 
     def __init__(
         self,
@@ -513,7 +523,11 @@ class ServerClient(Generic[TStoreOptions]):
 
         return jwks
 
+    # ============================================================================
     # INTERACTIVE LOGIN FLOW
+    # Handles browser-based authentication using the Authorization Code flow
+    # with PKCE for secure token exchange.
+    # ============================================================================
 
     async def start_interactive_login(
         self,
@@ -685,7 +699,9 @@ class ServerClient(Generic[TStoreOptions]):
         if "error" in query_params:
             error = query_params.get("error", [""])[0]
             error_description = query_params.get("error_description", [""])[0]
-            raise _classify_org_error(error, error_description)
+            if transaction_data.organization:
+                raise _classify_org_error(error, error_description)
+            raise ApiError(error, error_description)
 
         # Get the authorization code from the URL
         code = query_params.get("code", [""])[0]
@@ -833,7 +849,10 @@ class ServerClient(Generic[TStoreOptions]):
 
         return result
 
+    # ============================================================================
     # USER SESSION MANAGEMENT
+    # Methods for retrieving user information, session data, and logout operations.
+    # ============================================================================
 
     async def get_user(self, store_options: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
         """
@@ -1017,7 +1036,10 @@ class ServerClient(Generic[TStoreOptions]):
             raise BackchannelLogoutError(
                 f"Error processing logout token: {str(e)}")
 
+    # ============================================================================
     # ACCESS TOKEN MANAGEMENT
+    # Retrieves, validates, and refreshes access tokens for API calls.
+    # ============================================================================
 
     async def get_access_token(
         self,
@@ -1283,7 +1305,11 @@ class ServerClient(Generic[TStoreOptions]):
         # Return the token set with the smallest superset of scopes that matches the requested audience and scopes
         return min(matches, key=lambda t: t[0])[1] if matches else None
 
+    # ============================================================================
     # BACKCHANNEL AUTHENTICATION (CIBA)
+    # Client-Initiated Backchannel Authentication for decoupled authentication
+    # flows where users authenticate on a separate device.
+    # ============================================================================
 
     async def login_backchannel(
         self,
@@ -1619,7 +1645,11 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
+    # ============================================================================
     # USER LINKING / UNLINKING
+    # Methods for linking and unlinking external identity provider accounts
+    # to a user's Auth0 profile.
+    # ============================================================================
 
     async def start_link_user(
         self,
@@ -1890,7 +1920,11 @@ class ServerClient(Generic[TStoreOptions]):
 
         return URL.build_url(auth_endpoint, params)
 
+    # ============================================================================
     # FEDERATED CONNECTION TOKENS
+    # Retrieves access tokens for federated identity provider connections
+    # (e.g., Google, GitHub) using token exchange.
+    # ============================================================================
 
     async def get_access_token_for_connection(
         self,
@@ -2057,7 +2091,11 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
+    # ============================================================================
     # CONNECTED ACCOUNTS
+    # Methods for managing third-party account connections via the My Account API.
+    # Includes initiating connections, completing flows, and CRUD operations.
+    # ============================================================================
 
     async def start_connect_account(
         self,
@@ -2284,7 +2322,10 @@ class ServerClient(Generic[TStoreOptions]):
         return await self._my_account_client.list_connected_account_connections(
             access_token=access_token, from_param=from_param, take=take)
 
+    # ============================================================================
     # CUSTOM TOKEN EXCHANGE (RFC 8693)
+    # Exchanges external custom tokens for Auth0 tokens.
+    # ============================================================================
 
     async def custom_token_exchange(
         self,
@@ -2554,7 +2595,9 @@ class ServerClient(Generic[TStoreOptions]):
                 e
             )
 
+    # ============================================================================
     # MFA (Multi-Factor Authentication)
+    # ============================================================================
 
     @property
     def mfa(self) -> MfaClient:
