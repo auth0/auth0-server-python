@@ -1,8 +1,8 @@
 # Interactive Login
 
-Interactive login in `auth0‑server‑python` is a two‑step process. First, you start the login flow by obtaining an authorization URL; then, after the user authenticates at Auth0 and is redirected back, you complete the login flow to exchange the authorization code for tokens. 
+Interactive login in `auth0‑server‑python` is a two‑step process. First, you start the login flow by obtaining an authorization URL; then, after the user authenticates at Auth0 and is redirected back, you complete the login flow to exchange the authorization code for tokens.
 
-This guide covers how to customize the authorization parameters, pass custom app state, enable **Pushed Authorization Requests (PAR)** and **Rich Authorization Requests (RAR)**, and supply store options.
+This guide covers how to customize the authorization parameters, pass custom app state, enable **Pushed Authorization Requests (PAR)** and **Rich Authorization Requests (RAR)**, supply store options, and log in to an organization.
 
 ## 1. Starting Interactive Login
 
@@ -28,7 +28,7 @@ Now call `start_interactive_login()` to obtain the authorization URL and redirec
 authorization_url = await server_client.start_interactive_login()
 ```
 ## 2. Passing Authorization Params
-You can customize the parameters sent to Auth0’s `/authorize` endpoint in two ways:
+You can customize the parameters sent to Auth0's `/authorize` endpoint in two ways:
 
 ### Global Configuration
 
@@ -76,7 +76,7 @@ result = await server_client.complete_interactive_login(callback_url)
 print(result.get("app_state").get("returnTo"))  # Should output: http://localhost:3000/dashboard
 ```
 > [!NOTE]
->- `authorize_url` is the URL for Auth0’s /authorize endpoint (or a URL built from PAR, if enabled).
+>- `authorize_url` is the URL for Auth0's /authorize endpoint (or a URL built from PAR, if enabled).
 >- `callback_url` is the URL Auth0 redirects back to after authentication.
 
 ## 4. Using Pushed Authorization Requests (PAR)
@@ -89,7 +89,7 @@ authorization_url = await server_client.start_interactive_login({
 })
 ```
 >[!IMPORTANT]
-> Using PAR requires that your Auth0 tenant is configured to support it. Refer to Auth0’s documentation for details.
+> Using PAR requires that your Auth0 tenant is configured to support it. Refer to Auth0's documentation for details.
 
 ## 5. Using Pushed Authorization Requests and Rich Authorization Requests (RAR)
 
@@ -138,3 +138,98 @@ print(result.get("authorization_details"))               # Rich Authorization Re
 
 >[!NOTE]
 >The `callback_url` must include the necessary parameters (`state` and `code`) that Auth0 sends upon successful authentication.
+
+## 8. Organizations
+
+[Auth0 Organizations](https://auth0.com/docs/organizations) lets you manage teams, business customers, and partner companies as distinct entities with their own login flows and membership.
+
+### Logging in to an organization
+
+Set `organization` on `ServerClient` to enforce it for every login (dedicated-org), or pass it per login via `StartInteractiveLoginOptions` (multi-org):
+
+```python
+from auth0_server_python.auth_server.server_client import ServerClient
+from auth0_server_python.auth_types import StartInteractiveLoginOptions
+
+# Dedicated-org: every login enforces this organization
+auth0 = ServerClient(
+    domain="YOUR_AUTH0_DOMAIN",
+    client_id="YOUR_CLIENT_ID",
+    client_secret="YOUR_CLIENT_SECRET",
+    secret="YOUR_SECRET",
+    organization="org_abc123",
+    authorization_params={"redirect_uri": "http://localhost:3000/auth/callback"}
+)
+
+# Multi-org: pass organization per login
+authorization_url = await auth0.start_interactive_login(
+    StartInteractiveLoginOptions(organization="org_xyz789"),
+    store_options={"request": request, "response": response}
+)
+```
+
+`organization` accepts either an org ID (`org_` prefix) or an org name. The SDK validates the corresponding `org_id` or `org_name` claim in the returned token automatically at callback.
+
+> [!IMPORTANT]
+> In the multi-org pattern, validate that the `organization` value comes from a trusted source — never pass it unvalidated directly from user input.
+
+### Accepting an invitation
+
+When a user follows an invitation link, extract `organization` and `invitation` from the URL and pass them as typed fields:
+
+```python
+@app.get("/auth/login")
+async def login(request: Request, response: Response):
+    authorization_url = await auth0.start_interactive_login(
+        StartInteractiveLoginOptions(
+            organization=request.query_params.get("organization"),
+            invitation=request.query_params.get("invitation"),
+        ),
+        store_options={"request": request, "response": response}
+    )
+    return RedirectResponse(url=authorization_url)
+```
+
+### Handling organization errors
+
+Auth0 returns organization errors as standard OAuth error responses (`error` + `error_description`). The SDK surfaces these as `ApiError`, preserving the raw values so you can branch on `error.code`:
+
+```python
+from auth0_server_python.error import ApiError, OrganizationTokenValidationError
+
+@app.get("/auth/callback")
+async def callback(request: Request, response: Response):
+    try:
+        result = await auth0.complete_interactive_login(
+            str(request.url),
+            store_options={"request": request, "response": response}
+        )
+        return RedirectResponse(url="/dashboard")
+    except OrganizationTokenValidationError:
+        return RedirectResponse(url="/error?reason=org_mismatch")
+    except ApiError as e:
+        return RedirectResponse(url=f"/error?reason={e.code}")
+```
+
+| Exception | When raised |
+|-----------|-------------|
+| `OrganizationTokenValidationError` | `org_id` / `org_name` in the returned token does not match what was requested |
+| `ApiError` | Auth0 rejected the authorization request — inspect `error.code` and `error.message` for the raw OAuth error and description |
+
+Common `ApiError.code` values for org flows:
+
+| `error.code` | Typical cause |
+|---|---|
+| `access_denied` | User not a member, connection not enabled for org, member quota exceeded |
+| `invalid_request` | Invalid org format, feature disabled, client not configured for orgs, expired or invalid invitation ticket |
+
+### Reading organization data from the session
+
+After a successful org login, `org_id` and `org_name` are available on the user object:
+
+```python
+user = await auth0.get_user(store_options={"request": request, "response": response})
+if user:
+    print(user.get("org_id"))    # e.g. "org_abc123" — use as stable identifier
+    print(user.get("org_name"))  # e.g. "acme-corp" — display only, mutable
+```

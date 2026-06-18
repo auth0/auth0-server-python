@@ -51,13 +51,10 @@ from auth0_server_python.error import (
     CustomTokenExchangeErrorCode,
     DomainResolverError,
     InvalidArgumentError,
-    OrganizationInvitationError,
     IssuerValidationError,
     MfaRequiredError,
     MissingRequiredArgumentError,
     MissingTransactionError,
-    OrganizationAccessDeniedError,
-    OrganizationRequiredError,
     OrganizationTokenValidationError,
     PollingApiError,
     StartLinkUserError,
@@ -76,48 +73,6 @@ TStoreOptions = TypeVar('TStoreOptions')
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
                              "code_challenge", "code_challenge_method", "state", "nonce", "scope",
                              "organization"]
-
-_ORG_ACCESS_DENIED_DESCRIPTIONS = (
-    "is not part of the",
-    "quota exceeded",
-    "organization member limit",
-    "user_id that longer than 1024",
-)
-
-_ORG_INVALID_REQUEST_DESCRIPTIONS = (
-    "organization must be an organization id",
-    "organizations feature is not enabled",
-    "organizations feature is not supported",
-    "parameter organization is required",
-    "parameter organization is not allowed",
-    "parameter organization is invalid",
-    "organization name must have between",
-    "organization must only contain lowercase",
-    "client is missing",
-)
-
-_INVITATION_DESCRIPTIONS = (
-    "invalid_user_invitation_ticket",
-    "invitation not found or already used",
-    "invalid invitation ticket",
-)
-
-
-def _classify_org_error(error: str, error_description: str) -> "ApiError":
-    desc_lower = error_description.lower()
-
-    if error == "invalid_user_invitation_ticket" or any(desc in desc_lower for desc in _INVITATION_DESCRIPTIONS):
-        return OrganizationInvitationError(error_description)
-
-    if error == "access_denied":
-        if any(desc in desc_lower for desc in _ORG_ACCESS_DENIED_DESCRIPTIONS):
-            return OrganizationAccessDeniedError(error_description)
-
-    if error == "invalid_request":
-        if any(desc in desc_lower for desc in _ORG_INVALID_REQUEST_DESCRIPTIONS):
-            return OrganizationRequiredError(error_description)
-
-    return ApiError(error, error_description)
 
 
 class ServerClient(Generic[TStoreOptions]):
@@ -597,6 +552,9 @@ class ServerClient(Generic[TStoreOptions]):
         if resolved_org:
             auth_params["organization"] = resolved_org
 
+        if options.invitation:
+            auth_params["invitation"] = options.invitation
+
         # Build the transaction data to store with domain
         transaction_data = TransactionData(
             code_verifier=code_verifier,
@@ -699,8 +657,6 @@ class ServerClient(Generic[TStoreOptions]):
         if "error" in query_params:
             error = query_params.get("error", [""])[0]
             error_description = query_params.get("error_description", [""])[0]
-            if transaction_data.organization:
-                raise _classify_org_error(error, error_description)
             raise ApiError(error, error_description)
 
         # Get the authorization code from the URL

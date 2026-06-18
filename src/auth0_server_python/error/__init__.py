@@ -197,46 +197,6 @@ class OrganizationTokenValidationError(Auth0Error):
         self.name = "OrganizationTokenValidationError"
 
 
-class OrganizationRequiredError(Auth0Error):
-    """
-    Raised when Auth0 rejects the authorization request due to an organization
-    configuration problem — invalid format, feature disabled, client not
-    configured for organizations, or the organization does not exist.
-    """
-    code = "organization_required_error"
-
-    def __init__(self, message: str, cause: Optional[Exception] = None):
-        super().__init__(message)
-        self.name = "OrganizationRequiredError"
-        self.cause = cause
-
-
-class OrganizationAccessDeniedError(Auth0Error):
-    """
-    Raised when Auth0 denies access to the requested organization — the user is
-    not a member, the connection is not enabled for the org, or the org member
-    quota has been exceeded.
-    """
-    code = "organization_access_denied_error"
-
-    def __init__(self, message: str, cause: Optional[Exception] = None):
-        super().__init__(message)
-        self.name = "OrganizationAccessDeniedError"
-        self.cause = cause
-
-
-class OrganizationInvitationError(Auth0Error):
-    """
-    Raised when an organization invitation is rejected by Auth0 — the ticket is
-    expired, already used, or otherwise invalid.
-    """
-    code = "organization_invitation_error"
-
-    def __init__(self, message: str, cause: Optional[Exception] = None):
-        super().__init__(message)
-        self.name = "OrganizationInvitationError"
-        self.cause = cause
-
 
 # Error code enumerations - these can be used to identify specific error scenarios
 
