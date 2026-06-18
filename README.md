@@ -104,6 +104,10 @@ async def callback(request: Request):
     return RedirectResponse(url="/")
 ```
 
+#### Organizations
+
+The SDK supports [Auth0 Organizations](https://auth0.com/docs/organizations) with first-class `organization` and `invitation` parameters on `ServerClient` and `StartInteractiveLoginOptions`. Token claim validation is enforced automatically at callback. For setup, invitation flows, error handling, and reading org data from the session, see [examples/InteractiveLogin.md](examples/InteractiveLogin.md#8-organizations).
+
 ### 4. Login with Custom Token Exchange
 
 If you're migrating from a legacy authentication system or integrating with a custom identity provider, you can exchange external tokens for Auth0 tokens using the OAuth 2.0 Token Exchange specification (RFC 8693):
@@ -172,10 +176,6 @@ auth0 = ServerClient(
 The SDK handles per-domain OIDC discovery, JWKS fetching, issuer validation, and session isolation automatically. Static string domains continue to work unchanged.
 
 For more details and examples, see [examples/MultipleCustomDomains.md](examples/MultipleCustomDomains.md).
-
-### 6. Organizations
-
-The SDK supports [Auth0 Organizations](https://auth0.com/docs/organizations) with first-class `organization` and `invitation` parameters on `ServerClient` and `StartInteractiveLoginOptions`. Token claim validation is enforced automatically at callback. For setup, invitation flows, error handling, and reading org data from the session, see [examples/InteractiveLogin.md](examples/InteractiveLogin.md#8-organizations).
 
 ## Feedback
 
