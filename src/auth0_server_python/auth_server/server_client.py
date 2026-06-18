@@ -75,7 +75,7 @@ TStoreOptions = TypeVar('TStoreOptions')
 # dynamically from the resolved domain at login time.
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
                              "code_challenge", "code_challenge_method", "state", "nonce", "scope",
-                             "organization", "invitation"]
+                             "organization"]
 
 _ORG_ACCESS_DENIED_FRAGMENTS = (
     "is not part of the",
@@ -582,10 +582,6 @@ class ServerClient(Generic[TStoreOptions]):
             raise InvalidArgumentError("organization", "organization must not be blank")
         if resolved_org:
             auth_params["organization"] = resolved_org
-
-        # Invitation is forwarded to /authorize but not stored for callback validation.
-        if options.invitation:
-            auth_params["invitation"] = options.invitation
 
         # Build the transaction data to store with domain
         transaction_data = TransactionData(

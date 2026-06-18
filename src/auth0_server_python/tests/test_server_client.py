@@ -4989,7 +4989,7 @@ async def test_invitation_and_org_forwarded_to_authorize(mocker):
     url = await client.start_interactive_login(
         StartInteractiveLoginOptions(
             organization="org_abc123",
-            invitation="inv_token_xyz",
+            authorization_params={"invitation": "inv_token_xyz"},
         )
     )
 
@@ -4999,7 +4999,6 @@ async def test_invitation_and_org_forwarded_to_authorize(mocker):
     # Confirm transaction stores the organization
     stored = mock_tx_store.set.call_args[0][1]
     assert stored.organization == "org_abc123"
-
 
 
 @pytest.mark.asyncio
@@ -5022,40 +5021,13 @@ async def test_invitation_without_org_forwarded_to_authorize(mocker):
     })
 
     url = await client.start_interactive_login(
-        StartInteractiveLoginOptions(invitation="inv_token_xyz")
+        StartInteractiveLoginOptions(
+            authorization_params={"invitation": "inv_token_xyz"}
+        )
     )
 
     assert "invitation=inv_token_xyz" in url
     assert "organization=" not in url
-
-
-@pytest.mark.asyncio
-async def test_invitation_via_authorization_params_dict_is_ignored(mocker):
-    """invitation passed via authorization_params dict is stripped; typed field is the only path."""
-    mock_tx_store = AsyncMock()
-    mock_state_store = AsyncMock()
-    client = ServerClient(
-        domain="tenant.auth0.com",
-        client_id="test_client",
-        client_secret="test_secret",
-        redirect_uri="https://app.example.com/callback",
-        transaction_store=mock_tx_store,
-        state_store=mock_state_store,
-        secret="test_secret_key_32_chars_long!!",
-    )
-    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
-        "issuer": "https://tenant.auth0.com/",
-        "authorization_endpoint": "https://tenant.auth0.com/authorize",
-    })
-
-    url = await client.start_interactive_login(
-        StartInteractiveLoginOptions(
-            authorization_params={"invitation": "inv_via_dict"},
-        )
-    )
-
-    parsed = parse_qs(urlparse(url).query)
-    assert "invitation" not in parsed
 
 
 @pytest.mark.asyncio

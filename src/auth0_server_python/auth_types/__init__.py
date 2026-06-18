@@ -151,7 +151,6 @@ class StartInteractiveLoginOptions(BaseModel):
     app_state: Optional[Any] = None
     authorization_params: Optional[dict[str, Any]] = None
     organization: Optional[str] = None
-    invitation: Optional[str] = None
 
 
 class LogoutOptions(BaseModel):
