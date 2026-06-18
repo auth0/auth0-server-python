@@ -1,17 +1,18 @@
 # Organizations
 
-[Organizations](https://auth0.com/docs/organizations) is a set of features that provide better support for developers building SaaS and B2B applications. This guide covers the two main deployment patterns and the invitation flow.
+[Organizations](https://auth0.com/docs/organizations) is a set of features that provide better support for developers building SaaS and B2B applications. This guide covers org login, invitation flows, error handling, and reading org data from the session.
 
-- [1. Dedicated-org instance](#1-dedicated-org-instance)
-- [2. Multi-org — per-login override](#2-multi-org--per-login-override)
-- [3. Log in using an organization name](#3-log-in-using-an-organization-name)
-- [4. Accept user invitations](#4-accept-user-invitations)
-- [5. Handling organization errors](#5-handling-organization-errors)
-- [6. Reading organization data from the session](#6-reading-organization-data-from-the-session)
+- [1. Configuring the organization](#1-configuring-the-organization)
+- [2. Log in using an organization name](#2-log-in-using-an-organization-name)
+- [3. Accept user invitations](#3-accept-user-invitations)
+- [4. Handling organization errors](#4-handling-organization-errors)
+- [5. Reading organization data from the session](#5-reading-organization-data-from-the-session)
 
-## 1. Dedicated-org instance
+## 1. Configuring the organization
 
-When a single instance of your application serves one organization, set `organization` at client initialization. Every login from that instance will include the `organization` parameter in the `/authorize` request and validate the `org_id` claim in the returned token automatically.
+The `organization` parameter can be set at client initialization (dedicated-org) or per login (multi-org).
+
+**Dedicated-org:** when a single instance of your application serves one organization, set `organization` at client initialization. Every login from that instance will enforce the org automatically.
 
 ```python
 from auth0_server_python.auth_server.server_client import ServerClient
@@ -50,12 +51,7 @@ async def callback(request: Request, response: Response):
     return RedirectResponse(url="/dashboard")
 ```
 
-> [!NOTE]
-> You do not need to pass `organization` to `complete_interactive_login`. The SDK stores it in the encrypted transaction at login time and reads it back at callback — the validation is automatic.
-
-## 2. Multi-org — per-login override
-
-When one application instance serves multiple organizations (for example, a B2B SaaS where different users belong to different orgs), pass `organization` at login time using `StartInteractiveLoginOptions`. This overrides any client-level default for that specific login.
+**Multi-org:** when one application instance serves multiple organizations, pass `organization` at login time using `StartInteractiveLoginOptions`. This overrides any client-level default for that specific login.
 
 ```python
 from auth0_server_python.auth_types import StartInteractiveLoginOptions
@@ -69,10 +65,13 @@ async def login(request: Request, response: Response, org_id: str):
     return RedirectResponse(url=authorization_url)
 ```
 
-> [!IMPORTANT]
-> Validate that `org_id` comes from a trusted source (your own data, a verified session, or a registered tenant list) — never pass it unvalidated from a query parameter directly from an untrusted user.
+> [!NOTE]
+> You do not need to pass `organization` to `complete_interactive_login`. The SDK stores it in the encrypted transaction at login time and reads it back at callback — the validation is automatic.
 
-## 3. Log in using an organization name
+> [!IMPORTANT]
+> In the multi-org pattern, validate that `org_id` comes from a trusted source (your own data, a verified session, or a registered tenant list) — never pass it unvalidated from a query parameter directly from an untrusted user.
+
+## 2. Log in using an organization name
 
 `organization` accepts either an org ID (starts with `org_`) or an org name (any other value). The SDK uses the prefix to determine which token claim to validate at callback:
 
@@ -94,7 +93,7 @@ authorization_url = await auth0.start_interactive_login(
 > [!NOTE]
 > Auth0 enforces that organization names cannot start with `org_`, so the prefix dispatch is unambiguous. When using org name, the SDK applies NFC Unicode normalization before comparison to prevent false rejections from visually identical characters with different byte representations.
 
-## 4. Accept user invitations
+## 3. Accept user invitations
 
 When a user follows an invitation link, extract the `invitation` and `organization` parameters from the URL and pass them at login time. Auth0 validates the invitation ticket server-side — your application does not need to verify it.
 
@@ -123,7 +122,7 @@ async def login(request: Request, response: Response):
 > [!NOTE]
 > `organization` and `invitation` are forwarded to `/authorize`. Auth0 consumes the invitation ticket server-side — it is not stored in the encrypted transaction. If the ticket is expired or already used, `complete_interactive_login` raises `OrganizationInvitationError`.
 
-## 5. Handling organization errors
+## 4. Handling organization errors
 
 The SDK raises typed exceptions for org-specific failure modes. Catch them in your callback handler to return meaningful responses to your users.
 
@@ -167,7 +166,7 @@ async def callback(request: Request, response: Response):
 | `OrganizationInvitationError` | Invitation ticket expired, already used, or invalid |
 | `OrganizationTokenValidationError` | `org_id` / `org_name` in the returned token does not match what was requested |
 
-## 6. Reading organization data from the session
+## 5. Reading organization data from the session
 
 After a successful org login, `org_id` and `org_name` are available on the user object. Use `get_user()` to retrieve them on subsequent requests:
 

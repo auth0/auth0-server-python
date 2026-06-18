@@ -220,7 +220,9 @@ class StartLinkUserOptions(BaseModel):
     authorization_params: Optional[dict[str, Any]] = None
     app_state: Optional[Any] = None
 
+# =============================================================================
 # Multiple Custom Domain
+# =============================================================================
 
 class DomainResolverContext(BaseModel):
     """
@@ -241,7 +243,9 @@ class DomainResolverContext(BaseModel):
     request_url: Optional[str] = None
     request_headers: Optional[dict[str, str]] = None
 
+# =============================================================================
 # Custom Token Exchange Types
+# =============================================================================
 
 class CustomTokenExchangeOptions(BaseModel):
     """
@@ -348,7 +352,9 @@ class LoginWithCustomTokenExchangeResult(BaseModel):
     state_data: dict[str, Any]
     authorization_details: Optional[list[AuthorizationDetails]] = None
 
+# =============================================================================
 # Connected Accounts Types
+# =============================================================================
 
 # BASE & SHARED
 class ConnectedAccountBase(BaseModel):
@@ -421,7 +427,9 @@ class ListConnectedAccountConnectionsResponse(BaseModel):
     next: Optional[str] = None
 
 
+# =============================================================================
 # MFA Types
+# =============================================================================
 
 # Type aliases using Literal types
 AuthenticatorType = Literal["otp", "oob", "recovery-code"]
