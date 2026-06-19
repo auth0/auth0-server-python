@@ -241,7 +241,9 @@ class CustomTokenExchangeErrorCode:
     INVALID_RESPONSE = "invalid_response"
 
 
+# =============================================================================
 # MFA Error Classes
+# =============================================================================
 
 class MfaApiError(Auth0Error):
     """Base class for MFA API errors."""

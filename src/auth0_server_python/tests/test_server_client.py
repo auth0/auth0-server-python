@@ -2323,7 +2323,9 @@ async def test_get_token_by_refresh_token_exchange_failed(mocker):
     args, kwargs = mock_post.call_args
     assert kwargs["data"]["refresh_token"] == "<refresh_token_should_fail>"
 
+# =============================================================================
 # Connected Accounts Tests (My Account Client)
+# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -2857,7 +2859,9 @@ async def test_list_connected_account_connections_with_invalid_take_param(mocker
     assert "The 'take' parameter must be a positive integer." in str(exc.value)
     mock_my_account_client.list_connected_account_connections.assert_not_awaited()
 
+# =============================================================================
 # Custom Token Exchange Tests
+# =============================================================================
 
 @pytest.mark.asyncio
 async def test_custom_token_exchange_success(mocker):
@@ -2986,6 +2990,7 @@ async def test_custom_token_exchange_with_actor_token(mocker):
 @pytest.mark.asyncio
 async def test_custom_token_exchange_with_organization(mocker):
     """Test token exchange with organization parameter."""
+    # Setup
     mock_transaction_store = AsyncMock()
     mock_state_store = AsyncMock()
 
@@ -3020,6 +3025,7 @@ async def test_custom_token_exchange_with_organization(mocker):
 
     mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
 
+    # Act
     options = CustomTokenExchangeOptions(
         subject_token="custom-token",
         subject_token_type="urn:acme:mcp-token",
@@ -3027,8 +3033,10 @@ async def test_custom_token_exchange_with_organization(mocker):
     )
     result = await client.custom_token_exchange(options)
 
+    # Assert
     assert result.access_token == "org_scoped_token"
 
+    # Verify organization param was sent
     call_args = mock_httpx_client.post.call_args
     assert call_args[1]["data"]["organization"] == "org_abc1234"
 
@@ -3346,7 +3354,9 @@ async def test_custom_token_exchange_forbidden_params_filtered(mocker):
     assert call_args[1]["data"]["allowed_param"] == "value"
 
 
+# =============================================================================
 # Login with Custom Token Exchange Tests
+# =============================================================================
 
 @pytest.mark.asyncio
 async def test_login_with_custom_token_exchange_success(mocker):
@@ -3534,7 +3544,9 @@ async def test_login_with_custom_token_exchange_failure_propagates(mocker):
     assert exc.value.code == "unauthorized"
 
 
+# =============================================================================
 # OIDC Metadata and JWKS Fetching Tests
+# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -3835,7 +3847,9 @@ async def test_metadata_cache_size_limit():
     assert "domain3.auth0.com" in client._discovery_cache
 
 
+# =============================================================================
 # Issuer Validation Tests
+# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -4039,7 +4053,9 @@ async def test_normalize_url_handles_edge_cases():
     assert client._normalize_url(None) is None
 
 
+# =============================================================================
 # MCD Tests : Multiple Issuer Configuration Methods Tests
+# =============================================================================
 
 @pytest.mark.asyncio
 async def test_domain_as_static_string():
@@ -4108,7 +4124,9 @@ async def test_empty_domain_string():
         )
 
 
+# =============================================================================
 # MCD Tests : Domain Resolver Context Tests
+# =============================================================================
 
 @pytest.mark.asyncio
 async def test_domain_resolver_receives_context(mocker):
@@ -4321,7 +4339,9 @@ async def test_resolver_returns_domain_with_scheme_prefix():
     assert user["sub"] == "user123"
 
 
+# =============================================================================
 # MCD Tests : Domain-specific Session Management Tests
+# =============================================================================
 
 
 @pytest.mark.asyncio
