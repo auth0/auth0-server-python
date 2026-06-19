@@ -2984,6 +2984,56 @@ async def test_custom_token_exchange_with_actor_token(mocker):
 
 
 @pytest.mark.asyncio
+async def test_custom_token_exchange_with_organization(mocker):
+    """Test token exchange with organization parameter."""
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client,
+        "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "org_scoped_token",
+        "token_type": "Bearer",
+        "expires_in": 3600
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    options = CustomTokenExchangeOptions(
+        subject_token="custom-token",
+        subject_token_type="urn:acme:mcp-token",
+        organization="org_abc1234"
+    )
+    result = await client.custom_token_exchange(options)
+
+    assert result.access_token == "org_scoped_token"
+
+    call_args = mock_httpx_client.post.call_args
+    assert call_args[1]["data"]["organization"] == "org_abc1234"
+
+
+@pytest.mark.asyncio
 async def test_custom_token_exchange_empty_token():
     """Test that empty/whitespace tokens are rejected."""
     # Setup
@@ -5153,8 +5203,8 @@ async def test_adv_empty_string_org_id_raises(mocker):
 
 
 @pytest.mark.asyncio
-async def test_adv_org_in_untyped_dict_is_ignored(mocker):
-    """organization passed via authorization_params dict is stripped; typed field is the only path."""
+async def test_adv_org_in_authorization_params_is_forwarded(mocker):
+    """organization passed via authorization_params is forwarded to /authorize."""
     mock_tx_store = AsyncMock()
     mock_state_store = AsyncMock()
     client = ServerClient(
@@ -5171,20 +5221,73 @@ async def test_adv_org_in_untyped_dict_is_ignored(mocker):
         "authorization_endpoint": "https://tenant.auth0.com/authorize",
     })
 
-    # org passed only via authorization_params — must be ignored entirely
     url = await client.start_interactive_login(
         StartInteractiveLoginOptions(
             authorization_params={"organization": "org_via_dict"},
         )
     )
 
-    # TransactionData must not store any org (dict path is blocked)
-    stored = mock_tx_store.set.call_args[0][1]
-    assert stored.organization is None
-
-    # URL must not contain the dict value
     parsed = parse_qs(urlparse(url).query)
-    assert "organization" not in parsed
+    assert parsed["organization"] == ["org_via_dict"]
+
+
+@pytest.mark.asyncio
+async def test_adv_invitation_in_authorization_params_is_forwarded(mocker):
+    """invitation passed via authorization_params is forwarded to /authorize."""
+    mock_tx_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        redirect_uri="https://app.example.com/callback",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant.auth0.com/",
+        "authorization_endpoint": "https://tenant.auth0.com/authorize",
+    })
+
+    url = await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={"invitation": "inv_via_dict"},
+        )
+    )
+
+    parsed = parse_qs(urlparse(url).query)
+    assert parsed["invitation"] == ["inv_via_dict"]
+
+
+@pytest.mark.asyncio
+async def test_adv_typed_invitation_wins_over_dict(mocker):
+    """Typed invitation field wins when both typed and dict values are present."""
+    mock_tx_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        redirect_uri="https://app.example.com/callback",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+    mocker.patch.object(client, "_get_oidc_metadata_cached", return_value={
+        "issuer": "https://tenant.auth0.com/",
+        "authorization_endpoint": "https://tenant.auth0.com/authorize",
+    })
+
+    url = await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            invitation="inv_typed",
+            authorization_params={"invitation": "inv_via_dict"},
+        )
+    )
+
+    parsed = parse_qs(urlparse(url).query)
+    assert parsed["invitation"] == ["inv_typed"]
 
 
 @pytest.mark.asyncio

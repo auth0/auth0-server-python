@@ -225,11 +225,11 @@ Common `ApiError.code` values for org flows:
 
 ### Reading organization data from the session
 
-After a successful org login, `org_id` and `org_name` are available on the user object:
+After a successful org login, `org_id` is always present in the token. `org_name` is also present when the organization has the org name feature enabled:
 
 ```python
 user = await auth0.get_user(store_options={"request": request, "response": response})
 if user:
-    print(user.get("org_id"))    # e.g. "org_abc123" — use as stable identifier
-    print(user.get("org_name"))  # e.g. "acme-corp" — display only, mutable
+    print(user.get("org_id"))    # always present; use as stable identifier
+    print(user.get("org_name"))  # present when org name is enabled
 ```

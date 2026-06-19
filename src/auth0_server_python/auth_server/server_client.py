@@ -71,8 +71,7 @@ TStoreOptions = TypeVar('TStoreOptions')
 # redirect_uri is intentionally excluded — in MCD mode it is built
 # dynamically from the resolved domain at login time.
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
-                             "code_challenge", "code_challenge_method", "state", "nonce", "scope",
-                             "organization"]
+                             "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
 
 
 class ServerClient(Generic[TStoreOptions]):
@@ -545,7 +544,7 @@ class ServerClient(Generic[TStoreOptions]):
         merged_scope = self._merge_scope_with_defaults(requested_scope, audience)
         auth_params["scope"] = merged_scope
 
-        # Resolve organization: per-login value takes precedence over client-level default.
+        # Typed org/invitation fields win over anything already in auth_params from authorization_params.
         resolved_org = options.organization or self._organization
         if resolved_org and not resolved_org.strip():
             raise InvalidArgumentError("organization", "organization must not be blank")
@@ -2353,6 +2352,9 @@ class ServerClient(Generic[TStoreOptions]):
                 params["actor_token"] = options.actor_token
                 params["actor_token_type"] = options.actor_token_type
 
+            if options.organization:
+                params["organization"] = options.organization
+
             # Merge additional authorization params
             if options.authorization_params:
                 # Prevent override of critical parameters
@@ -2449,6 +2451,7 @@ class ServerClient(Generic[TStoreOptions]):
                 scope=options.scope,
                 actor_token=options.actor_token,
                 actor_token_type=options.actor_token_type,
+                organization=options.organization,
                 authorization_params=options.authorization_params
             )
 
