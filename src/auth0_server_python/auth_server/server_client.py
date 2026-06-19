@@ -646,9 +646,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         if user_info:
             user_claims = UserClaims.parse_obj(user_info)
-            # authlib populates `userinfo` from parsed ID token claims, so the
-            # IPSIE session_expiry claim may surface here.
-            session_expires_at = user_info.get("session_expiry")
+            session_expires_at = user_claims.session_expiry
             issued_at = user_info.get("iat")
         elif id_token:
             # Fetch JWKS for signature verification
@@ -666,8 +664,7 @@ class ServerClient(Generic[TStoreOptions]):
                     raise IssuerValidationError("ID token issuer mismatch. Ensure your Auth0 domain is configured correctly.")
 
                 user_claims = UserClaims.parse_obj(claims)
-                # IPSIE session_expiry ceiling from the verified ID token.
-                session_expires_at = claims.get("session_expiry")
+                session_expires_at = user_claims.session_expiry
                 issued_at = claims.get("iat")
             except ValueError as e:
                 raise ApiError("jwks_key_not_found", str(e))

@@ -72,13 +72,24 @@ Read more above in [Configuring the Store](./ConfigureStore.md).
 
 ## Session Expiry from the Upstream IdP
 
-For enterprise connections, the upstream identity provider can impose a ceiling on how long the user's session may live. When the connection is configured to honor it, Auth0 includes a `session_expiry` claim (an absolute Unix timestamp, in seconds) in the ID token. The SDK reads this value at login, stores it with the session, and enforces it on every subsequent read.
+For enterprise connections, the upstream identity provider can impose a ceiling on how long the user's session may live. This ceiling is delivered to the SDK as a `session_expiry` claim (an absolute Unix timestamp, **in seconds**) on the ID token. The SDK reads this value at login, stores it with the session, and enforces it on every subsequent read.
+
+### Emitting the claim
+
+The `session_expiry` claim is set by a Post-Login Action on your tenant, and **must** be an absolute Unix timestamp in **seconds**, not milliseconds. For the canonical Action setup, see the [Auth0 documentation](https://auth0.com/docs) (will be adding the link to the session_expiry Action guide once published).
+
+> [!WARNING]
+> `session_expiry` is interpreted as **seconds** since the Unix epoch (per RFC 7519 `NumericDate`). A common mistake is emitting milliseconds (e.g. `getTime()` without `/ 1000`). The SDK rejects implausibly large values (anything at or above `10_000_000_000`, ≈ year 2286) as malformed and treats them as **no ceiling**, so a milliseconds value will silently disable enforcement rather than expiring the session ~55,000 years from now. Always divide by 1000.
+>
+> Because the claim is authored by your Action (untrusted input), the SDK **fails open** on any malformed value — a non-numeric, zero, negative, boolean, or millisecond value is treated as "no ceiling" and login proceeds normally. Only a clean, future, seconds timestamp is enforced.
 
 Once the ceiling is reached, the read methods behave as follows:
 
 - `get_user()` returns `None`, as if no session exists.
 - `get_session()` returns `None`, as if no session exists.
 - `get_access_token()` raises an `AccessTokenError` with code `session_expired`.
+
+`get_access_token_for_connection()` (Token Vault) is **not** gated by the session ceiling — connection tokens follow the upstream IdP's own `expires_in`, so they remain retrievable from cache even after the session ceiling has passed.
 
 ```python
 from auth0_server_python.error import AccessTokenError, AccessTokenErrorCode

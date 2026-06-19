@@ -7,6 +7,9 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+# Upper bound (Unix seconds) for a plausible session_expiry
+SESSION_EXPIRY_MAX_PLAUSIBLE = 10_000_000_000
+
 
 class UserClaims(BaseModel):
     """
@@ -27,6 +30,15 @@ class UserClaims(BaseModel):
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
+
+    @field_validator('session_expiry', mode='before')
+    @classmethod
+    def _sanitize_session_expiry(cls, value: Any) -> Optional[int]:
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        if value <= 0 or value >= SESSION_EXPIRY_MAX_PLAUSIBLE:
+            return None
+        return value
 
 
 class TokenSet(BaseModel):
