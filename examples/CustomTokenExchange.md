@@ -64,7 +64,7 @@ print(f"User logged in: {user['sub']}")
 
 ## 3. Actor Tokens (Delegation)
 
-Enable delegation scenarios where one service acts on behalf of a user.
+Enable delegation scenarios where one party acts on behalf of a user. The acting party is supplied via `actor_token`, and Auth0 records it in the [`act` claim](https://datatracker.ietf.org/doc/html/rfc8693#section-4.1) on the issued tokens.
 
 ```python
 # Service acting on behalf of a user
@@ -77,7 +77,31 @@ response = await auth0.custom_token_exchange(
         audience="https://api.example.com"
     )
 )
+
+# The actor claim is surfaced on the response. It may nest for delegation chains.
+if response.act:
+    print(f"Acting party: {response.act['sub']}")
 ```
+
+When you establish a session with `login_with_custom_token_exchange()`, the `act` claim is persisted on the session user and can be read back later via `get_user()`:
+
+```python
+result = await auth0.login_with_custom_token_exchange(
+    LoginWithCustomTokenExchangeOptions(
+        subject_token="user-access-token",
+        subject_token_type="urn:ietf:params:oauth:token-type:access_token",
+        actor_token="service-access-token",
+        actor_token_type="urn:ietf:params:oauth:token-type:access_token",
+    ),
+    store_options={"request": request, "response": response}
+)
+
+user = result.state_data["user"]
+if user.get("act"):
+    print(f"Acting party: {user['act']['sub']}")
+```
+
+> **NOTE**: When an `actor_token` is present, Auth0 does not issue a refresh token (the `offline_access` scope is dropped). A subsequent refresh-token grant therefore cannot re-emit the `act` claim, so the acting party is fixed at exchange time.
 
 ## 4. Custom Authorization Parameters
 
@@ -133,6 +157,7 @@ except CustomTokenExchangeError as e:
 
 - `INVALID_TOKEN_FORMAT`: Token is empty, whitespace-only, or has "Bearer " prefix
 - `MISSING_ACTOR_TOKEN_TYPE`: `actor_token` provided without `actor_token_type`
+- `MISSING_ACTOR_TOKEN`: `actor_token_type` provided without `actor_token`
 - `TOKEN_EXCHANGE_FAILED`: General token exchange failure
 - `INVALID_RESPONSE`: Auth0 returned a non-JSON response
 

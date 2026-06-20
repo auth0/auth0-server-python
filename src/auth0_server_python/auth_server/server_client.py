@@ -2243,9 +2243,34 @@ class ServerClient(Generic[TStoreOptions]):
             https://datatracker.ietf.org/doc/html/rfc8693
         """
         try:
-            # Validate options (Pydantic handles this automatically)
             if not isinstance(options, CustomTokenExchangeOptions):
                 options = CustomTokenExchangeOptions(**options)
+
+            if not options.subject_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token cannot be empty or whitespace-only"
+                )
+            if options.subject_token.strip().startswith("Bearer "):
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token should not include 'Bearer ' prefix"
+                )
+            if options.actor_token and options.actor_token.strip().startswith("Bearer "):
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "actor_token should not include 'Bearer ' prefix"
+                )
+            if options.actor_token and not options.actor_token_type:
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.MISSING_ACTOR_TOKEN_TYPE,
+                    "actor_token_type is required when actor_token is provided"
+                )
+            if options.actor_token_type and not options.actor_token:
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.MISSING_ACTOR_TOKEN,
+                    "actor_token is required when actor_token_type is provided"
+                )
 
             # Resolve domain
             domain = await self._resolve_current_domain(store_options)
@@ -2309,8 +2334,17 @@ class ServerClient(Generic[TStoreOptions]):
                         "Failed to parse token response as JSON"
                     )
 
-                # Validate and return response
-                return TokenExchangeResponse(**token_data)
+                token_response = TokenExchangeResponse(**token_data)
+
+                # Surface the actor claim for delegation exchanges
+                if options.actor_token and token_response.id_token:
+                    jwks = await self._get_jwks_cached(domain, metadata)
+                    claims = await self._verify_and_decode_jwt(
+                        token_response.id_token, jwks, audience=self._client_id
+                    )
+                    token_response.act = claims.get("act")
+
+                return token_response
 
         except ValidationError as e:
             raise CustomTokenExchangeError(

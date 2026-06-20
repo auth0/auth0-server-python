@@ -4,7 +4,6 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from pydantic_core import ValidationError
 
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
@@ -46,7 +45,7 @@ from auth0_server_python.error import (
     PollingApiError,
     StartLinkUserError,
 )
-from auth0_server_python.utils import PKCE
+from auth0_server_python.utils import PKCE, State
 
 
 @pytest.mark.asyncio
@@ -3052,13 +3051,14 @@ async def test_custom_token_exchange_empty_token():
     )
 
     # Act & Assert - empty token
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(CustomTokenExchangeError) as exc:
         await client.custom_token_exchange(
             CustomTokenExchangeOptions(
                 subject_token="   ",
                 subject_token_type="urn:acme:mcp-token"
             )
         )
+    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT
     assert "empty or whitespace" in str(exc.value).lower()
 
 
@@ -3076,13 +3076,14 @@ async def test_custom_token_exchange_bearer_prefix():
     )
 
     # Act & Assert
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(CustomTokenExchangeError) as exc:
         await client.custom_token_exchange(
             CustomTokenExchangeOptions(
                 subject_token="Bearer abc123",
                 subject_token_type="urn:ietf:params:oauth:token-type:access_token"
             )
         )
+    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT
     assert "Bearer" in str(exc.value)
 
 
@@ -3100,7 +3101,7 @@ async def test_custom_token_exchange_missing_actor_token_type():
     )
 
     # Act & Assert
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(CustomTokenExchangeError) as exc:
         await client.custom_token_exchange(
             CustomTokenExchangeOptions(
                 subject_token="token",
@@ -3109,7 +3110,35 @@ async def test_custom_token_exchange_missing_actor_token_type():
                 actor_token_type=None
             )
         )
+    assert exc.value.code == CustomTokenExchangeErrorCode.MISSING_ACTOR_TOKEN_TYPE
     assert "actor_token_type" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_missing_actor_token():
+    """Test that actor_token is required when actor_token_type is provided."""
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    # Act & Assert
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.custom_token_exchange(
+            CustomTokenExchangeOptions(
+                subject_token="token",
+                subject_token_type="urn:acme:token",
+                actor_token=None,
+                actor_token_type="urn:ietf:params:oauth:token-type:id_token"
+            )
+        )
+    assert exc.value.code == CustomTokenExchangeErrorCode.MISSING_ACTOR_TOKEN
+    assert "actor_token" in str(exc.value).lower()
 
 
 @pytest.mark.asyncio
@@ -3351,6 +3380,100 @@ async def test_custom_token_exchange_forbidden_params_filtered(mocker):
     assert call_args[1]["data"]["allowed_param"] == "value"
 
 
+# Delegation Support
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_surfaces_act_claim(mocker):
+    """Actor claim from the ID token is exposed on the response, nesting preserved."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client, "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={"keys": []})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "user123",
+        "act": {"sub": "agent|abc", "act": {"sub": "svc|xyz"}},
+    })
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "delegated_token",
+        "token_type": "Bearer",
+        "expires_in": 1800,
+        "id_token": "header.payload.sig",
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    result = await client.custom_token_exchange(CustomTokenExchangeOptions(
+        subject_token="user-token",
+        subject_token_type="urn:ietf:params:oauth:token-type:access_token",
+        actor_token="service-token",
+        actor_token_type="urn:ietf:params:oauth:token-type:access_token",
+    ))
+
+    assert result.act == {"sub": "agent|abc", "act": {"sub": "svc|xyz"}}
+    assert result.act["act"]["sub"] == "svc|xyz"
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_act_none_for_opaque_token(mocker):
+    """An undecodable (opaque) token leaves act as None rather than raising."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client, "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"}
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "opaque_token",
+        "token_type": "Bearer",
+        "expires_in": 1800,
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    result = await client.custom_token_exchange(CustomTokenExchangeOptions(
+        subject_token="user-token",
+        subject_token_type="urn:ietf:params:oauth:token-type:access_token",
+        actor_token="service-token",
+        actor_token_type="urn:ietf:params:oauth:token-type:access_token",
+    ))
+
+    assert result.act is None
+
+
 # =============================================================================
 # Login with Custom Token Exchange Tests
 # =============================================================================
@@ -3539,6 +3662,83 @@ async def test_login_with_custom_token_exchange_failure_propagates(mocker):
             )
         )
     assert exc.value.code == "unauthorized"
+
+
+@pytest.mark.asyncio
+async def test_login_with_custom_token_exchange_persists_act_on_user(mocker):
+    """The act claim from the ID token is persisted on the session user."""
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    mocker.patch.object(
+        client, "_fetch_oidc_metadata",
+        return_value={
+            "token_endpoint": "https://auth0.local/oauth/token",
+            "issuer": "https://auth0.local/",
+        }
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={"keys": []})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "user123",
+        "iss": "https://auth0.local/",
+        "act": {"sub": "agent|abc", "act": {"sub": "svc|xyz"}},
+    })
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "exchanged_token",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "id_token": "header.payload.sig",
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    result = await client.login_with_custom_token_exchange(
+        LoginWithCustomTokenExchangeOptions(
+            subject_token="custom-token",
+            subject_token_type="urn:acme:mcp-token",
+            actor_token="service-token",
+            actor_token_type="urn:ietf:params:oauth:token-type:access_token",
+        )
+    )
+
+    assert result.state_data["user"]["act"] == {"sub": "agent|abc", "act": {"sub": "svc|xyz"}}
+
+
+def test_act_claim_survives_token_refresh():
+    """A refresh-token grant must not drop the login-time act claim from the user."""
+    state_data = {
+        "user": {"sub": "user123", "act": {"sub": "agent|abc"}},
+        "id_token": "old.jwt",
+        "refresh_token": "rt",
+        "token_sets": [{"audience": "aud1", "access_token": "at", "scope": "openid", "expires_at": 0}],
+        "internal": {"sid": "s", "created_at": 0},
+    }
+    # Refresh-token grants do not re-emit the act claim.
+    refresh_response = {
+        "access_token": "new_at",
+        "id_token": "new.jwt",
+        "scope": "openid",
+        "expires_in": 3600,
+    }
+
+    updated = State.update_state_data("aud1", state_data, refresh_response)
+
+    assert updated["user"]["act"] == {"sub": "agent|abc"}
 
 
 # =============================================================================
