@@ -296,6 +296,10 @@ def validate_resolved_domain_value(domain_value: Any) -> str:
     return domain_value
 
 
+# =============================================================================
+# Claim Validation Utilities
+# =============================================================================
+
 def validate_org_claims(claims: dict, expected_org: str) -> None:
     """
     Validate org_id or org_name in token claims against the requested organization.
