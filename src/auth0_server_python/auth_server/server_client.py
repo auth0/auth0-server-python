@@ -214,8 +214,6 @@ class ServerClient(Generic[TStoreOptions]):
 
         return value.rstrip('/')
 
-    def _validate_org_claims(self, claims: dict, expected_org: str) -> None:
-        validate_org_claims(claims, expected_org)
 
     async def _resolve_current_domain(self, store_options=None) -> str:
         """Resolve domain from resolver function or return static domain."""
@@ -678,7 +676,7 @@ class ServerClient(Generic[TStoreOptions]):
                     "Userinfo response is not a valid claims dictionary"
                 )
             if expected_org:
-                self._validate_org_claims(user_info, expected_org)
+                validate_org_claims(user_info, expected_org)
             user_claims = UserClaims.parse_obj(user_info)
         elif id_token:
             # Fetch JWKS for signature verification
@@ -697,7 +695,7 @@ class ServerClient(Generic[TStoreOptions]):
 
                 # Organization claim validation — mandatory when org was requested.
                 if expected_org:
-                    self._validate_org_claims(claims, expected_org)
+                    validate_org_claims(claims, expected_org)
 
                 user_claims = UserClaims.parse_obj(claims)
             except ValueError as e:
