@@ -2336,13 +2336,21 @@ class ServerClient(Generic[TStoreOptions]):
 
                 token_response = TokenExchangeResponse(**token_data)
 
-                # Surface the actor claim for delegation exchanges
+                # Surface the actor claim for delegation exchanges. Best-effort:
+                # a decode/verify hiccup must not fail an exchange the token
+                # endpoint already accepted, so act stays None on any failure.
                 if options.actor_token and token_response.id_token:
-                    jwks = await self._get_jwks_cached(domain, metadata)
-                    claims = await self._verify_and_decode_jwt(
-                        token_response.id_token, jwks, audience=self._client_id
-                    )
-                    token_response.act = claims.get("act")
+                    try:
+                        jwks = await self._get_jwks_cached(domain, metadata)
+                        claims = await self._verify_and_decode_jwt(
+                            token_response.id_token, jwks, audience=self._client_id
+                        )
+                        # Apply the same normalized issuer check the login path uses
+                        # before trusting any claim from the token.
+                        if self._normalize_url(claims.get("iss", "")) == self._normalize_url(metadata.get("issuer")):
+                            token_response.act = claims.get("act")
+                    except Exception:
+                        token_response.act = None
 
                 return token_response
 
