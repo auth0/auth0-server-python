@@ -6,7 +6,6 @@ Handles authentication flows, token management, and user sessions.
 import asyncio
 import json
 import time
-import unicodedata
 from collections import OrderedDict
 from typing import Any, Callable, Generic, Optional, TypeVar, Union
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -63,6 +62,7 @@ from auth0_server_python.telemetry import Telemetry
 from auth0_server_python.utils import PKCE, URL, State
 from auth0_server_python.utils.helpers import (
     build_domain_resolver_context,
+    validate_org_claims,
     validate_resolved_domain_value,
 )
 
@@ -215,39 +215,7 @@ class ServerClient(Generic[TStoreOptions]):
         return value.rstrip('/')
 
     def _validate_org_claims(self, claims: dict, expected_org: str) -> None:
-        """
-        Validate org_id or org_name in token claims against the requested organization.
-
-        Uses expected_org prefix to determine which claim to check:
-          - 'org_' prefix  → validate claims['org_id'] exact match
-          - no prefix      → validate claims['org_name'] case-insensitive match
-
-        Raises:
-            OrganizationTokenValidationError: if the claim is missing or mismatched.
-        """
-        if expected_org.startswith("org_"):
-            actual = claims.get("org_id")
-            if not isinstance(actual, str):
-                raise OrganizationTokenValidationError(
-                    "Organization Id (org_id) claim must be a string present in the ID token"
-                )
-            if actual != expected_org:
-                raise OrganizationTokenValidationError(
-                    "Organization Id (org_id) claim value mismatch in the ID token"
-                )
-        else:
-            actual = claims.get("org_name")
-            if not isinstance(actual, str):
-                raise OrganizationTokenValidationError(
-                    "Organization Name (org_name) claim must be a string present in the ID token"
-                )
-            # NFC-normalize before comparison: the same visual character (e.g. é) can have
-            # multiple byte representations in Unicode. Normalizing both sides prevents
-            # false rejections without risk of false matches.
-            if unicodedata.normalize("NFC", actual).lower() != unicodedata.normalize("NFC", expected_org).lower():
-                raise OrganizationTokenValidationError(
-                    "Organization Name (org_name) claim value mismatch in the ID token"
-                )
+        validate_org_claims(claims, expected_org)
 
     async def _resolve_current_domain(self, store_options=None) -> str:
         """Resolve domain from resolver function or return static domain."""
