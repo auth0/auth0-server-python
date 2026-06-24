@@ -662,7 +662,7 @@ class ServerClient(Generic[TStoreOptions]):
         # ID token `iat`, used to detect a ceiling that is already past at login.
         issued_at = None
         id_token = token_response.get("id_token")
-       
+
         expected_org = transaction_data.organization
 
         if not user_info and not id_token and expected_org:
