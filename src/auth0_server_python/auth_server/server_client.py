@@ -54,6 +54,7 @@ from auth0_server_python.error import (
     MfaRequiredError,
     MissingRequiredArgumentError,
     MissingTransactionError,
+    OrganizationTokenValidationError,
     PollingApiError,
     StartLinkUserError,
 )
@@ -61,6 +62,7 @@ from auth0_server_python.telemetry import Telemetry
 from auth0_server_python.utils import PKCE, URL, State
 from auth0_server_python.utils.helpers import (
     build_domain_resolver_context,
+    validate_org_claims,
     validate_resolved_domain_value,
 )
 
@@ -96,6 +98,7 @@ class ServerClient(Generic[TStoreOptions]):
         state_identifier: str = "_a0_session",
         authorization_params: Optional[dict[str, Any]] = None,
         pushed_authorization_requests: bool = False,
+        organization: Optional[str] = None,
     ):
         """
         Initialize the Auth0 server client.
@@ -112,6 +115,9 @@ class ServerClient(Generic[TStoreOptions]):
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
             pushed_authorization_requests: Whether to use Pushed Authorization Requests
+            organization: Default organization for all login flows from this client.
+                Can be an org ID (e.g. 'org_abc123') or an org name (e.g. 'acme-corp').
+                Per-login values passed in StartInteractiveLoginOptions always override this.
         """
         if not secret:
             raise MissingRequiredArgumentError("secret")
@@ -146,6 +152,7 @@ class ServerClient(Generic[TStoreOptions]):
         self._secret = secret
         self._default_authorization_params = authorization_params or {}
         self._pushed_authorization_requests = pushed_authorization_requests  # store the flag
+        self._organization = organization
 
         # Initialize stores
         self._transaction_store = transaction_store
@@ -206,6 +213,7 @@ class ServerClient(Generic[TStoreOptions]):
             value = f'https://{value}'
 
         return value.rstrip('/')
+
 
     async def _resolve_current_domain(self, store_options=None) -> str:
         """Resolve domain from resolver function or return static domain."""
@@ -502,6 +510,16 @@ class ServerClient(Generic[TStoreOptions]):
         merged_scope = self._merge_scope_with_defaults(requested_scope, audience)
         auth_params["scope"] = merged_scope
 
+        # Typed org/invitation fields win over anything already in auth_params from authorization_params.
+        resolved_org = options.organization or self._organization
+        if resolved_org and not resolved_org.strip():
+            raise InvalidArgumentError("organization", "organization must not be blank")
+        if resolved_org:
+            auth_params["organization"] = resolved_org
+
+        if options.invitation:
+            auth_params["invitation"] = options.invitation
+
         # Build the transaction data to store with domain
         transaction_data = TransactionData(
             code_verifier=code_verifier,
@@ -509,6 +527,7 @@ class ServerClient(Generic[TStoreOptions]):
             audience=audience,
             domain=origin_domain,
             redirect_uri=auth_params.get("redirect_uri"),
+            organization=resolved_org,
         )
 
         # Store the transaction data
@@ -638,8 +657,26 @@ class ServerClient(Generic[TStoreOptions]):
         user_info = token_response.get("userinfo")
         user_claims = None
         id_token = token_response.get("id_token")
+        expected_org = transaction_data.organization
+
+        if not user_info and not id_token and expected_org:
+            raise OrganizationTokenValidationError(
+                "Organization was requested but the token response included neither an ID token nor userinfo; "
+                "cannot verify organization membership"
+            )
 
         if user_info:
+            if not isinstance(user_info, dict):
+                if expected_org:
+                    raise OrganizationTokenValidationError(
+                        "Userinfo response is not a valid claims dictionary; cannot verify organization membership"
+                    )
+                raise ApiError(
+                    "invalid_response",
+                    "Userinfo response is not a valid claims dictionary"
+                )
+            if expected_org:
+                validate_org_claims(user_info, expected_org)
             user_claims = UserClaims.parse_obj(user_info)
         elif id_token:
             # Fetch JWKS for signature verification
@@ -655,6 +692,10 @@ class ServerClient(Generic[TStoreOptions]):
                 token_issuer = claims.get("iss", "")
                 if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
                     raise IssuerValidationError("ID token issuer mismatch. Ensure your Auth0 domain is configured correctly.")
+
+                # Organization claim validation — mandatory when org was requested.
+                if expected_org:
+                    validate_org_claims(claims, expected_org)
 
                 user_claims = UserClaims.parse_obj(claims)
             except ValueError as e:
@@ -1283,7 +1324,10 @@ class ServerClient(Generic[TStoreOptions]):
         while time.time() < end_time:
             # Make token request
             try:
-                token_response = await self.backchannel_authentication_grant(auth_req_id, store_options=store_options)
+                token_response = await self.backchannel_authentication_grant(
+                    auth_req_id,
+                    store_options=store_options,
+                )
                 return token_response
 
             except Exception as e:
@@ -2386,6 +2430,7 @@ class ServerClient(Generic[TStoreOptions]):
             # Extract user claims from ID token if present
             user_claims = None
             sid = PKCE.generate_random_string(32)  # Default sid
+
             if token_response.id_token:
                 # Fetch JWKS and verify ID token signature
                 jwks = await self._get_jwks_cached(domain, metadata)
@@ -2467,7 +2512,7 @@ class ServerClient(Generic[TStoreOptions]):
             return result
 
         except Exception as e:
-            if isinstance(e, (CustomTokenExchangeError, ApiError)):
+            if isinstance(e, (CustomTokenExchangeError, ApiError, IssuerValidationError)):
                 raise
             raise CustomTokenExchangeError(
                 CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
