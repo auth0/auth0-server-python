@@ -22,6 +22,7 @@ class UserClaims(BaseModel):
     email: Optional[str] = None
     email_verified: Optional[bool] = None
     org_id: Optional[str] = None
+    org_name: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
@@ -91,6 +92,7 @@ class TransactionData(BaseModel):
     auth_session: Optional[str] = None
     redirect_uri: Optional[str] = None
     domain: Optional[str] = None
+    organization: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
@@ -128,6 +130,7 @@ class ServerClientOptionsBase(BaseModel):
     transaction_identifier: Optional[str] = "_a0_tx"
     state_identifier: Optional[str] = "_a0_session"
     custom_fetch: Optional[Any] = None  # Function type hint would be more complex
+    organization: Optional[str] = None
 
 
 class ServerClientOptionsWithSecret(ServerClientOptionsBase):
@@ -147,6 +150,8 @@ class StartInteractiveLoginOptions(BaseModel):
     pushed_authorization_requests: Optional[bool] = False
     app_state: Optional[Any] = None
     authorization_params: Optional[dict[str, Any]] = None
+    organization: Optional[str] = None
+    invitation: Optional[str] = None
 
 
 class LogoutOptions(BaseModel):

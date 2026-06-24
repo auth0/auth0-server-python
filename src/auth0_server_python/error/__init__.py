@@ -200,6 +200,18 @@ class AccessTokenErrorCode:
     DOMAIN_MISMATCH = "domain_mismatch"
 
 
+class OrganizationTokenValidationError(Auth0Error):
+    """
+    Raised when org_id or org_name claim in the ID token fails validation
+    against the organization value that was requested at login.
+    """
+    code = "organization_token_validation_error"
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.name = "OrganizationTokenValidationError"
+
+
 class AccessTokenForConnectionErrorCode:
     """Error codes for connection-specific token operations."""
     MISSING_REFRESH_TOKEN = "missing_refresh_token"
