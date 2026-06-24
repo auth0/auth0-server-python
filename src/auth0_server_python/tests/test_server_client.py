@@ -3142,6 +3142,58 @@ async def test_custom_token_exchange_missing_actor_token():
 
 
 @pytest.mark.asyncio
+async def test_custom_token_exchange_empty_subject_token_type():
+    """Test that empty/whitespace subject_token_type is rejected locally."""
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    # Act & Assert
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.custom_token_exchange(
+            CustomTokenExchangeOptions(
+                subject_token="token",
+                subject_token_type="   "
+            )
+        )
+    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT
+    assert "subject_token_type" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_whitespace_actor_token():
+    """Test that a whitespace-only actor_token is rejected locally."""
+    # Setup
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret"
+    )
+
+    # Act & Assert
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.custom_token_exchange(
+            CustomTokenExchangeOptions(
+                subject_token="token",
+                subject_token_type="urn:acme:token",
+                actor_token="   ",
+                actor_token_type="urn:ietf:params:oauth:token-type:access_token"
+            )
+        )
+    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT
+    assert "actor_token" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
 async def test_custom_token_exchange_api_error_400(mocker):
     """Test handling of 400 error from Auth0."""
     # Setup
@@ -3829,8 +3881,8 @@ async def test_login_with_custom_token_exchange_persists_act_on_user(mocker):
     assert result.state_data["user"]["act"] == {"sub": "agent|abc", "act": {"sub": "svc|xyz"}}
 
 
-def test_act_claim_survives_token_refresh():
-    """A refresh-token grant must not drop the login-time act claim from the user."""
+def test_state_merge_preserves_user_act_claim():
+    """The state merge used on refresh must not drop the user's act claim."""
     state_data = {
         "user": {"sub": "user123", "act": {"sub": "agent|abc"}},
         "id_token": "old.jwt",

@@ -83,6 +83,8 @@ if response.act:
     print(f"Acting party: {response.act['sub']}")
 ```
 
+> **NOTE**: `response.act` is read from the ID token. Auth0 writes the same `act` claim onto the issued access token as well, so they reflect the same acting party. The access token may be opaque, in which case `act` cannot be read off it directly - the ID token is where you read it.
+
 When you establish a session with `login_with_custom_token_exchange()`, the `act` claim is persisted on the session user and can be read back later via `get_user()`:
 
 ```python

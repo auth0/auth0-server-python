@@ -2251,10 +2251,20 @@ class ServerClient(Generic[TStoreOptions]):
                     CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
                     "subject_token cannot be empty or whitespace-only"
                 )
+            if not options.subject_token_type.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token_type cannot be empty or whitespace-only"
+                )
             if options.subject_token.strip().startswith("Bearer "):
                 raise CustomTokenExchangeError(
                     CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
                     "subject_token should not include 'Bearer ' prefix"
+                )
+            if options.actor_token is not None and not options.actor_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "actor_token cannot be empty or whitespace-only"
                 )
             if options.actor_token and options.actor_token.strip().startswith("Bearer "):
                 raise CustomTokenExchangeError(
@@ -2444,6 +2454,8 @@ class ServerClient(Generic[TStoreOptions]):
                             "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
                         )
 
+                    # UserClaims allows extra fields, so any act claim in the
+                    # verified id_token is carried onto the session user here.
                     user_claims = UserClaims.parse_obj(claims)
                     # Extract sid from token if available
                     sid = claims.get("sid", sid)
