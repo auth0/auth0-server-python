@@ -7,6 +7,7 @@ __pycache__/
 #Environments
 .env
 .venv
+.venv-*/
 env/
 
 #Session Cache
