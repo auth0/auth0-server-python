@@ -412,7 +412,10 @@ class MyAccountClient:
                         validation_errors=error_data.get("validation_errors", None),
                     )
 
-                return GetFactorsResponse.model_validate(response.json())
+                # Auth0 /me/v1/factors returns a plain array, not {"factors":[...]}
+                raw = response.json()
+                payload = raw if isinstance(raw, dict) else {"factors": raw}
+                return GetFactorsResponse.model_validate(payload)
 
         except Exception as e:
             if isinstance(e, (MyAccountApiError, ApiError)):

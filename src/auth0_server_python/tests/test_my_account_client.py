@@ -525,15 +525,17 @@ async def test_get_factors_success(mocker):
     client = MyAccountClient(domain="auth0.local")
     response = AsyncMock()
     response.status_code = 200
-    response.json = MagicMock(return_value={"factors": [{"name": "sms", "enabled": True}]})
+    response.json = MagicMock(
+        return_value={"factors": [{"type": "phone", "usage": ["primary"]}]}
+    )
     mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
 
     result = await client.get_factors(access_token="token123")
 
     assert isinstance(result, GetFactorsResponse)
     assert len(result.factors) == 1
-    assert result.factors[0].name == "sms"
-    assert result.factors[0].enabled is True
+    assert result.factors[0].type == "phone"
+    assert result.factors[0].usage == ["primary"]
 
 
 @pytest.mark.asyncio
@@ -596,12 +598,13 @@ async def test_get_factors_extra_fields(mocker):
     response = AsyncMock()
     response.status_code = 200
     response.json = MagicMock(return_value={
-        "factors": [{"name": "webauthn-roaming", "enabled": True, "future_field": "value"}]
+        "factors": [{"type": "webauthn-roaming", "usage": ["secondary"], "future_field": "value"}]
     })
     mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
 
     result = await client.get_factors(access_token="token123")
-    assert result.factors[0].name == "webauthn-roaming"
+    assert result.factors[0].type == "webauthn-roaming"
+    assert result.factors[0].model_extra["future_field"] == "value"
 
 
 @pytest.mark.asyncio
@@ -802,6 +805,26 @@ async def test_enroll_authentication_method_success(mocker):
     assert result.authn_params_public_key.pub_key_cred_params[0].alg == -7
     assert result.authn_params_public_key.authenticator_selection.resident_key == "required"
     assert result.authn_params_public_key.user.display_name == "Test User"
+
+
+@pytest.mark.asyncio
+async def test_enroll_authentication_method_sends_identity_user_id(mocker):
+    """identity_user_id must serialize to the request body under its OAS wire key."""
+    client = MyAccountClient(domain="auth0.local")
+    response = AsyncMock()
+    response.status_code = 202
+    response.headers = {"location": "/me/v1/authentication-methods/passkey|new"}
+    response.json = MagicMock(return_value={"auth_session": "session_abc"})
+    mock_post = mocker.patch(
+        "httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response
+    )
+
+    req = EnrollAuthenticationMethodRequest(type="passkey", identity_user_id="auth0|abc123")
+    await client.enroll_authentication_method(access_token="token123", request=req)
+
+    sent_body = mock_post.call_args[1]["json"]
+    assert sent_body["identity_user_id"] == "auth0|abc123"
+    assert "user_identity_id" not in sent_body
 
 
 @pytest.mark.asyncio
@@ -1012,7 +1035,9 @@ async def test_get_factors_with_dpop_key(mocker):
     client = MyAccountClient(domain="auth0.local")
     response = AsyncMock()
     response.status_code = 200
-    response.json = MagicMock(return_value={"factors": [{"name": "sms", "enabled": True}]})
+    response.json = MagicMock(
+        return_value={"factors": [{"type": "phone", "usage": ["primary"]}]}
+    )
     mock_get = mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
 
     dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")

@@ -717,7 +717,7 @@ class EnrollAuthenticationMethodRequest(BaseModel):
     email: Optional[str] = None
     phone_number: Optional[str] = None
     preferred_authentication_method: Optional[PreferredAuthMethod] = None
-    user_identity_id: Optional[str] = None
+    identity_user_id: Optional[str] = None  # OAS: IdentityAuthenticationMethodBase.identity_user_id
     connection: Optional[str] = None
 
 
@@ -790,9 +790,8 @@ class ListAuthenticationMethodsResponse(BaseModel):
 
 class Factor(BaseModel):
     model_config = ConfigDict(extra="allow")
-    name: str
-    enabled: Optional[bool] = None
-    trial_expired: Optional[bool] = None
+    type: str
+    usage: Optional[list[str]] = None
 
 
 class GetFactorsResponse(BaseModel):
