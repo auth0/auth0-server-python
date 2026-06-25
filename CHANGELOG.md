@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.0.0b11](https://github.com/auth0/auth0-server-python/tree/1.0.0b11) (2026-06-25)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b10...1.0.0b11)
+
+**Added**
+- feat: Organisations support(SDK-8833) [\#114](https://github.com/auth0/auth0-server-python/pull/114) ([rmad17](https://github.com/rmad17))
+- feat: validate CTE actor token pairing and surface act claim for delegation/impersonation [\#122](https://github.com/auth0/auth0-server-python/pull/122) ([kishore7snehil](https://github.com/kishore7snehil))
+
 ## [1.0.0b10](https://github.com/auth0/auth0-server-python/tree/1.0.0b10) (2026-04-24)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b9...1.0.0b10)
 
