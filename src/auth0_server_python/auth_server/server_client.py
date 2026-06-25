@@ -2287,9 +2287,44 @@ class ServerClient(Generic[TStoreOptions]):
             https://datatracker.ietf.org/doc/html/rfc8693
         """
         try:
-            # Validate options (Pydantic handles this automatically)
             if not isinstance(options, CustomTokenExchangeOptions):
                 options = CustomTokenExchangeOptions(**options)
+
+            if not options.subject_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token cannot be empty or whitespace-only"
+                )
+            if not options.subject_token_type.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token_type cannot be empty or whitespace-only"
+                )
+            if options.subject_token.strip().startswith("Bearer "):
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token should not include 'Bearer ' prefix"
+                )
+            if options.actor_token is not None and not options.actor_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "actor_token cannot be empty or whitespace-only"
+                )
+            if options.actor_token and options.actor_token.strip().startswith("Bearer "):
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "actor_token should not include 'Bearer ' prefix"
+                )
+            if options.actor_token and not options.actor_token_type:
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.MISSING_ACTOR_TOKEN_TYPE,
+                    "actor_token_type is required when actor_token is provided"
+                )
+            if options.actor_token_type and not options.actor_token:
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.MISSING_ACTOR_TOKEN,
+                    "actor_token is required when actor_token_type is provided"
+                )
 
             # Resolve domain
             domain = await self._resolve_current_domain(store_options)
@@ -2353,8 +2388,25 @@ class ServerClient(Generic[TStoreOptions]):
                         "Failed to parse token response as JSON"
                     )
 
-                # Validate and return response
-                return TokenExchangeResponse(**token_data)
+                token_response = TokenExchangeResponse(**token_data)
+
+                # Surface the actor claim for delegation exchanges. Best-effort:
+                # a decode/verify hiccup must not fail an exchange the token
+                # endpoint already accepted, so act stays None on any failure.
+                if options.actor_token and token_response.id_token:
+                    try:
+                        jwks = await self._get_jwks_cached(domain, metadata)
+                        claims = await self._verify_and_decode_jwt(
+                            token_response.id_token, jwks, audience=self._client_id
+                        )
+                        # Apply the same normalized issuer check the login path uses
+                        # before trusting any claim from the token.
+                        if self._normalize_url(claims.get("iss", "")) == self._normalize_url(metadata.get("issuer")):
+                            token_response.act = claims.get("act")
+                    except Exception:
+                        token_response.act = None
+
+                return token_response
 
         except ValidationError as e:
             raise CustomTokenExchangeError(
@@ -2447,6 +2499,8 @@ class ServerClient(Generic[TStoreOptions]):
                             "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
                         )
 
+                    # UserClaims allows extra fields, so any act claim in the
+                    # verified id_token is carried onto the session user here.
                     user_claims = UserClaims.parse_obj(claims)
                     # Extract sid from token if available
                     sid = claims.get("sid", sid)
