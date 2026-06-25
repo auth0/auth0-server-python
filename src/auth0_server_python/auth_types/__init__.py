@@ -5,7 +5,7 @@ These Pydantic models provide type safety and validation for all SDK data struct
 
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserClaims(BaseModel):
@@ -288,32 +288,14 @@ class CustomTokenExchangeOptions(BaseModel):
         authorization_params: Additional OAuth parameters (optional)
     """
 
-    subject_token: str = Field(..., min_length=1)
-    subject_token_type: str = Field(..., min_length=1)
+    subject_token: str
+    subject_token_type: str
     audience: Optional[str] = None
     scope: Optional[str] = None
     actor_token: Optional[str] = None
     actor_token_type: Optional[str] = None
     organization: Optional[str] = None
     authorization_params: Optional[dict[str, Any]] = None
-
-    @field_validator("subject_token", "actor_token")
-    @classmethod
-    def validate_token_format(cls, v: Optional[str]) -> Optional[str]:
-        """Validate token doesn't have Bearer prefix and isn't whitespace-only."""
-        if v is not None:
-            if not v.strip():
-                raise ValueError("Token cannot be empty or whitespace-only")
-            if v.strip().startswith("Bearer "):
-                raise ValueError("Token should not include 'Bearer ' prefix")
-        return v
-
-    @model_validator(mode="after")
-    def validate_actor_token_type(self) -> "CustomTokenExchangeOptions":
-        """Ensure actor_token_type is provided if actor_token is present."""
-        if self.actor_token and not self.actor_token_type:
-            raise ValueError("actor_token_type is required when actor_token is provided")
-        return self
 
 
 class TokenExchangeResponse(BaseModel):
@@ -328,6 +310,7 @@ class TokenExchangeResponse(BaseModel):
         issued_token_type: Format of issued token
         id_token: OpenID Connect ID token (optional)
         refresh_token: Refresh token (optional)
+        act: Actor claim for delegation/impersonation exchanges (optional)
     """
 
     access_token: str
@@ -337,6 +320,7 @@ class TokenExchangeResponse(BaseModel):
     issued_token_type: Optional[str] = None
     id_token: Optional[str] = None
     refresh_token: Optional[str] = None
+    act: Optional[dict[str, Any]] = None
 
 
 class LoginWithCustomTokenExchangeOptions(BaseModel):
@@ -346,32 +330,14 @@ class LoginWithCustomTokenExchangeOptions(BaseModel):
     Combines token exchange parameters with session management.
     """
 
-    subject_token: str = Field(..., min_length=1)
-    subject_token_type: str = Field(..., min_length=1)
+    subject_token: str
+    subject_token_type: str
     audience: Optional[str] = None
     scope: Optional[str] = None
     actor_token: Optional[str] = None
     actor_token_type: Optional[str] = None
     organization: Optional[str] = None
     authorization_params: Optional[dict[str, Any]] = None
-
-    @field_validator("subject_token", "actor_token")
-    @classmethod
-    def validate_token_format(cls, v: Optional[str]) -> Optional[str]:
-        """Validate token doesn't have Bearer prefix and isn't whitespace-only."""
-        if v is not None:
-            if not v.strip():
-                raise ValueError("Token cannot be empty or whitespace-only")
-            if v.strip().startswith("Bearer "):
-                raise ValueError("Token should not include 'Bearer ' prefix")
-        return v
-
-    @model_validator(mode="after")
-    def validate_actor_token_type(self) -> "LoginWithCustomTokenExchangeOptions":
-        """Ensure actor_token_type is provided if actor_token is present."""
-        if self.actor_token and not self.actor_token_type:
-            raise ValueError("actor_token_type is required when actor_token is provided")
-        return self
 
 
 class LoginWithCustomTokenExchangeResult(BaseModel):
