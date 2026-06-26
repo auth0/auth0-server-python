@@ -28,10 +28,10 @@ from auth0_server_python.auth_types import (
     ListConnectedAccountsResponse,
     LoginWithCustomTokenExchangeOptions,
     LoginWithCustomTokenExchangeResult,
-    SessionTransferTokenResult,
     LogoutOptions,
     LogoutTokenClaims,
     MfaRequirements,
+    SessionTransferTokenResult,
     StartInteractiveLoginOptions,
     StateData,
     TokenExchangeResponse,
@@ -2588,7 +2588,7 @@ class ServerClient(Generic[TStoreOptions]):
         subject_token: str,
         subject_token_type: str,
         actor_token: str,
-        actor_token_type: str = "urn:ietf:params:oauth:token-type:id_token",
+        actor_token_type: str,
         scope: Optional[str] = None,
         organization: Optional[str] = None,
         store_options: Optional[dict[str, Any]] = None
@@ -2604,7 +2604,7 @@ class ServerClient(Generic[TStoreOptions]):
             subject_token: Your proof of which customer to impersonate (validated by your Action)
             subject_token_type: The subject token type URI routing to your CTE Profile
             actor_token: The acting party's token (e.g. the agent's ID token); required
-            actor_token_type: Type of actor token (defaults to the ID token URN)
+            actor_token_type: Type URI of the actor token (e.g. the ID token URN); required
             scope: Space-delimited list of scopes (optional)
             organization: Organization identifier (optional)
             store_options: Optional options used to resolve the request domain
