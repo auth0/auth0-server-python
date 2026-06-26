@@ -240,6 +240,9 @@ class CustomTokenExchangeErrorCode:
     MISSING_ACTOR_TOKEN = "missing_actor_token"
     TOKEN_EXCHANGE_FAILED = "token_exchange_failed"
     INVALID_RESPONSE = "invalid_response"
+    ACTOR_UNAVAILABLE = "actor_unavailable"
+    SETACTOR_REQUIRED = "setactor_required"
+    SESSION_TRANSFER_DISABLED = "session_transfer_disabled"
 
 
 # =============================================================================

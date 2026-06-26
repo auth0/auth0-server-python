@@ -28,6 +28,7 @@ from auth0_server_python.auth_types import (
     ListConnectedAccountsResponse,
     LoginWithCustomTokenExchangeOptions,
     LoginWithCustomTokenExchangeResult,
+    SessionTransferTokenResult,
     LogoutOptions,
     LogoutTokenClaims,
     MfaRequirements,
@@ -72,6 +73,9 @@ TStoreOptions = TypeVar('TStoreOptions')
 # dynamically from the resolved domain at login time.
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
                              "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
+
+# issued_token_type URN for a Session Transfer Token (STT).
+SESSION_TRANSFER_TOKEN_TYPE = "urn:auth0:params:oauth:token-type:session_transfer_token"
 
 
 class ServerClient(Generic[TStoreOptions]):
@@ -2573,6 +2577,105 @@ class ServerClient(Generic[TStoreOptions]):
                 f"Login with custom token exchange failed: {str(e)}",
                 e
             )
+
+    # ============================================================================
+    # SESSION TRANSFER TOKEN (STT)
+    # Impersonation via Session Transfer, built on Custom Token Exchange.
+    # ============================================================================
+
+    async def request_session_transfer_token(
+        self,
+        subject_token: str,
+        subject_token_type: str,
+        actor_token: str,
+        actor_token_type: str = "urn:ietf:params:oauth:token-type:id_token",
+        scope: Optional[str] = None,
+        organization: Optional[str] = None,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> SessionTransferTokenResult:
+        """
+        Requests a Session Transfer Token (STT) for impersonation via session transfer.
+
+        Performs a custom token exchange against the session_transfer audience. The returned
+        STT is opaque and single-use; hand it to build_session_transfer_redirect and do not
+        decode or store it. The act claim is not on this result.
+
+        Args:
+            subject_token: Your proof of which customer to impersonate (validated by your Action)
+            subject_token_type: The subject token type URI routing to your CTE Profile
+            actor_token: The acting party's token (e.g. the agent's ID token); required
+            actor_token_type: Type of actor token (defaults to the ID token URN)
+            scope: Space-delimited list of scopes (optional)
+            organization: Organization identifier (optional)
+            store_options: Optional options used to resolve the request domain
+
+        Returns:
+            SessionTransferTokenResult containing the STT and its metadata
+
+        Raises:
+            CustomTokenExchangeError: If no actor is provided or the exchange fails
+        """
+        try:
+            if not actor_token or not actor_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE,
+                    "actor_token is required to request a session transfer token"
+                )
+
+            # Build the session_transfer audience from the resolved request domain.
+            domain = await self._resolve_current_domain(store_options)
+            audience = f"urn:{domain}:session_transfer"
+
+            options = CustomTokenExchangeOptions(
+                subject_token=subject_token,
+                subject_token_type=subject_token_type,
+                audience=audience,
+                scope=scope,
+                actor_token=actor_token,
+                actor_token_type=actor_token_type,
+                organization=organization,
+            )
+
+            response = await self.custom_token_exchange(options, store_options)
+
+            return SessionTransferTokenResult(
+                session_transfer_token=response.access_token,
+                issued_token_type=response.issued_token_type or SESSION_TRANSFER_TOKEN_TYPE,
+                expires_in=response.expires_in,
+                token_type=response.token_type,
+                scope=response.scope,
+            )
+        except (CustomTokenExchangeError, ApiError):
+            raise
+        except Exception as e:
+            raise CustomTokenExchangeError(
+                CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
+                f"Session transfer token request failed: {str(e)}",
+                e
+            )
+
+    def build_session_transfer_redirect(
+        self,
+        target_login_url: str,
+        result: SessionTransferTokenResult,
+        organization: Optional[str] = None
+    ) -> str:
+        """
+        Builds the redirect URL that hands the STT to the target app's login URL.
+
+        Args:
+            target_login_url: The target app's login URL
+            result: The SessionTransferTokenResult from request_session_transfer_token
+            organization: Organization identifier to forward (optional)
+
+        Returns:
+            A URL string with session_transfer_token (and organization) as query parameters
+        """
+        params = {"session_transfer_token": result.session_transfer_token}
+        if organization:
+            params["organization"] = organization
+
+        return URL.build_url(target_login_url, params)
 
     # ============================================================================
     # MFA (Multi-Factor Authentication)
