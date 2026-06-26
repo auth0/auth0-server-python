@@ -96,11 +96,9 @@ class State:
                     else ts
                     for ts in token_sets
                 ]
-            # Preserve the IPSIE session_expiry ceiling stamped at login. The
-            # platform does not re-emit session_expiry on a refresh-token grant
-            # (it doesn't round-trip the upstream IdP), so the value from the
-            # refreshed ID token must NOT overwrite or erase the original
-            # ceiling — doing so would let the session outlive its bound.
+            # A refresh-token grant does not carry session_expiry, so carry the
+            # existing internal block (including the ceiling pinned at login)
+            # forward unchanged rather than re-deriving it.
             internal = dict(state_data_dict.get("internal") or {})
 
             # Return updated state data

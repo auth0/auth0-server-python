@@ -5,7 +5,7 @@ These Pydantic models provide type safety and validation for all SDK data struct
 
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Upper bound (Unix seconds) for a plausible session_expiry
 SESSION_EXPIRY_MAX_PLAUSIBLE = 10_000_000_000

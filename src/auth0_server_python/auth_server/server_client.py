@@ -684,8 +684,6 @@ class ServerClient(Generic[TStoreOptions]):
             if expected_org:
                 validate_org_claims(user_info, expected_org)
             user_claims = UserClaims.parse_obj(user_info)
-            session_expires_at = user_claims.session_expiry
-            issued_at = user_info.get("iat")
         elif id_token:
             # Fetch JWKS for signature verification
             jwks = await self._get_jwks_cached(origin_domain, metadata)
@@ -1058,10 +1056,7 @@ class ServerClient(Generic[TStoreOptions]):
         internal = (state_data_dict or {}).get("internal") or {}
         if State.is_session_ceiling_reached(internal.get("session_expires_at")):
             await self._state_store.delete(self._state_identifier, options=store_options)
-            raise AccessTokenError(
-                AccessTokenErrorCode.SESSION_EXPIRED,
-                "The session has expired and the user must re-authenticate."
-            )
+            raise SessionExpiredError()
 
         # Find matching token set
         token_set = None

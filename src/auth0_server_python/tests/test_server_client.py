@@ -6353,7 +6353,7 @@ async def test_get_access_token_expired_by_ceiling_raises_without_refresh(mocker
         side_effect=AssertionError("refresh must not be attempted after ceiling"),
     )
 
-    with pytest.raises(AccessTokenError) as exc:
+    with pytest.raises(SessionExpiredError) as exc:
         await client.get_access_token()
 
     assert exc.value.code == AccessTokenErrorCode.SESSION_EXPIRED
@@ -6625,6 +6625,56 @@ async def test_complete_interactive_login_no_ceiling_persists_normally(mocker):
         "aud": "test_client",
         "iat": iat,
     })
+
+    result = await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
+
+    assert "state_data" in result
+    mock_state_store.set.assert_awaited_once()
+    stored_state = mock_state_store.set.call_args.args[1]
+    assert stored_state.internal.session_expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_ignores_ceiling_from_userinfo(mocker):
+    """The ceiling is read only from the verified ID token. A session_expiry
+    present in the unverified userinfo response must NOT be persisted."""
+    iat = int(time.time())
+
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        domain="tenant.auth0.com",
+    )
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
+    )
+
+    # fetch_token returns a userinfo dict (no id_token), driving the userinfo
+    # branch. Its session_expiry must be ignored, not stamped on the session.
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+        "scope": "openid profile",
+        "userinfo": {
+            "sub": "user123",
+            "iat": iat,
+            "session_expiry": iat + 3600,
+        },
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
 
     result = await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
 
