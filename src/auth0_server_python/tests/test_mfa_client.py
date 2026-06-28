@@ -2,6 +2,7 @@
 Tests for MfaClient — MFA API operations.
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -262,13 +263,33 @@ class TestListAuthenticators:
         assert "Invalid MFA token" in str(exc.value)
 
     @pytest.mark.asyncio
+    async def test_list_authenticators_non_json_error_body(self, mocker):
+        """A non-JSON error body (e.g. a gateway 502 HTML page) surfaces the
+        HTTP status, not a JSON-parser exception folded into the message."""
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 502
+        response.json = MagicMock(side_effect=json.JSONDecodeError("Expecting value", "<html>", 0))
+        mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response)
+
+        with pytest.raises(MfaListAuthenticatorsError) as exc:
+            await client.list_authenticators({"mfa_token": _enc()})
+        assert "502" in str(exc.value)
+        assert "Expecting value" not in str(exc.value)
+
+    @pytest.mark.asyncio
     async def test_list_authenticators_unexpected_error(self, mocker):
         client = _make_client()
         mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=Exception("network down"))
 
         with pytest.raises(MfaListAuthenticatorsError) as exc:
             await client.list_authenticators({"mfa_token": _enc()})
-        assert "network down" in str(exc.value)
+        # Generic message — the underlying error is not leaked into the message...
+        assert "network down" not in str(exc.value)
+        assert "Unexpected error listing authenticators" in str(exc.value)
+        # ...but is preserved on the exception chain for internal debugging.
+        assert isinstance(exc.value.__cause__, Exception)
+        assert "network down" in str(exc.value.__cause__)
 
 
 # ── enroll_authenticator ─────────────────────────────────────────────────────
@@ -731,7 +752,12 @@ class TestVerify:
 
         with pytest.raises(MfaVerifyError) as exc:
             await client.verify({"mfa_token": _enc(), "otp": "123456"})
-        assert "connection reset" in str(exc.value)
+        # Generic message — the underlying error is not leaked into the message...
+        assert "connection reset" not in str(exc.value)
+        assert "Unexpected error during MFA verification" in str(exc.value)
+        # ...but is preserved on the exception chain for internal debugging.
+        assert isinstance(exc.value.__cause__, Exception)
+        assert "connection reset" in str(exc.value.__cause__)
 
     @pytest.mark.asyncio
     async def test_verify_persist_updates_session(self, mocker):

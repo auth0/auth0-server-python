@@ -177,6 +177,77 @@ The SDK handles per-domain OIDC discovery, JWKS fetching, issuer validation, and
 
 For more details and examples, see [examples/MultipleCustomDomains.md](examples/MultipleCustomDomains.md).
 
+### 6. Passkey Authentication
+
+Sign users up or in with [WebAuthn](https://www.w3.org/TR/webauthn-2/) passkeys (Touch ID, Face ID, Windows Hello, or a security key) instead of a password. The ceremony is two steps — request a challenge, sign it in the browser, then complete sign-in — and establishes a server-side session like every other login path:
+
+```python
+from auth0_server_python.auth_types import PasskeyUserProfile, PasskeyAuthResponse
+
+# Step 1 — request a challenge
+challenge = await auth0.passkey_login_challenge(
+    store_options={"request": request, "response": response}
+)
+
+# Step 2 — browser signs: navigator.credentials.get(challenge.authn_params_public_key)
+
+# Step 3 — complete sign-in and establish the session
+result = await auth0.signin_with_passkey(
+    auth_session=challenge.auth_session,
+    authn_response=PasskeyAuthResponse(**credential),
+    store_options={"request": request, "response": response}
+)
+
+user = result.state_data["user"]
+```
+
+For signup, organizations, step-up MFA, and error handling, see [examples/Passkeys.md](examples/Passkeys.md).
+
+### 7. My Account API — Authentication Methods
+
+Let a logged-in user manage their own enrolled authentication methods — enroll a new passkey (or other factor), list, rename, and delete — via the [My Account API](https://auth0.com/docs/manage-users/my-account-api):
+
+```python
+from auth0_server_python.auth_server.my_account_client import MyAccountClient
+from auth0_server_python.auth_types import EnrollAuthenticationMethodRequest
+
+# Obtain a My Account-scoped token for the current session (MRRT)
+access_token = await auth0.get_access_token(
+    store_options={"request": request, "response": response},
+    audience=f"https://{YOUR_CUSTOM_DOMAIN}/me/",
+    scope="create:me:authentication-methods read:me:authentication-methods",
+)
+
+my_account = MyAccountClient(domain=YOUR_CUSTOM_DOMAIN)
+
+# Start enrolling a passkey (then sign it in the browser and verify)
+challenge = await my_account.enroll_authentication_method(
+    access_token=access_token,
+    request=EnrollAuthenticationMethodRequest(type="passkey"),
+)
+```
+
+For the full enroll/verify ceremony, listing, updating, deleting, and error handling, see [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md).
+
+### 8. DPoP — Sender-Constrained Tokens
+
+Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. Generate an EC P-256 key and pass it to passkey sign-in or any My Account API call:
+
+```python
+from jwcrypto import jwk
+
+dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")  # you create and keep this key
+
+result = await auth0.signin_with_passkey(
+    auth_session=challenge.auth_session,
+    authn_response=authn_response,
+    dpop_key=dpop_key,
+    store_options={"request": request, "response": response}
+)
+```
+
+For the `dpop_key` vs `dpop_proof` distinction, key lifecycle, nonce handling, and error handling, see [examples/DPoP.md](examples/DPoP.md).
+
 ## Feedback
 
 ### Contributing

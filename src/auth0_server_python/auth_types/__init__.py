@@ -452,8 +452,9 @@ class ListConnectedAccountConnectionsResponse(BaseModel):
 # MFA Types
 # =============================================================================
 
-# Type aliases using Literal types
-AuthenticatorType = Literal["otp", "oob", "recovery-code"]
+# Type aliases using Literal types. Used to validate caller-supplied input.
+# Server-controlled response fields use plain str instead, so a new factor or
+# challenge type (e.g. a future webauthn second factor) does not fail closed.
 OobChannel = Literal["sms", "voice", "auth0", "email"]
 ChallengeType = Literal["otp", "oob"]
 
@@ -461,8 +462,11 @@ ChallengeType = Literal["otp", "oob"]
 class AuthenticatorResponse(BaseModel):
     """Represents an MFA authenticator enrolled by a user."""
 
+    model_config = ConfigDict(extra="allow")
     id: str
-    authenticator_type: AuthenticatorType
+    # Server-controlled value; kept as str so a new factor type (e.g. a future
+    # webauthn second factor) does not fail closed when Auth0 adds it.
+    authenticator_type: str
     active: bool
     name: Optional[str] = None
     oob_channel: Optional[OobChannel] = None
@@ -545,7 +549,10 @@ class ChallengeOptions(BaseModel):
 class ChallengeResponse(BaseModel):
     """Response from initiating an MFA challenge."""
 
-    challenge_type: ChallengeType
+    model_config = ConfigDict(extra="allow")
+    # Server-controlled value; kept as str so a new challenge type does not fail
+    # closed when Auth0 adds it.
+    challenge_type: str
     oob_code: Optional[str] = None
     binding_method: Optional[str] = None
     expires_in: Optional[int] = None
@@ -591,6 +598,7 @@ VerifyMfaOptions = Union[VerifyOtpOptions, VerifyOobOptions, VerifyRecoveryCodeO
 class MfaVerifyResponse(BaseModel):
     """Response from MFA verification."""
 
+    model_config = ConfigDict(extra="allow")
     access_token: str
     token_type: str = "Bearer"
     expires_in: int

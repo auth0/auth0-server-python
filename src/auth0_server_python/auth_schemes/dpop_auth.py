@@ -12,13 +12,21 @@ def _base64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
+def _validate_dpop_key(key: "jwk.JWK") -> dict:
+    """Return the public JWK after enforcing the EC P-256 requirement (ES256)."""
+    public_jwk = key.export_public(as_dict=True)
+    if public_jwk.get("kty") != "EC" or public_jwk.get("crv") != "P-256":
+        raise ValueError("DPoP key must be an EC P-256 key")
+    return public_jwk
+
+
 def make_dpop_proof_for_token_endpoint(key: "jwk.JWK", method: str, url: str, nonce: str = None) -> str:
     """
     Build a DPoP proof JWT for use at the token endpoint (RFC 9449 §4.2).
     Unlike resource-server proofs, token-endpoint proofs do NOT include `ath`
     because no access token exists yet at issuance time.
     """
-    public_jwk = key.export_public(as_dict=True)
+    public_jwk = _validate_dpop_key(key)
     htu = url.split("?")[0].split("#")[0]
     header = {"typ": "dpop+jwt", "alg": "ES256", "jwk": public_jwk}
     payload = {
@@ -36,9 +44,7 @@ def make_dpop_proof_for_token_endpoint(key: "jwk.JWK", method: str, url: str, no
 
 class DPoPAuth(httpx.Auth):
     def __init__(self, token: str, key: "jwk.JWK") -> None:
-        public_jwk = key.export_public(as_dict=True)
-        if public_jwk.get("kty") != "EC" or public_jwk.get("crv") != "P-256":
-            raise ValueError("DPoP key must be an EC P-256 key")
+        public_jwk = _validate_dpop_key(key)
         try:
             token.encode("ascii")
         except UnicodeEncodeError:

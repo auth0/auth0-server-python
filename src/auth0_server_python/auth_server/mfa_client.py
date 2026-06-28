@@ -3,6 +3,7 @@ MFA Client for auth0-server-python SDK.
 Handles Multi-Factor Authentication operations against the Auth0 MFA API.
 """
 
+import json
 import time
 from typing import Any, Callable, Optional, Union
 
@@ -188,6 +189,70 @@ class MfaClient:
             raise MfaTokenInvalidError()
         return token
 
+    @staticmethod
+    def _parse_error_body(response: httpx.Response) -> dict[str, Any]:
+        """
+        Parse an error response body as JSON, falling back to a status-coded
+        stub when the body is not JSON (e.g. a gateway 502/504 HTML page).
+
+        Never raises — the caller always gets a dict it can read error fields
+        from, so a non-JSON error surfaces the real HTTP status rather than a
+        JSON-parser exception folded into the message.
+        """
+        try:
+            data = response.json()
+        except (json.JSONDecodeError, ValueError):
+            data = None
+        if not isinstance(data, dict):
+            return {
+                "error_description": f"Request failed with status {response.status_code}",
+            }
+        return data
+
+    async def _raise_mfa_required(
+        self,
+        error_data: dict[str, Any],
+        *,
+        audience: str,
+        scope: str,
+        default_description: str,
+        store_pending: bool = False,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """
+        Encrypt the server-issued mfa_token and raise MfaRequiredError.
+
+        Shared by every site that handles an `mfa_required` response so the
+        encrypt-then-raise behaviour cannot drift between entry points. Returns
+        only when the response carries no mfa_token (caller then falls through
+        to its own typed error).
+
+        store_pending controls whether the encrypted token is persisted to the
+        state store before raising. It is an explicit argument so the difference
+        between entry points is visible: the passkey grant persists it here,
+        while the refresh-token path relies on its get_access_token caller.
+        """
+        raw_mfa_token = error_data.get("mfa_token")
+        if not raw_mfa_token:
+            return
+        mfa_requirements_data = error_data.get("mfa_requirements")
+        mfa_requirements = (
+            MfaRequirements(**mfa_requirements_data) if mfa_requirements_data else None
+        )
+        encrypted_token = self._encrypt_mfa_token(
+            raw_mfa_token=raw_mfa_token,
+            audience=audience,
+            scope=scope,
+            mfa_requirements=mfa_requirements,
+        )
+        if store_pending:
+            await self.store_pending_mfa(encrypted_token, store_options)
+        raise MfaRequiredError(
+            error_data.get("error_description", default_description),
+            mfa_token=encrypted_token,
+            mfa_requirements=mfa_requirements,
+        )
+
     # ============================================================================
     # MFA API OPERATIONS
     # ============================================================================
@@ -222,7 +287,7 @@ class MfaClient:
                 )
 
                 if response.status_code != 200:
-                    error_data = response.json()
+                    error_data = self._parse_error_body(response)
                     raise MfaListAuthenticatorsError(
                         error_data.get("error_description", "Failed to list authenticators"),
                         error_data
@@ -235,8 +300,8 @@ class MfaClient:
             raise
         except Exception as e:
             raise MfaListAuthenticatorsError(
-                f"Unexpected error listing authenticators: {str(e)}"
-            )
+                "Unexpected error listing authenticators"
+            ) from e
 
     async def enroll_authenticator(
         self,
@@ -299,7 +364,7 @@ class MfaClient:
                 )
 
                 if response.status_code != 200:
-                    error_data = response.json()
+                    error_data = self._parse_error_body(response)
                     raise MfaEnrollmentError(
                         error_data.get("error_description", "Failed to enroll authenticator"),
                         error_data
@@ -321,8 +386,8 @@ class MfaClient:
             raise
         except Exception as e:
             raise MfaEnrollmentError(
-                f"Unexpected error enrolling authenticator: {str(e)}"
-            )
+                "Unexpected error enrolling authenticator"
+            ) from e
 
     async def challenge_authenticator(
         self,
@@ -377,7 +442,7 @@ class MfaClient:
                 )
 
                 if response.status_code != 200:
-                    error_data = response.json()
+                    error_data = self._parse_error_body(response)
                     raise MfaChallengeError(
                         error_data.get("error_description", "Failed to challenge authenticator"),
                         error_data
@@ -390,8 +455,8 @@ class MfaClient:
             raise
         except Exception as e:
             raise MfaChallengeError(
-                f"Unexpected error challenging authenticator: {str(e)}"
-            )
+                "Unexpected error challenging authenticator"
+            ) from e
 
     async def verify(
         self,
@@ -460,25 +525,16 @@ class MfaClient:
                 )
 
                 if response.status_code != 200:
-                    error_data = response.json()
+                    error_data = self._parse_error_body(response)
 
                     if error_data.get("error") == "mfa_required":
-                        new_raw_token = error_data.get("mfa_token")
-                        mfa_requirements_data = error_data.get("mfa_requirements")
-                        mfa_requirements = None
-                        if mfa_requirements_data:
-                            mfa_requirements = MfaRequirements(**mfa_requirements_data)
-
-                        new_encrypted = self._encrypt_mfa_token(
-                            raw_mfa_token=new_raw_token,
+                        # Chained MFA: re-encrypt the new token with the original
+                        # audience/scope from the incoming context before raising.
+                        await self._raise_mfa_required(
+                            error_data,
                             audience=context.audience,
                             scope=context.scope,
-                            mfa_requirements=mfa_requirements,
-                        )
-                        raise MfaRequiredError(
-                            error_data.get("error_description", "Additional MFA factor required"),
-                            mfa_token=new_encrypted,
-                            mfa_requirements=mfa_requirements,
+                            default_description="Additional MFA factor required",
                         )
 
                     raise MfaVerifyError(
@@ -504,8 +560,8 @@ class MfaClient:
             raise
         except Exception as e:
             raise MfaVerifyError(
-                f"Unexpected error during MFA verification: {str(e)}"
-            )
+                "Unexpected error during MFA verification"
+            ) from e
 
     async def _persist_mfa_tokens(
         self,

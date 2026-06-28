@@ -34,7 +34,6 @@ from auth0_server_python.auth_types import (
     LoginWithCustomTokenExchangeResult,
     LogoutOptions,
     LogoutTokenClaims,
-    MfaRequirements,
     PasskeyAuthResponse,
     PasskeyLoginChallengeResponse,
     PasskeyLoginResult,
@@ -1144,21 +1143,17 @@ class ServerClient(Generic[TStoreOptions]):
                     error_code = error_data.get("error", "refresh_token_error")
 
                     if error_code == "mfa_required":
-                        raw_mfa_token = error_data.get("mfa_token")
-                        mfa_requirements_data = error_data.get("mfa_requirements")
-                        mfa_requirements = MfaRequirements(**mfa_requirements_data) if mfa_requirements_data else None
-                        if raw_mfa_token:
-                            encrypted_token = self._mfa_client._encrypt_mfa_token(
-                                raw_mfa_token=raw_mfa_token,
-                                audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
-                                scope=merged_scope or "",
-                                mfa_requirements=mfa_requirements,
-                            )
-                            raise MfaRequiredError(
-                                error_data.get("error_description", "MFA required"),
-                                mfa_token=encrypted_token,
-                                mfa_requirements=mfa_requirements,
-                            )
+                        # Encrypt + raise via the shared helper so this matches
+                        # the passkey and chained-verify sites. Returns only when
+                        # no mfa_token is present (then falls through to ApiError).
+                        # store_pending is left False here: the get_access_token
+                        # caller persists the token in its own catch block.
+                        await self._mfa_client._raise_mfa_required(
+                            error_data,
+                            audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
+                            scope=merged_scope or "",
+                            default_description="MFA required",
+                        )
 
                     raise ApiError(
                         error_code,
@@ -2407,7 +2402,10 @@ class ServerClient(Generic[TStoreOptions]):
                         # before trusting any claim from the token.
                         if self._normalize_url(claims.get("iss", "")) == self._normalize_url(metadata.get("issuer")):
                             token_response.act = claims.get("act")
-                    except Exception:
+                    except (jwt.InvalidTokenError, ValueError, KeyError):
+                        # A genuinely absent/optional act claim or a benign decode
+                        # gap leaves act None. Anything outside these types (an
+                        # unexpected verify failure) surfaces rather than being masked.
                         token_response.act = None
 
                 return token_response
@@ -2817,10 +2815,13 @@ class ServerClient(Generic[TStoreOptions]):
                     )
                 response = await client.post(token_endpoint, json=body, headers=headers)
 
-                # RFC 9449 §8.2 — nonce retry for DPoP token endpoint calls
+                # RFC 9449 — the authorization server signals a required nonce
+                # with HTTP 400 + error="use_dpop_nonce" + DPoP-Nonce. Accept
+                # 401 as well so the retry holds against servers that mirror the
+                # resource-server status.
                 if (
                     dpop_key is not None
-                    and response.status_code == 401
+                    and response.status_code in (400, 401)
                     and response.headers.get("DPoP-Nonce")
                 ):
                     nonce = response.headers["DPoP-Nonce"]
@@ -2839,22 +2840,17 @@ class ServerClient(Generic[TStoreOptions]):
                         )
                     error_code = error_data.get("error", PasskeyErrorCode.TOKEN_EXCHANGE_FAILED)
                     if error_code == "mfa_required":
-                        raw_mfa_token = error_data.get("mfa_token")
-                        mfa_requirements_data = error_data.get("mfa_requirements")
-                        mfa_requirements = MfaRequirements(**mfa_requirements_data) if mfa_requirements_data else None
-                        if raw_mfa_token:
-                            encrypted_token = self._mfa_client._encrypt_mfa_token(
-                                raw_mfa_token=raw_mfa_token,
-                                audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
-                                scope=scope or "",
-                                mfa_requirements=mfa_requirements,
-                            )
-                            await self._mfa_client.store_pending_mfa(encrypted_token, store_options)
-                            raise MfaRequiredError(
-                                "Multifactor authentication required",
-                                mfa_token=encrypted_token,
-                                mfa_requirements=mfa_requirements,
-                            )
+                        # Passkey grant persists the pending token here so the
+                        # challenge/verify routes can retrieve it server-side.
+                        # Returns only when no mfa_token is present.
+                        await self._mfa_client._raise_mfa_required(
+                            error_data,
+                            audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
+                            scope=scope or "",
+                            default_description="Multifactor authentication required",
+                            store_pending=True,
+                            store_options=store_options,
+                        )
                     raise PasskeyError(
                         error_code,
                         error_data.get("error_description", "Passkey token exchange failed"),

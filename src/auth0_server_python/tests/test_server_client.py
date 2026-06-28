@@ -1,3 +1,4 @@
+import base64
 import json
 import time
 import unicodedata
@@ -5,6 +6,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from jwcrypto import jwk
 
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
@@ -5978,9 +5980,6 @@ async def test_signin_with_passkey_missing_expires_at_calculates(mocker):
 
 @pytest.mark.asyncio
 async def test_signin_with_passkey_dpop_attaches_proof_header(mocker):
-    import base64
-    import json as _json
-    from jwcrypto import jwk as jwk_module
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -6004,7 +6003,7 @@ async def test_signin_with_passkey_dpop_attaches_proof_header(mocker):
     mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE_DPOP)
     mock_post.return_value = mock_response
 
-    dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
+    dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")
     await client.signin_with_passkey(
         auth_session="session_xyz",
         authn_response=_make_passkey_authn_response(),
@@ -6018,7 +6017,7 @@ async def test_signin_with_passkey_dpop_attaches_proof_header(mocker):
     proof = kwargs["headers"]["DPoP"]
     payload_b64 = proof.split(".")[1]
     padding = 4 - len(payload_b64) % 4
-    payload = _json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+    payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
     assert "ath" not in payload
     assert "jti" in payload
     assert payload["htm"] == "POST"
@@ -6027,9 +6026,59 @@ async def test_signin_with_passkey_dpop_attaches_proof_header(mocker):
 
 @pytest.mark.asyncio
 async def test_signin_with_passkey_dpop_nonce_retry(mocker):
-    import base64
-    import json as _json
-    from jwcrypto import jwk as jwk_module
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+
+    # RFC 9449 §8.1 — the token endpoint signals a required nonce with HTTP 400.
+    nonce_response = AsyncMock()
+    nonce_response.status_code = 400
+    nonce_response.headers = {"DPoP-Nonce": "server-nonce-abc"}
+    nonce_response.json = MagicMock(return_value={"error": "use_dpop_nonce"})
+
+    success_response = AsyncMock()
+    success_response.status_code = 200
+    success_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE_DPOP)
+
+    mock_post.side_effect = [nonce_response, success_response]
+
+    dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")
+    result = await client.signin_with_passkey(
+        auth_session="session_xyz",
+        authn_response=_make_passkey_authn_response(),
+        dpop_key=dpop_key,
+    )
+
+    assert mock_post.await_count == 2
+    assert result.state_data["token_sets"][0]["access_token"] == "at_passkey_dpop_123"
+
+    # Second call must include the nonce in the DPoP proof
+    second_call_kwargs = mock_post.call_args_list[1][1]
+    proof = second_call_kwargs["headers"]["DPoP"]
+    payload_b64 = proof.split(".")[1]
+    padding = 4 - len(payload_b64) % 4
+    payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+    assert payload["nonce"] == "server-nonce-abc"
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_dpop_nonce_retry_on_401(mocker):
+    """Token endpoint nonce retry must also hold when the server returns 401 + DPoP-Nonce."""
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -6051,7 +6100,7 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
 
     nonce_response = AsyncMock()
     nonce_response.status_code = 401
-    nonce_response.headers = {"DPoP-Nonce": "server-nonce-abc"}
+    nonce_response.headers = {"DPoP-Nonce": "server-nonce-401"}
     nonce_response.json = MagicMock(return_value={"error": "use_dpop_nonce"})
 
     success_response = AsyncMock()
@@ -6060,7 +6109,7 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
 
     mock_post.side_effect = [nonce_response, success_response]
 
-    dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
+    dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")
     result = await client.signin_with_passkey(
         auth_session="session_xyz",
         authn_response=_make_passkey_authn_response(),
@@ -6069,21 +6118,19 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
 
     assert mock_post.await_count == 2
     assert result.state_data["token_sets"][0]["access_token"] == "at_passkey_dpop_123"
-
-    # Second call must include the nonce in the DPoP proof
     second_call_kwargs = mock_post.call_args_list[1][1]
     proof = second_call_kwargs["headers"]["DPoP"]
     payload_b64 = proof.split(".")[1]
     padding = 4 - len(payload_b64) % 4
-    payload = _json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
-    assert payload["nonce"] == "server-nonce-abc"
+    payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+    assert payload["nonce"] == "server-nonce-401"
 
 
 @pytest.mark.asyncio
 async def test_signin_with_passkey_dpop_rejects_bearer_downgrade(mocker):
     """Server returning token_type=Bearer when DPoP was requested must raise PasskeyError."""
     from auth0_server_python.error import PasskeyError
-    from jwcrypto import jwk as jwk_module
+
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -6103,7 +6150,7 @@ async def test_signin_with_passkey_dpop_rejects_bearer_downgrade(mocker):
     mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
     mock_post.return_value = mock_response
 
-    dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
+    dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")
     with pytest.raises(PasskeyError) as exc:
         await client.signin_with_passkey(
             auth_session="session_xyz",

@@ -7,7 +7,11 @@ import pytest
 from jwcrypto import jwk
 
 from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
-from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth, _base64url
+from auth0_server_python.auth_schemes.dpop_auth import (
+    DPoPAuth,
+    _base64url,
+    make_dpop_proof_for_token_endpoint,
+)
 from auth0_server_python.auth_server.my_account_client import _make_auth
 
 
@@ -113,6 +117,44 @@ def test_dpop_proof_uniqueness(ec_key):
         jtis.add(payload["jti"])
 
     assert len(jtis) == 10
+
+
+def test_dpop_nonce_retry_on_resource_server(ec_key):
+    auth = DPoPAuth(token="test_token", key=ec_key)
+    request = httpx.Request("GET", "https://example.com/me/v1/factors")
+    flow = auth.auth_flow(request)
+
+    first = next(flow)
+    _, first_payload = _decode_jwt_parts(first.headers["DPoP"])
+    assert "nonce" not in first_payload
+
+    nonce_response = httpx.Response(
+        status_code=401,
+        headers={"DPoP-Nonce": "rs-nonce-xyz"},
+        request=first,
+    )
+    retried = flow.send(nonce_response)
+    _, retried_payload = _decode_jwt_parts(retried.headers["DPoP"])
+    assert retried_payload["nonce"] == "rs-nonce-xyz"
+    assert retried_payload["ath"] == first_payload["ath"]
+    assert retried_payload["jti"] != first_payload["jti"]
+
+
+def test_dpop_no_retry_without_nonce_header(ec_key):
+    auth = DPoPAuth(token="test_token", key=ec_key)
+    request = httpx.Request("GET", "https://example.com/me/v1/factors")
+    flow = auth.auth_flow(request)
+    next(flow)
+
+    ok_response = httpx.Response(status_code=200, request=request)
+    with pytest.raises(StopIteration):
+        flow.send(ok_response)
+
+
+def test_token_endpoint_proof_rejects_non_ec_key():
+    rsa_key = jwk.JWK.generate(kty="RSA", size=2048)
+    with pytest.raises(ValueError, match="EC P-256"):
+        make_dpop_proof_for_token_endpoint(rsa_key, "POST", "https://example.com/oauth/token")
 
 
 def test_dpop_repr_redacts_credentials(ec_key):
