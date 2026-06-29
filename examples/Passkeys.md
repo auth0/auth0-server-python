@@ -14,11 +14,8 @@ Passkeys let users sign up and log in with [WebAuthn](https://www.w3.org/TR/weba
 - [Prerequisites](#prerequisites)
 - [1. Passkey Signup](#1-passkey-signup)
 - [2. Passkey Login](#2-passkey-login)
-- [3. Organizations](#3-organizations)
-- [4. Step-up MFA during passkey login](#4-step-up-mfa-during-passkey-login)
-- [5. DPoP-bound passkey tokens](#5-dpop-bound-passkey-tokens)
+- [3. DPoP-bound passkey tokens (optional)](#3-dpop-bound-passkey-tokens-optional)
 - [Error Handling](#error-handling)
-- [Additional Resources](#additional-resources)
 
 ## How the flow works
 
@@ -141,50 +138,14 @@ result = await server_client.signin_with_passkey(
 > [!NOTE]
 > The SDK is transparent to the signup-vs-login difference in the credential `response` — both flow through the same `PasskeyAuthResponse.response` dict. Send exactly the keys the browser produced.
 
-## 3. Organizations
+## 3. DPoP-bound passkey tokens (optional)
 
-Pass an `organization` (ID or name) on the challenge to scope the passkey ceremony to an organization. The resulting `id_token` carries the `org_id` claim, validated automatically at session creation.
-
-```python
-challenge = await server_client.passkey_login_challenge(
-    organization="org_abc123",
-    store_options={"request": request, "response": response},
-)
-# ... signin_with_passkey(organization="org_abc123", ...)
-```
-
-## 4. Step-up MFA during passkey login
-
-If tenant policy requires a second factor, `signin_with_passkey` raises `MfaRequiredError` — the login does **not** complete silently. The raw MFA token is encrypted by the SDK before it reaches you, and stored server-side so your challenge/verify routes can retrieve it without a client round-trip.
-
-```python
-from auth0_server_python.error import MfaRequiredError
-
-try:
-    result = await server_client.signin_with_passkey(
-        auth_session=challenge.auth_session,
-        authn_response=authn_response,
-        store_options={"request": request, "response": response},
-    )
-except MfaRequiredError as e:
-    # e.mfa_token is ENCRYPTED — hand it straight to MfaClient.
-    # See examples/MFA.md for the challenge/verify flow.
-    ...
-```
-
-See [examples/MFA.md](MFA.md) for the full challenge → verify continuation.
-
-> [!NOTE]
-> A passkey is supported as a **first** factor today. WebAuthn as a **second** factor is currently only available through Universal Login (hosted), not as a headless API a server SDK can drive — so this SDK does not implement it. The response models are forward-tolerant for when that capability ships.
-
-## 5. DPoP-bound passkey tokens
-
-Pass a `dpop_key` to bind the issued tokens to a key you hold (RFC 9449). When supplied, the SDK attaches a DPoP proof to the token exchange and Auth0 issues a DPoP-bound token; if the server returns an unbound (`Bearer`) token instead, `signin_with_passkey` raises rather than accept the downgrade.
+Pass an optional `dpop_key` to bind the issued tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)), so a stolen token alone cannot be replayed. DPoP is **opt-in**: omit `dpop_key` and sign-in returns ordinary Bearer tokens with no behaviour change.
 
 ```python
 from jwcrypto import jwk
 
-dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")  # you create and keep this key
+dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")  # you generate and keep this key (Tier 0)
 
 result = await server_client.signin_with_passkey(
     auth_session=challenge.auth_session,
@@ -194,7 +155,10 @@ result = await server_client.signin_with_passkey(
 )
 ```
 
-Reuse the **same** `dpop_key` for any My Account API calls made with the resulting token. See [examples/DPoP.md](DPoP.md) for the full picture.
+When `dpop_key` is supplied, the SDK attaches a token-endpoint proof so Auth0 issues a DPoP-bound token, transparently handles the server-nonce challenge, and **rejects a Bearer downgrade** — if the server returns an unbound token, `signin_with_passkey` raises `PasskeyError` rather than silently accepting a token bound to a key it never used.
+
+> [!TIP]
+> Reuse the **same** `dpop_key` for any subsequent My Account API calls made with the resulting token — the token is bound to that one key. See [examples/DPoP.md](DPoP.md) for the `dpop_key` vs `dpop_proof` distinction, key lifecycle, and nonce handling.
 
 ## Error Handling
 
@@ -242,11 +206,3 @@ except Auth0Error as e:
 
 > [!NOTE]
 > `auth_session` is a short-lived (typically ~5 min) Tier 1 credential. It is redacted in the SDK's model `repr()`, and you should never log or persist it. If the ceremony takes too long, re-request the challenge.
-
-## Additional Resources
-
-- [Managing passkeys via My Account API](MyAccountAuthenticationMethods.md) — enroll/list/delete a logged-in user's passkeys
-- [DPoP](DPoP.md) — sender-constrained tokens
-- [MFA](MFA.md) — handling `MfaRequiredError`
-- [Auth0 Passkey documentation](https://auth0.com/docs/authenticate/database-connections/passkeys)
-- [WebAuthn Level 2 (W3C)](https://www.w3.org/TR/webauthn-2/)

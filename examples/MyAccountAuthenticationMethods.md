@@ -20,7 +20,6 @@ The [My Account API](https://auth0.com/docs/manage-users/my-account-api) lets a 
 - [6. Delete an authentication method](#6-delete-an-authentication-method)
 - [DPoP](#dpop)
 - [Error Handling](#error-handling)
-- [Additional Resources](#additional-resources)
 
 ## Prerequisites
 
@@ -231,10 +230,3 @@ except Auth0Error as e:
 - **`MyAccountApiError`**: My Account API errors with `status`, `detail`, optional `validation_errors`
 - **`MissingRequiredArgumentError`**: a required parameter (`access_token`, `authentication_method_id`, `request`) was not provided
 - **`ApiError`**: transport failure or a non-JSON error body
-
-## Additional Resources
-
-- [Connected Accounts (Token Vault)](ConnectedAccounts.md) — the other My Account surface, and shared My Account/MRRT setup
-- [Passkey Authentication](Passkeys.md) — signing in with a passkey
-- [DPoP](DPoP.md) — sender-constrained tokens
-- [Auth0 My Account API documentation](https://auth0.com/docs/manage-users/my-account-api)

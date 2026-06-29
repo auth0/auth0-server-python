@@ -16,7 +16,6 @@ This SDK supports DPoP for **passkey sign-in** (`ServerClient.signin_with_passke
 - [4. Generating a proof manually](#4-generating-a-proof-manually)
 - [Key lifecycle and security](#key-lifecycle-and-security)
 - [Error Handling](#error-handling)
-- [Additional Resources](#additional-resources)
 
 ## `dpop_key` vs `dpop_proof`
 
@@ -125,9 +124,3 @@ except PasskeyError as e:
 ```
 
 On the My Account surface, a key mismatch or a DPoP-required endpoint reached without binding surfaces as `MyAccountApiError` (typically `status=401`). Catch `Auth0Error` for uniform handling.
-
-## Additional Resources
-
-- [Passkey Authentication](Passkeys.md)
-- [My Account — Authentication Methods](MyAccountAuthenticationMethods.md)
-- [RFC 9449 — OAuth 2.0 Demonstrating Proof of Possession (DPoP)](https://www.rfc-editor.org/rfc/rfc9449)
