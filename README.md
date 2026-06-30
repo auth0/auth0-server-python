@@ -246,7 +246,7 @@ result = await auth0.signin_with_passkey(
 )
 ```
 
-For the `dpop_key` vs `dpop_proof` distinction, key lifecycle, nonce handling, and error handling, see [examples/DPoP.md](examples/DPoP.md).
+`dpop_key` is a Tier 0 secret you generate, keep in your secret store, and reuse for the bound token's lifetime — pass the **same** key to passkey sign-in and every My Account API call. For usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
 
 ## Feedback
 

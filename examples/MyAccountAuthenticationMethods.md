@@ -6,7 +6,7 @@ The [My Account API](https://auth0.com/docs/manage-users/my-account-api) lets a 
 > This is a different My Account resource from [Connected Accounts](ConnectedAccounts.md) (Token Vault). Connected-accounts management is exposed as convenience methods on `ServerClient`; **authentication-method management is on `MyAccountClient` directly**, because each call takes a user access token you obtain yourself. The two share the same My Account setup (activation, MRRT, scopes, `MyAccountApiError`) — see [ConnectedAccounts.md → Pre-requisites](ConnectedAccounts.md#pre-requisites) for that common setup.
 
 > [!NOTE]
-> To **sign in** with a passkey (rather than manage one), see [examples/Passkeys.md](Passkeys.md). To **bind these calls to a held key** with DPoP, see [examples/DPoP.md](DPoP.md).
+> To **sign in** with a passkey (rather than manage one), see [examples/Passkeys.md](Passkeys.md). To **bind these calls to a held key**, pass an optional `dpop_key` — see [DPoP](#dpop) below.
 
 ## Table of Contents
 
@@ -173,16 +173,21 @@ await my_account.delete_authentication_method(
 
 ## DPoP
 
-Every method above accepts an optional `dpop_key` to present a sender-constrained token (`Authorization: DPoP` + a per-request proof) instead of a Bearer token. Pass the **same key** the access token was bound to:
+Every method above accepts an optional `dpop_key` to present a sender-constrained token (`Authorization: DPoP` + a per-request proof) instead of a Bearer token ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)). Pass the **same key** the access token was bound to at sign-in:
 
 ```python
+from jwcrypto import jwk
+
+dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")  # the key the token was bound to
+
 methods = await my_account.list_authentication_methods(
     access_token=access_token,
     dpop_key=dpop_key,
 )
 ```
 
-See [examples/DPoP.md](DPoP.md) for key generation, the `dpop_key` vs `dpop_proof` distinction, and nonce handling.
+> [!WARNING]
+> The `dpop_key` private key is a **Tier 0 secret**. Keep it in your secret store (KMS/HSM), never log it (`repr()` is redacted, but `key.export_private()` is not), use **one key per user/session** (never share across principals), and use **EC P-256 only** — any other key type fails closed with a `ValueError`.
 
 ## Error Handling
 

@@ -158,7 +158,10 @@ result = await server_client.signin_with_passkey(
 When `dpop_key` is supplied, the SDK attaches a token-endpoint proof so Auth0 issues a DPoP-bound token, transparently handles the server-nonce challenge, and **rejects a Bearer downgrade** — if the server returns an unbound token, `signin_with_passkey` raises `PasskeyError` rather than silently accepting a token bound to a key it never used.
 
 > [!TIP]
-> Reuse the **same** `dpop_key` for any subsequent My Account API calls made with the resulting token — the token is bound to that one key. See [examples/DPoP.md](DPoP.md) for the `dpop_key` vs `dpop_proof` distinction, key lifecycle, and nonce handling.
+> Reuse the **same** `dpop_key` for any subsequent My Account API calls made with the resulting token — the token is bound to that one key. See [MyAccountAuthenticationMethods.md → DPoP](MyAccountAuthenticationMethods.md#dpop).
+
+> [!WARNING]
+> The `dpop_key` private key is a **Tier 0 secret**. Keep it in your secret store (KMS/HSM), never log it (`repr()` is redacted, but `key.export_private()` is not), use **one key per user/session** (never share across principals), and use **EC P-256 only** — any other key type fails closed with a `ValueError` before any network call.
 
 ## Error Handling
 
