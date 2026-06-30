@@ -11,7 +11,7 @@ This guide covers how to customize the authorization parameters, pass custom app
 Interactive login begins by configuring a redirect_uri—the URL Auth0 will use to send the user back after authentication. For example, when instantiating your core `ServerClient`:
 
 ```python
-from auth_server.server_client import ServerClient
+from auth0_server_python.auth_server.server_client import ServerClient
 
 server_client = ServerClient(
     domain="YOUR_AUTH0_DOMAIN",
@@ -50,13 +50,17 @@ server_client = ServerClient(
 ### Dynamic Configuration Per Call
 You can also override or add parameters when calling `start_interactive_login()`:
 ```python
-authorization_url = await server_client.start_interactive_login({
-    "authorization_params": {
-        "scope": "openid profile email",
-        "audience": "urn:custom:api",
-        "foo": "bar"  # arbitrary custom parameter
-    }
-})
+from auth0_server_python.auth_types import StartInteractiveLoginOptions
+
+authorization_url = await server_client.start_interactive_login(
+    StartInteractiveLoginOptions(
+        authorization_params={
+            "scope": "openid profile email",
+            "audience": "urn:custom:api",
+            "foo": "bar"  # arbitrary custom parameter
+        }
+    )
+)
 ```
 > [!NOTE]
 > Any parameter specified here will override the corresponding global configuration.
@@ -66,10 +70,12 @@ authorization_url = await server_client.start_interactive_login({
 The `app_state` parameter allows you to pass custom state (for example, a return URL) that is later available when the login process completes.
 
 ```python
+from auth0_server_python.auth_types import StartInteractiveLoginOptions
+
 # Start interactive login with custom app state:
-authorize_url = await server_client.start_interactive_login({
-    "app_state": {"returnTo": "http://localhost:3000/dashboard"}
-})
+authorize_url = await server_client.start_interactive_login(
+    StartInteractiveLoginOptions(app_state={"returnTo": "http://localhost:3000/dashboard"})
+)
 
 # Later, after completing login:
 result = await server_client.complete_interactive_login(callback_url)
@@ -83,10 +89,12 @@ print(result.get("app_state").get("returnTo"))  # Should output: http://localhos
 
 To enable PAR, simply set the flag in your interactive login options. When enabled, the SDK will send an HTTP POST request with the authorization parameters to the PAR endpoint (retrieved from OIDC metadata) and use the returned `request_uri` to build the final authorization URL.
 ```python
+from auth0_server_python.auth_types import StartInteractiveLoginOptions
+
 # Enable PAR dynamically for a login call:
-authorization_url = await server_client.start_interactive_login({
-    "pushed_authorization_requests": True
-})
+authorization_url = await server_client.start_interactive_login(
+    StartInteractiveLoginOptions(pushed_authorization_requests=True)
+)
 ```
 >[!IMPORTANT]
 > Using PAR requires that your Auth0 tenant is configured to support it. Refer to Auth0's documentation for details.
@@ -96,22 +104,22 @@ authorization_url = await server_client.start_interactive_login({
 When using PAR, you can also supply Rich Authorization Request details by including an `authorization_details` field in the `authorization_params`:
 ```python
 import json
+from auth0_server_python.auth_types import StartInteractiveLoginOptions
 
-authorization_url = await server_client.start_interactive_login({
-    "pushed_authorization_requests": True,
-    "authorization_params": {
-        "authorization_details": json.dumps([{
-            "type": "your_type",
-            "additional_field": "value"
-        }])
-    }
-})
+authorization_url = await server_client.start_interactive_login(
+    StartInteractiveLoginOptions(
+        pushed_authorization_requests=True,
+        authorization_params={
+            "authorization_details": json.dumps([{
+                "type": "your_type",
+                "additional_field": "value"
+            }])
+        }
+    )
+)
 ```
 After completing the interactive login, the SDK will expose the `authorization_details` in the result:
 ```python
-import json
-
-authorization_url = await server_client.start_interactive_login({
 result = await server_client.complete_interactive_login(callback_url)
 print(result.get("authorization_details"))
 ```
@@ -122,7 +130,7 @@ print(result.get("authorization_details"))
 Most methods in the SDK accept a second argument called `store_options`. This dictionary should include the HTTP Request and Response objects (or equivalent) that the store uses to manage cookies and session data.
 ```python
 store_options = {"request": request, "response": response}
-authorization_url = await server_client.start_interactive_login({}, store_options=store_options)
+authorization_url = await server_client.start_interactive_login(store_options=store_options)
 ```
 This enables the SDK to correctly read and set cookies for session management.
 
