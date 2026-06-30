@@ -26,6 +26,12 @@ from auth0_server_python.auth_types import (
     LoginWithCustomTokenExchangeOptions,
     LogoutOptions,
     MfaRequirements,
+    PasskeyAuthResponse,
+    PasskeyLoginChallengeResponse,
+    PasskeyLoginResult,
+    PasskeySignupChallengeResponse,
+    PasskeyTokenResponse,
+    PasskeyUserProfile,
     StartInteractiveLoginOptions,
     StateData,
     TransactionData,
@@ -47,6 +53,7 @@ from auth0_server_python.error import (
     MissingRequiredArgumentError,
     MissingTransactionError,
     OrganizationTokenValidationError,
+    PasskeyError,
     PollingApiError,
     StartLinkUserError,
 )
@@ -5269,7 +5276,6 @@ _PASSKEY_TOKEN_RESPONSE_DPOP = {
 
 
 def _make_passkey_authn_response():
-    from auth0_server_python.auth_types import PasskeyAuthResponse
     return PasskeyAuthResponse(
         id="cred_abc123",
         raw_id="Y3JlZF9hYmMxMjM",
@@ -5286,7 +5292,6 @@ def _make_passkey_authn_response():
 
 @pytest.mark.asyncio
 async def test_passkey_signup_challenge_success(mocker):
-    from auth0_server_python.auth_types import PasskeySignupChallengeResponse, PasskeyUserProfile
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5327,7 +5332,6 @@ async def test_passkey_signup_challenge_success(mocker):
 
 @pytest.mark.asyncio
 async def test_passkey_signup_challenge_user_profile_fields(mocker):
-    from auth0_server_python.auth_types import PasskeyUserProfile
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5426,8 +5430,6 @@ async def test_passkey_signup_challenge_user_metadata_root_level(mocker):
 
 @pytest.mark.asyncio
 async def test_passkey_signup_challenge_api_error(mocker):
-    from auth0_server_python.auth_types import PasskeyUserProfile
-    from auth0_server_python.error import PasskeyError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5454,7 +5456,6 @@ async def test_passkey_signup_challenge_api_error(mocker):
 
 @pytest.mark.asyncio
 async def test_passkey_signup_challenge_non_json_error(mocker):
-    from auth0_server_python.error import PasskeyError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5476,7 +5477,6 @@ async def test_passkey_signup_challenge_non_json_error(mocker):
 
 @pytest.mark.asyncio
 async def test_passkey_signup_challenge_network_error(mocker):
-    from auth0_server_python.error import PasskeyError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5495,7 +5495,6 @@ async def test_passkey_signup_challenge_network_error(mocker):
 
 @pytest.mark.asyncio
 async def test_passkey_login_challenge_success(mocker):
-    from auth0_server_python.auth_types import PasskeyLoginChallengeResponse
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5581,7 +5580,6 @@ async def test_passkey_login_challenge_with_username(mocker):
 
 @pytest.mark.asyncio
 async def test_passkey_login_challenge_api_error(mocker):
-    from auth0_server_python.error import PasskeyError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5605,7 +5603,6 @@ async def test_passkey_login_challenge_api_error(mocker):
 
 @pytest.mark.asyncio
 async def test_passkey_login_challenge_network_error(mocker):
-    from auth0_server_python.error import PasskeyError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5623,7 +5620,6 @@ async def test_passkey_login_challenge_network_error(mocker):
 
 @pytest.mark.asyncio
 async def test_signin_with_passkey_success(mocker):
-    from auth0_server_python.auth_types import PasskeyLoginResult
     state_store = AsyncMock()
     client = ServerClient(
         domain="auth0.local",
@@ -5754,7 +5750,6 @@ async def test_signin_with_passkey_missing_authn_response():
 
 @pytest.mark.asyncio
 async def test_signin_with_passkey_api_error(mocker):
-    from auth0_server_python.error import PasskeyError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5787,7 +5782,6 @@ async def test_signin_with_passkey_api_error(mocker):
 
 @pytest.mark.asyncio
 async def test_signin_with_passkey_missing_token_endpoint(mocker):
-    from auth0_server_python.error import PasskeyError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5808,7 +5802,6 @@ async def test_signin_with_passkey_missing_token_endpoint(mocker):
 
 @pytest.mark.asyncio
 async def test_signin_with_passkey_network_error(mocker):
-    from auth0_server_python.error import PasskeyError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -5857,7 +5850,6 @@ async def test_signin_with_passkey_no_client_secret(mocker):
     mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
     mock_post.return_value = mock_response
 
-    from auth0_server_python.auth_types import PasskeyAuthResponse
     authn_resp = PasskeyAuthResponse(
         id="cred",
         raw_id="cmF3",
@@ -5873,7 +5865,6 @@ async def test_signin_with_passkey_no_client_secret(mocker):
 
 
 def test_passkey_signup_challenge_repr_redacts_auth_session():
-    from auth0_server_python.auth_types import PasskeySignupChallengeResponse
     resp = PasskeySignupChallengeResponse.model_validate(_PASSKEY_SIGNUP_CHALLENGE_RESPONSE)
     repr_str = repr(resp)
     assert "session_abc123" not in repr_str
@@ -5881,7 +5872,6 @@ def test_passkey_signup_challenge_repr_redacts_auth_session():
 
 
 def test_passkey_login_challenge_repr_redacts_auth_session():
-    from auth0_server_python.auth_types import PasskeyLoginChallengeResponse
     resp = PasskeyLoginChallengeResponse.model_validate(_PASSKEY_LOGIN_CHALLENGE_RESPONSE)
     repr_str = repr(resp)
     assert "session_login_xyz" not in repr_str
@@ -5889,7 +5879,6 @@ def test_passkey_login_challenge_repr_redacts_auth_session():
 
 
 def test_passkey_token_response_repr_redacts_tokens():
-    from auth0_server_python.auth_types import PasskeyTokenResponse
     resp = PasskeyTokenResponse(
         access_token="secret_at_value",
         token_type="Bearer",
@@ -6129,7 +6118,6 @@ async def test_signin_with_passkey_dpop_nonce_retry_on_401(mocker):
 @pytest.mark.asyncio
 async def test_signin_with_passkey_dpop_rejects_bearer_downgrade(mocker):
     """Server returning token_type=Bearer when DPoP was requested must raise PasskeyError."""
-    from auth0_server_python.error import PasskeyError
 
     client = ServerClient(
         domain="auth0.local",
@@ -6231,7 +6219,6 @@ async def test_signin_with_passkey_without_dpop_no_dpop_header(mocker):
 @pytest.mark.asyncio
 async def test_signin_with_passkey_creates_session_in_state_store(mocker):
     """signin_with_passkey must persist a session — consistent with complete_interactive_login."""
-    from auth0_server_python.auth_types import PasskeyLoginResult
     state_store = AsyncMock()
     client = ServerClient(
         domain="auth0.local",
@@ -6286,7 +6273,6 @@ async def test_signin_with_passkey_creates_session_in_state_store(mocker):
 @pytest.mark.asyncio
 async def test_signin_with_passkey_session_without_id_token(mocker):
     """When no id_token is returned, session is still created with user=None."""
-    from auth0_server_python.auth_types import PasskeyLoginResult
     state_store = AsyncMock()
     client = ServerClient(
         domain="auth0.local",
@@ -6325,7 +6311,6 @@ async def test_signin_with_passkey_session_without_id_token(mocker):
 @pytest.mark.asyncio
 async def test_signin_with_passkey_mfa_required_raises_mfa_required_error(mocker):
     """Server returns 403 mfa_required — SDK raises MfaRequiredError with encrypted token."""
-    from auth0_server_python.error import MfaRequiredError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -6361,7 +6346,6 @@ async def test_signin_with_passkey_mfa_required_raises_mfa_required_error(mocker
 @pytest.mark.asyncio
 async def test_signin_with_passkey_mfa_required_with_requirements(mocker):
     """mfa_required response including mfa_requirements is propagated correctly."""
-    from auth0_server_python.error import MfaRequiredError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -6398,7 +6382,6 @@ async def test_signin_with_passkey_mfa_required_with_requirements(mocker):
 @pytest.mark.asyncio
 async def test_signin_with_passkey_mfa_required_without_mfa_token_falls_through(mocker):
     """mfa_required response missing mfa_token raises PasskeyError (server misconfiguration)."""
-    from auth0_server_python.error import PasskeyError
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",

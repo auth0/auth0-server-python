@@ -1,3 +1,5 @@
+import base64
+import json
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import httpx
@@ -1369,9 +1371,6 @@ def test_dpop_auth_flow_retries_with_nonce_on_401():
     DPoPAuth.auth_flow() must retry with DPoP-Nonce when server responds 401
     + DPoP-Nonce header (RFC 9449 §8.2). Tested by driving the generator directly.
     """
-    import base64
-    import json as _json
-
     dpop_key = jwk_module.JWK.generate(kty="EC", crv="P-256")
     auth = DPoPAuth(token="test_access_token", key=dpop_key)
 
@@ -1387,7 +1386,7 @@ def test_dpop_auth_flow_retries_with_nonce_on_401():
     proof1 = first_request.headers["DPoP"]
     payload1_b64 = proof1.split(".")[1]
     padding = 4 - len(payload1_b64) % 4
-    payload1 = _json.loads(base64.urlsafe_b64decode(payload1_b64 + "=" * padding))
+    payload1 = json.loads(base64.urlsafe_b64decode(payload1_b64 + "=" * padding))
     assert "nonce" not in payload1
 
     # Simulate 401 + DPoP-Nonce response
@@ -1408,7 +1407,7 @@ def test_dpop_auth_flow_retries_with_nonce_on_401():
     proof2 = second_request.headers["DPoP"]
     payload2_b64 = proof2.split(".")[1]
     padding = 4 - len(payload2_b64) % 4
-    payload2 = _json.loads(base64.urlsafe_b64decode(payload2_b64 + "=" * padding))
+    payload2 = json.loads(base64.urlsafe_b64decode(payload2_b64 + "=" * padding))
     assert payload2["nonce"] == "server-nonce-abc"
 
 
