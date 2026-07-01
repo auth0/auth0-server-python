@@ -70,6 +70,65 @@ access_token = await server_client.get_access_token(store_options=store_options)
 
 Read more above in [Configuring the Store](./ConfigureStore.md).
 
+## Session Expiry from the Upstream IdP
+
+For enterprise connections, the upstream identity provider can impose a ceiling on how long the user's session may live. This ceiling is delivered to the SDK as a `session_expiry` claim (an absolute Unix timestamp, **in seconds**) on the ID token. The SDK reads this value at login, stores it with the session, and enforces it on every subsequent read.
+
+### Emitting the claim
+
+The `session_expiry` claim is set by a Post-Login Action on your tenant, and **must** be an absolute Unix timestamp in **seconds**, not milliseconds. For the canonical Action setup, see the [Auth0 documentation](https://auth0.com/docs) (will be adding the link to the session_expiry Action guide once published).
+
+> [!WARNING]
+> `session_expiry` is interpreted as **seconds** since the Unix epoch (per RFC 7519 `NumericDate`). A common mistake is emitting milliseconds (e.g. `getTime()` without `/ 1000`). The SDK rejects implausibly large values (anything at or above `10_000_000_000`, ≈ year 2286) as malformed and treats them as **no ceiling**, so a milliseconds value will silently disable enforcement rather than expiring the session ~55,000 years from now. Always divide by 1000.
+>
+> Because the claim is authored by your Action (untrusted input), the SDK **fails open** on any malformed value — a non-numeric, zero, negative, boolean, or millisecond value is treated as "no ceiling" and login proceeds normally. Only a clean, future, seconds timestamp is enforced.
+
+Once the ceiling is reached, the read methods behave as follows:
+
+- `get_user()` returns `None`, as if no session exists.
+- `get_session()` returns `None`, as if no session exists.
+- `get_access_token()` raises an `AccessTokenError` with code `session_expired`.
+
+`get_access_token_for_connection()` (Token Vault) is **not** gated by the session ceiling — connection tokens follow the upstream IdP's own `expires_in`, so they remain retrievable from cache even after the session ceiling has passed.
+
+```python
+from auth0_server_python.error import AccessTokenError, AccessTokenErrorCode
+
+try:
+    access_token = await server_client.get_access_token(store_options=store_options)
+except AccessTokenError as error:
+    if error.code == AccessTokenErrorCode.SESSION_EXPIRED:
+        # The upstream session ceiling has been reached; start a new login.
+        ...
+```
+
+When the ceiling is reached, the SDK deletes the stored session before returning, so the next request starts clean.
+
+If the upstream IdP asserts a ceiling that is already in the past at login time, `complete_interactive_login()` raises a `SessionExpiredError` rather than persisting an already-expired session:
+
+```python
+from auth0_server_python.error import SessionExpiredError
+
+try:
+    await server_client.complete_interactive_login(url, store_options=store_options)
+except SessionExpiredError:
+    # The session was already past its ceiling on arrival; start a new login.
+    ...
+```
+
+> [!NOTE]
+> **Upgrading:** with this feature enabled, `get_user()` and `get_session()` can return `None` for a user who was previously logged in, once the upstream ceiling passes. Applications that assumed these always return a value after login should add a null check and route the user back through login.
+
+The `session_expiry` value is also surfaced through the user claims, so you can read it without triggering enforcement:
+
+```python
+user = await server_client.get_user(store_options=store_options)
+session_expires_at = (user or {}).get("session_expiry")
+```
+
+> [!NOTE]
+> Enforcement applies a small negative leeway (30 seconds) to account for clock skew, so a session is treated as expired slightly before the exact `session_expiry` timestamp. The refresh-token grant preserves the original ceiling - refreshing an access token does not extend the upstream session.
+
 ## Multi-Resource Refresh Tokens (MRRT)
 
 Multi-Resource Refresh Tokens allow using a single refresh token to obtain access tokens for multiple audiences, simplifying token management in applications that interact with multiple backend services.

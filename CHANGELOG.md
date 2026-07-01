@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.0.0b12](https://github.com/auth0/auth0-server-python/tree/1.0.0b12) (2026-07-01)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b11...1.0.0b12)
+
+**Added**
+- feat: enforce upstream IdP session_expiry ceiling (IPSIE SL1) [\#120](https://github.com/auth0/auth0-server-python/pull/120) ([kishore7snehil](https://github.com/kishore7snehil))
+
 ## [1.0.0b11](https://github.com/auth0/auth0-server-python/tree/1.0.0b11) (2026-06-25)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b10...1.0.0b11)
 

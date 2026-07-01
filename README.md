@@ -248,6 +248,12 @@ result = await auth0.signin_with_passkey(
 
 `dpop_key` is a Tier 0 secret you generate, keep in your secret store, and reuse for the bound token's lifetime — pass the **same** key to passkey sign-in and every My Account API call. For usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
 
+### 9. Session Expiry from the Upstream IdP
+
+For enterprise connections, the upstream identity provider can cap how long a user's session lives. When the connection is configured to honor it, Auth0 includes a `session_expiry` claim in the ID token, and the SDK enforces this ceiling on every session read. Once it is reached, `get_user()` and `get_session()` return `None`, and `get_access_token()` raises an `AccessTokenError` with code `session_expired`. If the asserted ceiling is already in the past at login, `complete_interactive_login()` raises a `SessionExpiredError` instead of persisting an already-expired session.
+
+For more details and examples, see [examples/RetrievingData.md](examples/RetrievingData.md#session-expiry-from-the-upstream-idp).
+
 ## Feedback
 
 ### Contributing
