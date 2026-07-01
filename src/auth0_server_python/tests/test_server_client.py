@@ -5,9 +5,11 @@ import unicodedata
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 from jwcrypto import jwk
 
+from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.server_client import ServerClient
@@ -5636,7 +5638,8 @@ async def test_signin_with_passkey_success(mocker):
     )
     mocker.patch.object(client, "_get_jwks_cached", return_value={})
     mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
-        "sub": "auth0|user123", "name": "Jane", "iss": "https://auth0.local/", "sid": "sid_abc"
+        "sub": "auth0|user123", "name": "Jane", "iss": "https://auth0.local/", "sid": "sid_abc",
+        "org_id": "org_abc",
     })
     mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
     mock_response = AsyncMock()
@@ -6451,6 +6454,312 @@ async def test_signin_with_passkey_mfa_required_stores_pending_mfa(mocker):
     store_key, store_payload = mock_store.set.call_args[0][:2]
     assert store_key == "_a0_mfa_pending"
     assert store_payload["mfa_token"] == exc.value.mfa_token
+
+
+def test_dpop_auth_nonce_retry_body_identical():
+    """POST body bytes must be identical on initial send and nonce retry."""
+    key = jwk.JWK.generate(kty="EC", crv="P-256")
+    auth = DPoPAuth(token="test_access_token", key=key)
+    body = b'{"key": "value", "nested": {"a": 1}}'
+    request = httpx.Request("POST", "https://example.com/resource", content=body)
+
+    flow = auth.auth_flow(request)
+    first_request = next(flow)
+    assert first_request.content == body
+
+    nonce_response = httpx.Response(
+        status_code=401,
+        headers={"DPoP-Nonce": "server-nonce-abc"},
+        request=first_request,
+    )
+    retried_request = flow.send(nonce_response)
+    assert retried_request.content == body
+
+
+@pytest.mark.asyncio
+async def test_passkey_signup_challenge_uses_client_default_organization(mocker):
+    """When organization is not passed, self._organization is used."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+        organization="org_default",
+    )
+    mocker.patch.object(client, "_resolve_current_domain", return_value="auth0.local")
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_SIGNUP_CHALLENGE_RESPONSE)
+    mock_post.return_value = mock_response
+
+    await client.passkey_signup_challenge()
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["json"]["organization"] == "org_default"
+
+
+@pytest.mark.asyncio
+async def test_passkey_signup_challenge_call_arg_overrides_client_default_organization(mocker):
+    """Call-level organization overrides self._organization."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+        organization="org_default",
+    )
+    mocker.patch.object(client, "_resolve_current_domain", return_value="auth0.local")
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_SIGNUP_CHALLENGE_RESPONSE)
+    mock_post.return_value = mock_response
+
+    await client.passkey_signup_challenge(organization="org_override")
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["json"]["organization"] == "org_override"
+
+
+@pytest.mark.asyncio
+async def test_passkey_login_challenge_uses_client_default_organization(mocker):
+    """When organization is not passed, self._organization is used."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+        organization="org_default",
+    )
+    mocker.patch.object(client, "_resolve_current_domain", return_value="auth0.local")
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_LOGIN_CHALLENGE_RESPONSE)
+    mock_post.return_value = mock_response
+
+    await client.passkey_login_challenge()
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["json"]["organization"] == "org_default"
+
+
+@pytest.mark.asyncio
+async def test_passkey_login_challenge_call_arg_overrides_client_default_organization(mocker):
+    """Call-level organization overrides self._organization."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+        organization="org_default",
+    )
+    mocker.patch.object(client, "_resolve_current_domain", return_value="auth0.local")
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_LOGIN_CHALLENGE_RESPONSE)
+    mock_post.return_value = mock_response
+
+    await client.passkey_login_challenge(organization="org_override")
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["json"]["organization"] == "org_override"
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_uses_client_default_organization(mocker):
+    """When organization is not passed, self._organization is forwarded and validated."""
+    state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=state_store,
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+        organization="org_default",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/", "org_id": "org_default",
+    })
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    mock_post.return_value = mock_response
+
+    await client.signin_with_passkey(
+        auth_session="session_xyz",
+        authn_response=_make_passkey_authn_response(),
+    )
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["json"]["organization"] == "org_default"
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_call_arg_overrides_client_default_organization(mocker):
+    """Call-level organization overrides self._organization."""
+    state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=state_store,
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+        organization="org_default",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/", "org_id": "org_override",
+    })
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    mock_post.return_value = mock_response
+
+    await client.signin_with_passkey(
+        auth_session="session_xyz",
+        authn_response=_make_passkey_authn_response(),
+        organization="org_override",
+    )
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["json"]["organization"] == "org_override"
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_org_id_mismatch_raises_and_no_session_stored(mocker):
+    """org_id in ID token not matching raises OrganizationTokenValidationError; session not stored."""
+    state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=state_store,
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/", "org_id": "org_different",
+    })
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    mock_post.return_value = mock_response
+
+    with pytest.raises(OrganizationTokenValidationError):
+        await client.signin_with_passkey(
+            auth_session="session_xyz",
+            authn_response=_make_passkey_authn_response(),
+            organization="org_expected",
+        )
+
+    state_store.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_org_name_mismatch_raises_and_no_session_stored(mocker):
+    """org_name in ID token not matching raises OrganizationTokenValidationError; session not stored."""
+    state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=state_store,
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/", "org_name": "acme",
+    })
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    mock_post.return_value = mock_response
+
+    with pytest.raises(OrganizationTokenValidationError):
+        await client.signin_with_passkey(
+            auth_session="session_xyz",
+            authn_response=_make_passkey_authn_response(),
+            organization="different-org",
+        )
+
+    state_store.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_client_default_org_is_validated_against_id_token(mocker):
+    """self._organization fallback is validated against the ID token org claims."""
+    state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=state_store,
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+        organization="org_mismatch",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/", "org_id": "org_different",
+    })
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    mock_post.return_value = mock_response
+
+    with pytest.raises(OrganizationTokenValidationError):
+        await client.signin_with_passkey(
+            auth_session="session_xyz",
+            authn_response=_make_passkey_authn_response(),
+        )
+
+    state_store.set.assert_not_awaited()
 
 
 @pytest.mark.asyncio

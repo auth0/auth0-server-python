@@ -2621,6 +2621,7 @@ class ServerClient(Generic[TStoreOptions]):
         try:
             domain = await self._resolve_current_domain(store_options)
 
+            resolved_org = organization or self._organization
             body: dict[str, Any] = {"client_id": self._client_id}
             if self._client_secret:
                 body["client_secret"] = self._client_secret
@@ -2630,8 +2631,8 @@ class ServerClient(Generic[TStoreOptions]):
                 body["user_metadata"] = user_metadata
             if connection:
                 body["realm"] = connection
-            if organization:
-                body["organization"] = organization
+            if resolved_org:
+                body["organization"] = resolved_org
 
             async with self._get_http_client() as client:
                 url = f"https://{domain}{self.PASSKEY_REGISTER_PATH}"
@@ -2688,11 +2689,12 @@ class ServerClient(Generic[TStoreOptions]):
             PasskeyLoginChallengeResponse with auth_session and authn_params_public_key.
 
         Raises:
-            ApiError: If the challenge request fails.
+            PasskeyError: If the challenge request fails.
         """
         try:
             domain = await self._resolve_current_domain(store_options)
 
+            resolved_org = organization or self._organization
             body: dict[str, Any] = {"client_id": self._client_id}
             if self._client_secret:
                 body["client_secret"] = self._client_secret
@@ -2700,8 +2702,8 @@ class ServerClient(Generic[TStoreOptions]):
                 body["username"] = username
             if connection:
                 body["realm"] = connection
-            if organization:
-                body["organization"] = organization
+            if resolved_org:
+                body["organization"] = resolved_org
 
             async with self._get_http_client() as client:
                 url = f"https://{domain}{self.PASSKEY_CHALLENGE_PATH}"
@@ -2790,6 +2792,7 @@ class ServerClient(Generic[TStoreOptions]):
             if not token_endpoint:
                 raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Token endpoint missing in OIDC metadata")
 
+            resolved_org = organization or self._organization
             body: dict[str, Any] = {
                 "grant_type": self.GRANT_TYPE_PASSKEY,
                 "client_id": self._client_id,
@@ -2800,8 +2803,8 @@ class ServerClient(Generic[TStoreOptions]):
                 body["client_secret"] = self._client_secret
             if connection:
                 body["realm"] = connection
-            if organization:
-                body["organization"] = organization
+            if resolved_org:
+                body["organization"] = resolved_org
             if scope:
                 body["scope"] = scope
             if audience:
@@ -2863,9 +2866,6 @@ class ServerClient(Generic[TStoreOptions]):
                         PasskeyErrorCode.INVALID_RESPONSE, "Failed to parse passkey token response as JSON"
                     )
 
-                if "expires_in" in token_data and "expires_at" not in token_data:
-                    token_data["expires_at"] = int(time.time()) + token_data["expires_in"]
-
                 token_response = PasskeyTokenResponse.model_validate(token_data)
 
                 if dpop_key is not None and token_response.token_type.lower() != "dpop":
@@ -2894,6 +2894,8 @@ class ServerClient(Generic[TStoreOptions]):
                         raise IssuerValidationError(
                             "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
                         )
+                    if resolved_org:
+                        validate_org_claims(claims, resolved_org)
                     user_claims = UserClaims.model_validate(claims)
                     sid = claims.get("sid", sid)
                 except ValueError as e:
@@ -2912,7 +2914,7 @@ class ServerClient(Generic[TStoreOptions]):
                 audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
                 access_token=token_response.access_token,
                 scope=token_response.scope or scope or "",
-                expires_at=token_response.expires_at if token_response.expires_at is not None else int(time.time()) + token_response.expires_in,
+                expires_at=token_response.expires_at,
             )
             state_data = StateData(
                 user=user_claims,
@@ -2928,6 +2930,6 @@ class ServerClient(Generic[TStoreOptions]):
             return PasskeyLoginResult(state_data=state_data.model_dump())
 
         except Exception as e:
-            if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError, ApiError, IssuerValidationError, MfaRequiredError)):
+            if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError, ApiError, IssuerValidationError, MfaRequiredError, OrganizationTokenValidationError)):
                 raise
             raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Passkey sign-in failed", e) from e

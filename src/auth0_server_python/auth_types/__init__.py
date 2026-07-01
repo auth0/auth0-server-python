@@ -3,9 +3,10 @@ Type definitions for auth0-server-python SDK.
 These Pydantic models provide type safety and validation for all SDK data structures.
 """
 
+import time
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class UserClaims(BaseModel):
@@ -809,10 +810,17 @@ class PasskeyTokenResponse(BaseModel):
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
-    expires_at: Optional[int] = None
+    expires_at: int
     scope: Optional[str] = None
     id_token: Optional[str] = None
     refresh_token: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _backfill_expires_at(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "expires_at" not in data and "expires_in" in data:
+            data["expires_at"] = int(time.time()) + int(data["expires_in"])
+        return data
 
     def __repr__(self) -> str:
         return (

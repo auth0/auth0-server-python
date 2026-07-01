@@ -60,6 +60,10 @@ class DPoPAuth(httpx.Auth):
         return "DPoPAuth(token=[REDACTED], key=[REDACTED])"
 
     def auth_flow(self, request: httpx.Request):
+        # Buffer the body so it can be resent on nonce retry (RFC 9449 §8.2).
+        # httpx streams request bodies by default; once consumed the bytes are
+        # gone. Reading here guarantees the retry yield sends identical bytes.
+        request.read()
         proof = self._make_proof(request.method, str(request.url))
         request.headers["Authorization"] = f"DPoP {self._token}"
         request.headers["DPoP"] = proof
