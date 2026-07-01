@@ -38,6 +38,10 @@ class PKCE:
 
 
 class State:
+    # Clock-skew leeway (seconds): treat the session as expired slightly before
+    # the ceiling so the SDK never serves a session the platform has revoked.
+    SESSION_EXPIRY_LEEWAY_SECONDS = 30
+
     @classmethod
     def update_state_data(
         cls,
@@ -92,12 +96,18 @@ class State:
                     else ts
                     for ts in token_sets
                 ]
+            # A refresh-token grant does not carry session_expiry, so carry the
+            # existing internal block (including the ceiling pinned at login)
+            # forward unchanged rather than re-deriving it.
+            internal = dict(state_data_dict.get("internal") or {})
+
             # Return updated state data
             return {
                 **state_data_dict,
                 "id_token": token_endpoint_response.get("id_token"),
                 "refresh_token": token_endpoint_response.get("refresh_token") or state_data_dict.get("refresh_token"),
-                "token_sets": token_sets
+                "token_sets": token_sets,
+                "internal": internal
             }
         else:
             # Create completely new state data
@@ -177,6 +187,35 @@ class State:
             **state_data,
             "connection_token_sets": connection_token_sets
         }
+
+    @classmethod
+    def is_session_ceiling_reached(cls, session_expires_at: Optional[int]) -> bool:
+        """
+        True when the session ceiling has been reached (applying negative
+        leeway for clock skew). None means no ceiling was asserted, so the
+        session is never expired on this basis.
+        """
+        if session_expires_at is None:
+            return False
+        now = int(time.time())
+        return now >= (session_expires_at - cls.SESSION_EXPIRY_LEEWAY_SECONDS)
+
+    @classmethod
+    def is_session_ceiling_in_past(
+        cls, session_expires_at: Optional[int], issued_at: Optional[int] = None
+    ) -> bool:
+        """
+        True when the session ceiling is already in the past at login.
+
+        Compares the ceiling against the ID token `iat`, or wall-clock now when
+        `iat` is absent, using the same leeway as is_session_ceiling_reached. A
+        None ceiling means none was asserted and is never treated as expired.
+        """
+        if session_expires_at is None:
+            return False
+        reference = issued_at if issued_at is not None else int(time.time())
+        return session_expires_at <= (reference + cls.SESSION_EXPIRY_LEEWAY_SECONDS)
+
 
 class URL:
     @staticmethod

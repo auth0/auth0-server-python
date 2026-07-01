@@ -5,7 +5,10 @@ These Pydantic models provide type safety and validation for all SDK data struct
 
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# Upper bound (Unix seconds) for a plausible session_expiry
+SESSION_EXPIRY_MAX_PLAUSIBLE = 10_000_000_000
 
 
 class UserClaims(BaseModel):
@@ -23,9 +26,20 @@ class UserClaims(BaseModel):
     email_verified: Optional[bool] = None
     org_id: Optional[str] = None
     org_name: Optional[str] = None
+    # IPSIE SL1 claim: upstream IdP-asserted RP session ceiling (Unix seconds).
+    session_expiry: Optional[int] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
+
+    @field_validator('session_expiry', mode='before')
+    @classmethod
+    def _sanitize_session_expiry(cls, value: Any) -> Optional[int]:
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        if value <= 0 or value >= SESSION_EXPIRY_MAX_PLAUSIBLE:
+            return None
+        return value
 
 
 class TokenSet(BaseModel):
@@ -55,6 +69,10 @@ class InternalStateData(BaseModel):
     """
     sid: str
     created_at: int
+    # IPSIE session_expiry ceiling (Unix seconds), stamped at session creation
+    # from the ID token's session_expiry claim. None when the upstream IdP did
+    # not assert one — in which case existing session behavior is unchanged.
+    session_expires_at: Optional[int] = None
 
 
 class SessionData(BaseModel):

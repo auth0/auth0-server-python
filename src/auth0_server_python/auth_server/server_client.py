@@ -56,6 +56,7 @@ from auth0_server_python.error import (
     MissingTransactionError,
     OrganizationTokenValidationError,
     PollingApiError,
+    SessionExpiredError,
     StartLinkUserError,
 )
 from auth0_server_python.telemetry import Telemetry
@@ -656,7 +657,12 @@ class ServerClient(Generic[TStoreOptions]):
         # Use the userinfo field from the token_response for user claims
         user_info = token_response.get("userinfo")
         user_claims = None
+         # IPSIE session_expiry ceiling, read from the verified ID token claims.
+        session_expires_at = None
+        # ID token `iat`, used to detect a ceiling that is already past at login.
+        issued_at = None
         id_token = token_response.get("id_token")
+
         expected_org = transaction_data.organization
 
         if not user_info and not id_token and expected_org:
@@ -698,6 +704,8 @@ class ServerClient(Generic[TStoreOptions]):
                     validate_org_claims(claims, expected_org)
 
                 user_claims = UserClaims.parse_obj(claims)
+                session_expires_at = user_claims.session_expiry
+                issued_at = claims.get("iat")
             except ValueError as e:
                 raise ApiError("jwks_key_not_found", str(e))
             except jwt.InvalidSignatureError as e:
@@ -726,6 +734,11 @@ class ServerClient(Generic[TStoreOptions]):
                 )
 
 
+        # Refuse to persist a session whose ceiling is already in the past.
+        if State.is_session_ceiling_in_past(session_expires_at, issued_at):
+            await self._transaction_store.delete(transaction_identifier, options=store_options)
+            raise SessionExpiredError()
+
         # Build a token set using the token response data
         token_set = TokenSet(
             audience=transaction_data.audience or self.DEFAULT_AUDIENCE_STATE_KEY,
@@ -749,7 +762,8 @@ class ServerClient(Generic[TStoreOptions]):
             domain=origin_domain,
             internal={
                 "sid": sid,
-                "created_at": int(time.time())
+                "created_at": int(time.time()),
+                "session_expires_at": session_expires_at
             }
         )
 
@@ -774,6 +788,23 @@ class ServerClient(Generic[TStoreOptions]):
     # USER SESSION MANAGEMENT
     # Methods for retrieving user information, session data, and logout operations.
     # ============================================================================
+
+    async def _is_session_expired_by_ceiling(
+        self, state_data_dict: dict, store_options: Optional[dict[str, Any]] = None
+    ) -> bool:
+        """
+        Enforce the IPSIE session_expiry ceiling on a session read.
+
+        Returns True (and deletes the stored session) when the upstream
+        IdP-asserted ceiling has been reached. Sessions without a
+        session_expires_at value are never expired on this basis.
+        """
+        internal = state_data_dict.get("internal") or {}
+        session_expires_at = internal.get("session_expires_at")
+        if State.is_session_ceiling_reached(session_expires_at):
+            await self._state_store.delete(self._state_identifier, options=store_options)
+            return True
+        return False
 
     async def get_user(self, store_options: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
         """
@@ -800,6 +831,10 @@ class ServerClient(Generic[TStoreOptions]):
                 current_domain = await self._resolve_current_domain(store_options)
                 if self._normalize_url(session_domain) != self._normalize_url(current_domain):
                     return None
+
+            # IPSIE: force re-auth once the upstream IdP session ceiling passes.
+            if await self._is_session_expired_by_ceiling(state_data, store_options):
+                return None
 
             return state_data.get("user")
         return None
@@ -829,6 +864,10 @@ class ServerClient(Generic[TStoreOptions]):
                 current_domain = await self._resolve_current_domain(store_options)
                 if self._normalize_url(session_domain) != self._normalize_url(current_domain):
                     return None
+
+            # IPSIE: force re-auth once the upstream IdP session ceiling passes.
+            if await self._is_session_expired_by_ceiling(state_data, store_options):
+                return None
 
             session_data = {k: v for k, v in state_data.items()
                             if k != "internal"}
@@ -1012,6 +1051,12 @@ class ServerClient(Generic[TStoreOptions]):
             audience = auth_params.get("audience", None)
 
         merged_scope = self._merge_scope_with_defaults(scope, audience)
+
+        # Once the session ceiling has passed, fail instead of serving or refreshing a token.
+        internal = (state_data_dict or {}).get("internal") or {}
+        if State.is_session_ceiling_reached(internal.get("session_expires_at")):
+            await self._state_store.delete(self._state_identifier, options=store_options)
+            raise SessionExpiredError()
 
         # Find matching token set
         token_set = None
