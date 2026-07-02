@@ -43,6 +43,9 @@ def make_dpop_proof_for_token_endpoint(key: "jwk.JWK", method: str, url: str, no
 
 
 class DPoPAuth(httpx.Auth):
+    # Buffer the body (sync/async-aware) so the nonce retry can resend it.
+    requires_request_body = True
+
     def __init__(self, token: str, key: "jwk.JWK") -> None:
         public_jwk = _validate_dpop_key(key)
         try:
@@ -60,10 +63,6 @@ class DPoPAuth(httpx.Auth):
         return "DPoPAuth(token=[REDACTED], key=[REDACTED])"
 
     def auth_flow(self, request: httpx.Request):
-        # Buffer the body so it can be resent on nonce retry (RFC 9449 §8.2).
-        # httpx streams request bodies by default; once consumed the bytes are
-        # gone. Reading here guarantees the retry yield sends identical bytes.
-        request.read()
         proof = self._make_proof(request.method, str(request.url))
         request.headers["Authorization"] = f"DPoP {self._token}"
         request.headers["DPoP"] = proof

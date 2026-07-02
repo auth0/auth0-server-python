@@ -6458,24 +6458,62 @@ async def test_signin_with_passkey_mfa_required_stores_pending_mfa(mocker):
     assert store_payload["mfa_token"] == exc.value.mfa_token
 
 
-def test_dpop_auth_nonce_retry_body_identical():
-    """POST body bytes must be identical on initial send and nonce retry."""
+@pytest.mark.asyncio
+async def test_dpop_auth_async_json_body_survives_nonce_retry():
+    """A DPoP-bound POST over AsyncClient (the MyAccount path) must resend an
+    identical, non-empty body when the server answers 401 + DPoP-Nonce."""
     key = jwk.JWK.generate(kty="EC", crv="P-256")
-    auth = DPoPAuth(token="test_access_token", key=key)
-    body = b'{"key": "value", "nested": {"a": 1}}'
-    request = httpx.Request("POST", "https://example.com/resource", content=body)
+    seen_bodies = []
 
-    flow = auth.auth_flow(request)
-    first_request = next(flow)
-    assert first_request.content == body
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_bodies.append(await request.aread())
+        if len(seen_bodies) == 1:
+            return httpx.Response(401, headers={"DPoP-Nonce": "srv-nonce-1"})
+        return httpx.Response(200, json={"ok": True})
 
-    nonce_response = httpx.Response(
-        status_code=401,
-        headers={"DPoP-Nonce": "server-nonce-abc"},
-        request=first_request,
-    )
-    retried_request = flow.send(nonce_response)
-    assert retried_request.content == body
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        response = await client.post(
+            "https://example.com/me/v1/authentication-methods",
+            json={"type": "passkey", "nested": {"a": 1, "b": [1, 2, 3]}},
+            auth=DPoPAuth("access_token_xyz", key),
+        )
+
+    assert response.status_code == 200
+    assert len(seen_bodies) == 2
+    assert seen_bodies[0] == seen_bodies[1]
+    assert len(seen_bodies[0]) > 0
+
+
+@pytest.mark.asyncio
+async def test_dpop_auth_async_streaming_body_survives_nonce_retry():
+    """A streaming (async-generator) body must not crash the DPoP nonce retry
+    and must arrive identical on both sends. Guards against a manual sync
+    request.read() inside auth_flow, which raises on async streaming bodies."""
+    key = jwk.JWK.generate(kty="EC", crv="P-256")
+    seen_bodies = []
+
+    async def body_stream():
+        yield b'{"type":"passkey"}'
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_bodies.append(await request.aread())
+        if len(seen_bodies) == 1:
+            return httpx.Response(401, headers={"DPoP-Nonce": "srv-nonce-1"})
+        return httpx.Response(200, json={"ok": True})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        response = await client.post(
+            "https://example.com/me/v1/authentication-methods",
+            content=body_stream(),
+            headers={"content-type": "application/json"},
+            auth=DPoPAuth("access_token_xyz", key),
+        )
+
+    assert response.status_code == 200
+    assert len(seen_bodies) == 2
+    assert seen_bodies[0] == seen_bodies[1] == b'{"type":"passkey"}'
 
 
 @pytest.mark.asyncio
