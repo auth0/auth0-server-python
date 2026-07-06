@@ -5097,8 +5097,8 @@ async def test_server_client_mfa_receives_callable_domain():
 @pytest.mark.asyncio
 async def test_get_access_token_mfa_required(mocker):
     """
-    When get_token_by_refresh_token returns MfaRequiredError,
-    get_access_token re-raises it (token is already encrypted by get_token_by_refresh_token).
+    When get_token_by_refresh_token returns an mfa_required error,
+    get_access_token should raise MfaRequiredError with an encrypted mfa_token.
     """
     mock_secret = "a-test-secret-with-enough-length"
     mock_store = MagicMock()
@@ -5127,6 +5127,7 @@ async def test_get_access_token_mfa_required(mocker):
             state_store=mock_store,
         )
 
+        # Simulate state with a refresh_token and expired access token
         mock_store.get = AsyncMock(return_value={
             "refresh_token": "rt_123",
             "token_sets": [
@@ -5138,15 +5139,13 @@ async def test_get_access_token_mfa_required(mocker):
             ]
         })
 
-        encrypted_token = client._mfa_client._encrypt_mfa_token(
-            raw_mfa_token="raw_mfa_token_xyz",
-            audience="default",
-            scope="",
+        # Simulate mfa_required ApiError from token refresh
+        mfa_err = ApiError(
+            code="mfa_required",
+            message="Multifactor authentication required",
         )
-        mfa_err = MfaRequiredError(
-            "Multifactor authentication required",
-            mfa_token=encrypted_token,
-        )
+        mfa_err.mfa_token = "raw_mfa_token_xyz"
+        mfa_err.mfa_requirements = None
 
         mocker.patch.object(client, "get_token_by_refresh_token",
                            new_callable=AsyncMock, side_effect=mfa_err)
@@ -5154,7 +5153,8 @@ async def test_get_access_token_mfa_required(mocker):
         with pytest.raises(MfaRequiredError) as exc:
             await client.get_access_token()
 
-        assert exc.value.mfa_token == encrypted_token
+        assert exc.value.mfa_token is not None
+        assert exc.value.mfa_token != "raw_mfa_token_xyz"  # encrypted
     finally:
         ServerClient._fetch_oidc_metadata = original_fetch
 
@@ -5162,8 +5162,8 @@ async def test_get_access_token_mfa_required(mocker):
 @pytest.mark.asyncio
 async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
     """
-    When get_token_by_refresh_token returns MfaRequiredError with mfa_requirements,
-    get_access_token re-raises it preserving requirements.
+    When get_token_by_refresh_token returns mfa_required with enroll requirements,
+    get_access_token should raise MfaRequiredError with mfa_requirements containing enroll.
     """
     mock_secret = "a-test-secret-with-enough-length"
     mock_store = MagicMock()
@@ -5192,6 +5192,7 @@ async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
             state_store=mock_store,
         )
 
+        # Simulate state with a refresh_token and expired access token
         mock_store.get = AsyncMock(return_value={
             "refresh_token": "rt_123",
             "token_sets": [
@@ -5203,23 +5204,18 @@ async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
             ]
         })
 
-        requirements = MfaRequirements(
+        # Simulate mfa_required with enroll requirements
+        mfa_err = ApiError(
+            code="mfa_required",
+            message="Multifactor authentication required",
+        )
+        mfa_err.mfa_token = "raw_mfa_token_enroll"
+        mfa_err.mfa_requirements = MfaRequirements(
             enroll=[
                 {"type": "otp"},
                 {"type": "phone"},
                 {"type": "push-notification"}
             ]
-        )
-        encrypted_token = client._mfa_client._encrypt_mfa_token(
-            raw_mfa_token="raw_mfa_token_enroll",
-            audience="default",
-            scope="",
-            mfa_requirements=requirements,
-        )
-        mfa_err = MfaRequiredError(
-            "Multifactor authentication required",
-            mfa_token=encrypted_token,
-            mfa_requirements=requirements,
         )
 
         mocker.patch.object(client, "get_token_by_refresh_token",
@@ -5228,7 +5224,8 @@ async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
         with pytest.raises(MfaRequiredError) as exc:
             await client.get_access_token()
 
-        assert exc.value.mfa_token == encrypted_token
+        assert exc.value.mfa_token is not None
+        assert exc.value.mfa_token != "raw_mfa_token_enroll"  # encrypted
         assert exc.value.mfa_requirements is not None
     finally:
         ServerClient._fetch_oidc_metadata = original_fetch
@@ -6834,46 +6831,6 @@ async def test_signin_with_passkey_client_default_org_is_validated_against_id_to
         )
 
     state_store.set.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_get_access_token_mfa_required_encrypts_and_raises(mocker):
-    """When get_token_by_refresh_token raises an mfa_required ApiError, get_access_token
-    encrypts the raw mfa_token and raises MfaRequiredError with it."""
-    mock_secret = "a-test-secret-with-enough-length"
-    mock_store = AsyncMock()
-    mock_store.get = AsyncMock(return_value={
-        "refresh_token": "rt_123",
-        "token_sets": [
-            {"audience": "default", "access_token": "expired_at", "expires_at": 0}
-        ]
-    })
-    mock_store.set = AsyncMock()
-    mock_store.delete = AsyncMock()
-
-    client = ServerClient(
-        domain="auth0.local",
-        client_id="cid",
-        client_secret="csecret",
-        secret=mock_secret,
-        transaction_store=mock_store,
-        state_store=mock_store,
-    )
-
-    mfa_err = ApiError(
-        code="mfa_required",
-        message="Multifactor authentication required",
-    )
-    mfa_err.mfa_token = "raw_mfa_token_xyz"
-    mfa_err.mfa_requirements = None
-    mocker.patch.object(client, "get_token_by_refresh_token",
-                        new_callable=AsyncMock, side_effect=mfa_err)
-
-    with pytest.raises(MfaRequiredError) as exc:
-        await client.get_access_token()
-
-    assert exc.value.mfa_token is not None
-    assert exc.value.mfa_token != "raw_mfa_token_xyz"
 
 
 @pytest.mark.asyncio
