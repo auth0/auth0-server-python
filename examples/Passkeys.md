@@ -25,15 +25,6 @@ A passkey ceremony is always **two steps**, because the WebAuthn signature happe
 2. **Browser** — your front end passes those options to `navigator.credentials.create()` (signup) or `navigator.credentials.get()` (login). The authenticator produces a signed credential.
 3. **Verify / sign-in** — the SDK exchanges the signed credential for tokens (`signin_with_passkey`) and **creates a server-side session**, exactly like every other login path.
 
-```
-ServerClient.passkey_*_challenge()  ──►  auth_session + authn_params_public_key
-                                              │
-              navigator.credentials.create()/get()  (browser signs)
-                                              │
-ServerClient.signin_with_passkey()  ◄──  signed authn_response
-        └─► tokens validated, session persisted → PasskeyLoginResult
-```
-
 ## Prerequisites
 
 ```python

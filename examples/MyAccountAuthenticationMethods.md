@@ -27,7 +27,7 @@ The [My Account API](https://auth0.com/docs/manage-users/my-account-api) lets a 
 2. [Configure MRRT](https://auth0.com/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token) so your refresh-token policy can mint tokens for the My Account audience (`https://{yourDomain}/me/`) with the authentication-methods scopes.
 3. Passkey enrollment additionally requires a [Custom Domain](https://auth0.com/docs/customize/custom-domains) and the native passkey feature on your tenant.
 
-The scopes for this surface (note the **hyphens**):
+See [Auth0 Docs → Scope](https://auth0.com/docs/manage-users/my-account-api#scope) for the full scope reference. The scopes for this surface (note the **hyphens**):
 
 | Operation | Scope |
 |-----------|-------|
@@ -42,7 +42,7 @@ The scopes for this surface (note the **hyphens**):
 
 ## Obtaining a scoped token
 
-`MyAccountClient` is **stateless** — it takes a correctly-scoped user access token on every call. Obtain that token from your `ServerClient` session via MRRT, then construct the client:
+`MyAccountClient` is **stateless** — it takes a correctly-scoped user access token on every call. Obtain that token from your `ServerClient` session via MRRT, then construct the client. See [Auth0 Docs → Get an access token](https://auth0.com/docs/manage-users/my-account-api#get-an-access-token) for the underlying token requirements.
 
 ```python
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
@@ -67,7 +67,7 @@ for factor in factors.factors:
 
 ## 2. Enroll an authentication method (passkey)
 
-Enrollment is a **two-step** ceremony, mirroring sign-in: request a challenge, sign it in the browser, then verify.
+Enrollment is a **two-step** ceremony, mirroring sign-in: request a challenge, sign it in the browser, then verify. See [Auth0 Docs → Enrollment flow](https://auth0.com/docs/manage-users/my-account-api#enrollment-flow) (and, for passkeys specifically, [Embedded login with native passkeys](https://auth0.com/docs/manage-users/my-account-api#embedded-login-with-native-passkeys)) for the platform-level description of this ceremony.
 
 ### Step 1 — Start enrollment
 
@@ -122,6 +122,8 @@ print(f"Enrolled: {method.id} ({method.type})")
 
 ## 3. List authentication methods
 
+See [Auth0 Docs → List authentication methods](https://auth0.com/docs/manage-users/my-account-api#list-authentication-methods).
+
 ```python
 all_methods = await my_account.list_authentication_methods(access_token=access_token)
 
@@ -162,6 +164,8 @@ method = await my_account.update_authentication_method(
 ```
 
 ## 6. Delete an authentication method
+
+See [Auth0 Docs → Delete an authentication method](https://auth0.com/docs/manage-users/my-account-api#delete-an-authentication-method).
 
 ```python
 await my_account.delete_authentication_method(

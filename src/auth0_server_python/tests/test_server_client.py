@@ -57,6 +57,7 @@ from auth0_server_python.error import (
     MissingTransactionError,
     OrganizationTokenValidationError,
     PasskeyError,
+    PasskeyErrorCode,
     PollingApiError,
     SessionExpiredError,
     StartLinkUserError,
@@ -5455,7 +5456,7 @@ async def test_passkey_signup_challenge_api_error(mocker):
         await client.passkey_signup_challenge(
             user_profile=PasskeyUserProfile(email="test@example.com")
         )
-    assert "access_denied" in str(exc.value) or "Passkey not enabled" in str(exc.value)
+    assert exc.value.code == "access_denied"
 
 
 @pytest.mark.asyncio
@@ -5476,7 +5477,7 @@ async def test_passkey_signup_challenge_non_json_error(mocker):
 
     with pytest.raises(PasskeyError) as exc:
         await client.passkey_signup_challenge()
-    assert "502" in str(exc.value) or "passkey_challenge_error" in str(exc.value)
+    assert exc.value.code == PasskeyErrorCode.CHALLENGE_FAILED
 
 
 @pytest.mark.asyncio
@@ -5494,7 +5495,7 @@ async def test_passkey_signup_challenge_network_error(mocker):
 
     with pytest.raises(PasskeyError) as exc:
         await client.passkey_signup_challenge()
-    assert "Passkey signup challenge failed" in str(exc.value)
+    assert exc.value.code == PasskeyErrorCode.CHALLENGE_FAILED
 
 
 @pytest.mark.asyncio
@@ -6150,7 +6151,7 @@ async def test_signin_with_passkey_dpop_rejects_bearer_downgrade(mocker):
             authn_response=_make_passkey_authn_response(),
             dpop_key=dpop_key,
         )
-    assert "DPoP" in str(exc.value) or "token_type" in str(exc.value).lower()
+    assert exc.value.code == PasskeyErrorCode.TOKEN_EXCHANGE_FAILED
 
 
 @pytest.mark.asyncio
@@ -6179,12 +6180,11 @@ async def test_signin_with_passkey_missing_issuer_in_metadata(mocker):
     mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
     mock_post.return_value = mock_response
 
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(IssuerValidationError):
         await client.signin_with_passkey(
             auth_session="session_xyz",
             authn_response=_make_passkey_authn_response(),
         )
-    assert "issuer" in str(exc.value).lower()
 
 
 @pytest.mark.asyncio
@@ -6689,6 +6689,40 @@ async def test_signin_with_passkey_call_arg_overrides_client_default_organizatio
 
     _, kwargs = mock_post.call_args
     assert kwargs["json"]["organization"] == "org_override"
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_org_requested_no_id_token_raises_and_no_session_stored(mocker):
+    """Organization requested but token response has no id_token: fail closed, no session stored."""
+    state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=state_store,
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={**_PASSKEY_TOKEN_RESPONSE, "id_token": None})
+    mock_post.return_value = mock_response
+
+    with pytest.raises(OrganizationTokenValidationError):
+        await client.signin_with_passkey(
+            auth_session="session_xyz",
+            authn_response=_make_passkey_authn_response(),
+            organization="org_expected",
+        )
+
+    state_store.set.assert_not_awaited()
 
 
 @pytest.mark.asyncio

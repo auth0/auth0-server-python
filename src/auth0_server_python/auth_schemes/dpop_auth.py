@@ -2,6 +2,7 @@ import base64
 import hashlib
 import time
 import uuid
+from typing import Optional
 
 import httpx
 from jwcrypto import jwk
@@ -20,7 +21,9 @@ def _validate_dpop_key(key: "jwk.JWK") -> dict:
     return public_jwk
 
 
-def make_dpop_proof_for_token_endpoint(key: "jwk.JWK", method: str, url: str, nonce: str = None) -> str:
+def make_dpop_proof_for_token_endpoint(
+    key: "jwk.JWK", method: str, url: str, nonce: Optional[str] = None
+) -> str:
     """
     Build a DPoP proof JWT for use at the token endpoint (RFC 9449 §4.2).
     Unlike resource-server proofs, token-endpoint proofs do NOT include `ath`
@@ -69,15 +72,14 @@ class DPoPAuth(httpx.Auth):
         response = yield request
 
         # RFC 9449 §8.2 — server-nonce retry
-        if (
-            response.status_code == 401
-            and response.headers.get("DPoP-Nonce")
-        ):
+        if response.status_code == 401 and response.headers.get("DPoP-Nonce"):
             nonce = response.headers["DPoP-Nonce"]
-            request.headers["DPoP"] = self._make_proof(request.method, str(request.url), nonce=nonce)
+            request.headers["DPoP"] = self._make_proof(
+                request.method, str(request.url), nonce=nonce
+            )
             yield request
 
-    def _make_proof(self, method: str, url: str, nonce: str = None) -> str:
+    def _make_proof(self, method: str, url: str, nonce: Optional[str] = None) -> str:
         htu = url.split("?")[0].split("#")[0]
         ath = _base64url(hashlib.sha256(self._token.encode("ascii")).digest())
 

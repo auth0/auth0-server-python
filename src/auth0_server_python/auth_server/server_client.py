@@ -2800,9 +2800,6 @@ class ServerClient(Generic[TStoreOptions]):
         This is step 2 of 2: call passkey_signup_challenge or passkey_login_challenge
         first to obtain auth_session and the WebAuthn challenge options.
 
-        Uses Content-Type: application/json (required for nested authn_response).
-        Persists the session to the state store (same as complete_interactive_login).
-
         Args:
             auth_session: Session credential from passkey_signup_challenge or passkey_login_challenge.
             authn_response: Serialized WebAuthn credential from navigator.credentials.create/get.
@@ -2823,6 +2820,9 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             MissingRequiredArgumentError: If auth_session or authn_response is missing.
             PasskeyError: If token exchange or session creation fails.
+            OrganizationTokenValidationError: If an organization was requested but the
+                token response included no ID token, or the ID token's org claim does
+                not match.
         """
         if not auth_session:
             raise MissingRequiredArgumentError("auth_session")
@@ -2919,6 +2919,12 @@ class ServerClient(Generic[TStoreOptions]):
                         f"DPoP token binding failed: expected token_type 'DPoP', "
                         f"got '{token_response.token_type}'",
                     )
+
+            if resolved_org and not token_response.id_token:
+                raise OrganizationTokenValidationError(
+                    "Organization was requested but the token response included no ID token; "
+                    "cannot verify organization membership"
+                )
 
             # Extract user claims from ID token if present
             user_claims = None

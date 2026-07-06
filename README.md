@@ -229,9 +229,12 @@ challenge = await my_account.enroll_authentication_method(
 
 For the full enroll/verify ceremony, listing, updating, deleting, and error handling, see [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md).
 
-### 8. DPoP — Sender-Constrained Tokens
+### 8. DPoP — Sender-Constrained Tokens (Passkeys & MyAccount)
 
-Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. Generate an EC P-256 key and pass it to passkey sign-in or any My Account API call:
+Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. Generate an EC P-256 key and pass it to passkey sign-in or to the authentication-methods/factors calls on `MyAccountClient`:
+
+> [!NOTE]
+> `dpop_key` is currently supported only for `signin_with_passkey` and the authentication-methods/factors methods on `MyAccountClient` (enroll, verify, list, get, update, delete, get factors). It is **not yet supported for Connected Accounts** — see [examples/ConnectedAccounts.md](examples/ConnectedAccounts.md).
 
 ```python
 from jwcrypto import jwk
@@ -246,7 +249,7 @@ result = await auth0.signin_with_passkey(
 )
 ```
 
-`dpop_key` is a Tier 0 secret you generate, keep in your secret store, and reuse for the bound token's lifetime — pass the **same** key to passkey sign-in and every My Account API call. For usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
+`dpop_key` is a Tier 0 secret you generate, keep in your secret store, and reuse for the bound token's lifetime — pass the **same** key to passkey sign-in and to the `MyAccountClient` authentication-methods/factors calls listed above. For usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
 
 ### 9. Session Expiry from the Upstream IdP
 
