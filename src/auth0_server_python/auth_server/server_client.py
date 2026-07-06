@@ -34,6 +34,7 @@ from auth0_server_python.auth_types import (
     LoginWithCustomTokenExchangeResult,
     LogoutOptions,
     LogoutTokenClaims,
+    MfaRequirements,
     PasskeyAuthResponse,
     PasskeyLoginChallengeResponse,
     PasskeyLoginResult,
@@ -1114,9 +1115,24 @@ class ServerClient(Generic[TStoreOptions]):
 
             return token_endpoint_response["access_token"]
         except Exception as e:
-            if isinstance(e, MfaRequiredError):
-                await self._mfa_client.store_pending_mfa(e.mfa_token, store_options)
-                raise
+            # Check for mfa_required error from token refresh
+            if isinstance(e, ApiError) and e.code == "mfa_required":
+                raw_mfa_token = getattr(e, "mfa_token", None)
+                mfa_requirements = getattr(e, "mfa_requirements", None)
+
+                if raw_mfa_token:
+                    encrypted_token = self._mfa_client._encrypt_mfa_token(
+                        raw_mfa_token=raw_mfa_token,
+                        audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
+                        scope=merged_scope or "",
+                        mfa_requirements=mfa_requirements
+                    )
+                    raise MfaRequiredError(
+                        "Multifactor authentication required",
+                        mfa_token=encrypted_token,
+                        mfa_requirements=mfa_requirements
+                    )
+
             if isinstance(e, AccessTokenError):
                 raise
             raise AccessTokenError(
@@ -1187,18 +1203,18 @@ class ServerClient(Generic[TStoreOptions]):
                     error_data = response.json()
                     error_code = error_data.get("error", "refresh_token_error")
 
+                    # Preserve mfa_required details for upstream handling
                     if error_code == "mfa_required":
-                        # Encrypt + raise via the shared helper so this matches
-                        # the passkey and chained-verify sites. Returns only when
-                        # no mfa_token is present (then falls through to ApiError).
-                        # store_pending is left False here: the get_access_token
-                        # caller persists the token in its own catch block.
-                        await self._mfa_client._raise_mfa_required(
-                            error_data,
-                            audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
-                            scope=merged_scope or "",
-                            default_description="MFA required",
+                        error = ApiError(
+                            error_code,
+                            error_data.get("error_description", "MFA required")
                         )
+                        error.mfa_token = error_data.get("mfa_token")
+                        mfa_requirements_data = error_data.get("mfa_requirements")
+                        error.mfa_requirements = None
+                        if mfa_requirements_data:
+                            error.mfa_requirements = MfaRequirements(**mfa_requirements_data)
+                        raise error
 
                     raise ApiError(
                         error_code,
@@ -1216,7 +1232,7 @@ class ServerClient(Generic[TStoreOptions]):
                 return token_response
 
         except Exception as e:
-            if isinstance(e, (ApiError, MfaRequiredError)):
+            if isinstance(e, ApiError):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
@@ -2448,9 +2464,7 @@ class ServerClient(Generic[TStoreOptions]):
                         if self._normalize_url(claims.get("iss", "")) == self._normalize_url(metadata.get("issuer")):
                             token_response.act = claims.get("act")
                     except (jwt.InvalidTokenError, ValueError, KeyError):
-                        # A genuinely absent/optional act claim or a benign decode
-                        # gap leaves act None. Anything outside these types (an
-                        # unexpected verify failure) surfaces rather than being masked.
+                        # Malformed/absent act claim only; other failures propagate.
                         token_response.act = None
 
                 return token_response

@@ -177,7 +177,13 @@ The SDK handles per-domain OIDC discovery, JWKS fetching, issuer validation, and
 
 For more details and examples, see [examples/MultipleCustomDomains.md](examples/MultipleCustomDomains.md).
 
-### 6. Passkey Authentication
+### 6. Session Expiry from the Upstream IdP
+
+For enterprise connections, the upstream identity provider can cap how long a user's session lives. When the connection is configured to honor it, Auth0 includes a `session_expiry` claim in the ID token, and the SDK enforces this ceiling on every session read. Once it is reached, `get_user()` and `get_session()` return `None`, and `get_access_token()` raises an `AccessTokenError` with code `session_expired`. If the asserted ceiling is already in the past at login, `complete_interactive_login()` raises a `SessionExpiredError` instead of persisting an already-expired session.
+
+For more details and examples, see [examples/RetrievingData.md](examples/RetrievingData.md#session-expiry-from-the-upstream-idp).
+
+### 7. Passkey Authentication
 
 Sign users up or in with [WebAuthn](https://www.w3.org/TR/webauthn-2/) passkeys (Touch ID, Face ID, Windows Hello, or a security key) instead of a password. The ceremony is two steps — request a challenge, sign it in the browser, then complete sign-in — and establishes a server-side session like every other login path:
 
@@ -203,33 +209,11 @@ user = result.state_data["user"]
 
 For signup, organizations, step-up MFA, and error handling, see [examples/Passkeys.md](examples/Passkeys.md).
 
-### 7. My Account API — Authentication Methods
+### 8. My Account API — Authentication Methods
 
-Let a logged-in user manage their own enrolled authentication methods — enroll a new passkey (or other factor), list, rename, and delete — via the [My Account API](https://auth0.com/docs/manage-users/my-account-api):
+Let a logged-in user manage their own enrolled authentication methods — enroll a new passkey (or other factor), list, rename, and delete — via the [My Account API](https://auth0.com/docs/manage-users/my-account-api). For obtaining a scoped token, the enroll/verify ceremony, listing, updating, deleting, and error handling, see [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md).
 
-```python
-from auth0_server_python.auth_server.my_account_client import MyAccountClient
-from auth0_server_python.auth_types import EnrollAuthenticationMethodRequest
-
-# Obtain a My Account-scoped token for the current session (MRRT)
-access_token = await auth0.get_access_token(
-    store_options={"request": request, "response": response},
-    audience=f"https://{YOUR_CUSTOM_DOMAIN}/me/",
-    scope="create:me:authentication-methods read:me:authentication-methods",
-)
-
-my_account = MyAccountClient(domain=YOUR_CUSTOM_DOMAIN)
-
-# Start enrolling a passkey (then sign it in the browser and verify)
-challenge = await my_account.enroll_authentication_method(
-    access_token=access_token,
-    request=EnrollAuthenticationMethodRequest(type="passkey"),
-)
-```
-
-For the full enroll/verify ceremony, listing, updating, deleting, and error handling, see [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md).
-
-### 8. DPoP — Sender-Constrained Tokens (Passkeys & MyAccount)
+### 9. DPoP — Sender-Constrained Tokens (Passkeys & MyAccount)
 
 Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. Generate an EC P-256 key and pass it to passkey sign-in or to the authentication-methods/factors calls on `MyAccountClient`:
 
@@ -250,12 +234,6 @@ result = await auth0.signin_with_passkey(
 ```
 
 `dpop_key` is a Tier 0 secret you generate, keep in your secret store, and reuse for the bound token's lifetime — pass the **same** key to passkey sign-in and to the `MyAccountClient` authentication-methods/factors calls listed above. For usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
-
-### 9. Session Expiry from the Upstream IdP
-
-For enterprise connections, the upstream identity provider can cap how long a user's session lives. When the connection is configured to honor it, Auth0 includes a `session_expiry` claim in the ID token, and the SDK enforces this ceiling on every session read. Once it is reached, `get_user()` and `get_session()` return `None`, and `get_access_token()` raises an `AccessTokenError` with code `session_expired`. If the asserted ceiling is already in the past at login, `complete_interactive_login()` raises a `SessionExpiredError` instead of persisting an already-expired session.
-
-For more details and examples, see [examples/RetrievingData.md](examples/RetrievingData.md#session-expiry-from-the-upstream-idp).
 
 ## Feedback
 
