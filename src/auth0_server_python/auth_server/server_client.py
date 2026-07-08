@@ -2925,13 +2925,27 @@ class ServerClient(Generic[TStoreOptions]):
                         PasskeyErrorCode.INVALID_RESPONSE, "Failed to parse passkey token response as JSON"
                     )
 
+                # Add required fields if they are missing
+                if "expires_in" in token_data and "expires_at" not in token_data:
+                    token_data["expires_at"] = int(time.time()) + token_data["expires_in"]
+
                 token_response = PasskeyTokenResponse.model_validate(token_data)
 
-                if dpop_key is not None and token_response.token_type.lower() != "dpop":
+                token_is_dpop = token_response.token_type.lower() == "dpop"
+                if dpop_key is not None and not token_is_dpop:
                     raise PasskeyError(
                         PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
                         f"DPoP token binding failed: expected token_type 'DPoP', "
                         f"got '{token_response.token_type}'",
+                    )
+                if dpop_key is None and token_is_dpop:
+                    # Server issued a DPoP-bound token but no proof key was
+                    # supplied — we cannot prove possession on later calls, so
+                    # storing it as Bearer would silently fail open. Reject.
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
+                        "Server returned a DPoP-bound token but no dpop_key was "
+                        "provided; pass dpop_key to signin_with_passkey to bind it",
                     )
 
             if resolved_org and not token_response.id_token:

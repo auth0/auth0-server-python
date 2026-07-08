@@ -142,39 +142,6 @@ class MfaClient:
     # MFA STATE
     # ============================================================================
 
-    async def store_pending_mfa(
-        self,
-        encrypted_token: str,
-        store_options: Optional[dict[str, Any]] = None,
-    ) -> None:
-        """Save an in-progress MFA token so challenge and verify can proceed without the client carrying the token."""
-        if self._state_store:
-            await self._state_store.set(
-                MFA_PENDING_IDENTIFIER,
-                {"mfa_token": encrypted_token},
-                options=store_options,
-            )
-
-    async def get_pending_mfa(
-        self,
-        store_options: Optional[dict[str, Any]] = None,
-    ) -> Optional[str]:
-        """Retrieve the in-progress MFA token if a challenge is pending for the current session, or None."""
-        if not self._state_store:
-            return None
-        data = await self._state_store.get(MFA_PENDING_IDENTIFIER, store_options)
-        if data and isinstance(data, dict):
-            return data.get("mfa_token")
-        return None
-
-    async def _clear_pending_mfa(
-        self,
-        store_options: Optional[dict[str, Any]] = None,
-    ) -> None:
-        """Clear the in-progress MFA state after successful verification."""
-        if self._state_store:
-            await self._state_store.delete(MFA_PENDING_IDENTIFIER, store_options)
-
     def _resolve_encrypted_token(
         self,
         options: dict[str, Any],
@@ -192,12 +159,18 @@ class MfaClient:
     @staticmethod
     def _parse_error_body(response: httpx.Response) -> dict[str, Any]:
         """
-        Parse an error response body as JSON, falling back to a status-coded
-        stub when the body is not JSON (e.g. a gateway 502/504 HTML page).
+        Parse an error response body as JSON.
 
-        Never raises — the caller always gets a dict it can read error fields
-        from, so a non-JSON error surfaces the real HTTP status rather than a
-        JSON-parser exception folded into the message.
+        Falls back to a status-coded stub when the body is not JSON (e.g. a
+        gateway 502/504 HTML page), so the caller always gets a readable dict
+        rather than a JSON-parser exception folded into the message.
+
+        Args:
+            response: The HTTP error response to parse.
+
+        Returns:
+            The parsed JSON object, or a stub dict whose 'error_description'
+            names the HTTP status when the body is not a JSON object.
         """
         try:
             data = response.json()
@@ -223,14 +196,25 @@ class MfaClient:
         Encrypt the server-issued mfa_token and raise MfaRequiredError.
 
         Shared by every site that handles an `mfa_required` response so the
-        encrypt-then-raise behaviour cannot drift between entry points. Returns
-        only when the response carries no mfa_token (caller then falls through
-        to its own typed error).
+        encrypt-then-raise behaviour cannot drift between entry points.
 
-        store_pending controls whether the encrypted token is persisted to the
-        state store before raising. It is an explicit argument so the difference
-        between entry points is visible: the passkey grant persists it here,
-        while the refresh-token path relies on its get_access_token caller.
+        Args:
+            error_data: The parsed `mfa_required` error body from Auth0.
+            audience: Audience to bind into the encrypted token context.
+            scope: Scope to bind into the encrypted token context.
+            default_description: Message used when the response omits
+                'error_description'.
+            store_pending: When True, persist the encrypted token to the state
+                store before raising (the passkey grant does; the refresh-token
+                path relies on its get_access_token caller instead).
+            store_options: Optional options passed to the State Store.
+
+        Returns:
+            None. Returns without raising only when the response carries no
+            mfa_token, so the caller can fall through to its own typed error.
+
+        Raises:
+            MfaRequiredError: When the response carries an mfa_token.
         """
         raw_mfa_token = error_data.get("mfa_token")
         if not raw_mfa_token:
@@ -245,8 +229,14 @@ class MfaClient:
             scope=scope,
             mfa_requirements=mfa_requirements,
         )
-        if store_pending:
-            await self.store_pending_mfa(encrypted_token, store_options)
+        if store_pending and self._state_store:
+            # Persist the in-progress MFA token so challenge and verify can
+            # proceed without the client carrying the token.
+            await self._state_store.set(
+                MFA_PENDING_IDENTIFIER,
+                {"mfa_token": encrypted_token},
+                options=store_options,
+            )
         raise MfaRequiredError(
             error_data.get("error_description", default_description),
             mfa_token=encrypted_token,
@@ -545,7 +535,9 @@ class MfaClient:
                 token_response = response.json()
                 verify_response = MfaVerifyResponse(**token_response)
 
-                await self._clear_pending_mfa(store_options)
+                # Clear the in-progress MFA state after successful verification.
+                if self._state_store:
+                    await self._state_store.delete(MFA_PENDING_IDENTIFIER, store_options)
 
                 if options.get("persist") and self._state_store:
                     await self._persist_mfa_tokens(
@@ -635,5 +627,5 @@ class MfaClient:
             raise
         except Exception as e:
             raise MfaVerifyError(
-                f"Failed to persist MFA tokens to state store: {str(e)}"
-            )
+                "Failed to persist MFA tokens to state store"
+            ) from e

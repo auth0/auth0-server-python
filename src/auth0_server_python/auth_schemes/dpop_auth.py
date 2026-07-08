@@ -21,6 +21,34 @@ def _validate_dpop_key(key: "jwk.JWK") -> dict:
     return public_jwk
 
 
+def _build_dpop_proof(
+    key: "jwk.JWK",
+    public_jwk: dict,
+    method: str,
+    url: str,
+    *,
+    ath: Optional[str] = None,
+    nonce: Optional[str] = None,
+) -> str:
+    """Sign a DPoP proof JWT (RFC 9449 §4.2). `ath` binds the proof to an
+    access token and is omitted for token-endpoint proofs."""
+    htu = url.split("?")[0].split("#")[0]
+    header = {"typ": "dpop+jwt", "alg": "ES256", "jwk": public_jwk}
+    payload = {
+        "jti": str(uuid.uuid4()),
+        "htm": method.upper(),
+        "htu": htu,
+        "iat": int(time.time()),
+    }
+    if ath is not None:
+        payload["ath"] = ath
+    if nonce is not None:
+        payload["nonce"] = nonce
+    token = jwcrypto_jwt.JWT(header=header, claims=payload)
+    token.make_signed_token(key)
+    return token.serialize()
+
+
 def make_dpop_proof_for_token_endpoint(
     key: "jwk.JWK", method: str, url: str, nonce: Optional[str] = None
 ) -> str:
@@ -30,19 +58,7 @@ def make_dpop_proof_for_token_endpoint(
     because no access token exists yet at issuance time.
     """
     public_jwk = _validate_dpop_key(key)
-    htu = url.split("?")[0].split("#")[0]
-    header = {"typ": "dpop+jwt", "alg": "ES256", "jwk": public_jwk}
-    payload = {
-        "jti": str(uuid.uuid4()),
-        "htm": method.upper(),
-        "htu": htu,
-        "iat": int(time.time()),
-    }
-    if nonce is not None:
-        payload["nonce"] = nonce
-    token = jwcrypto_jwt.JWT(header=header, claims=payload)
-    token.make_signed_token(key)
-    return token.serialize()
+    return _build_dpop_proof(key, public_jwk, method, url, nonce=nonce)
 
 
 class DPoPAuth(httpx.Auth):
@@ -59,12 +75,6 @@ class DPoPAuth(httpx.Auth):
         self._key = key
         self._public_jwk = public_jwk
 
-    def __repr__(self) -> str:
-        return "DPoPAuth(token=[REDACTED], key=[REDACTED])"
-
-    def __str__(self) -> str:
-        return "DPoPAuth(token=[REDACTED], key=[REDACTED])"
-
     def auth_flow(self, request: httpx.Request):
         proof = self._make_proof(request.method, str(request.url))
         request.headers["Authorization"] = f"DPoP {self._token}"
@@ -80,20 +90,5 @@ class DPoPAuth(httpx.Auth):
             yield request
 
     def _make_proof(self, method: str, url: str, nonce: Optional[str] = None) -> str:
-        htu = url.split("?")[0].split("#")[0]
         ath = _base64url(hashlib.sha256(self._token.encode("ascii")).digest())
-
-        header = {"typ": "dpop+jwt", "alg": "ES256", "jwk": self._public_jwk}
-        payload = {
-            "jti": str(uuid.uuid4()),
-            "htm": method.upper(),
-            "htu": htu,
-            "iat": int(time.time()),
-            "ath": ath,
-        }
-        if nonce is not None:
-            payload["nonce"] = nonce
-
-        token = jwcrypto_jwt.JWT(header=header, claims=payload)
-        token.make_signed_token(self._key)
-        return token.serialize()
+        return _build_dpop_proof(self._key, self._public_jwk, method, url, ath=ath, nonce=nonce)

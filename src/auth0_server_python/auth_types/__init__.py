@@ -3,13 +3,20 @@ Type definitions for auth0-server-python SDK.
 These Pydantic models provide type safety and validation for all SDK data structures.
 """
 
-import time
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Upper bound (Unix seconds) for a plausible session_expiry
 SESSION_EXPIRY_MAX_PLAUSIBLE = 10_000_000_000
+
+# Type aliases using Literal types. Used to validate caller-supplied input.
+# Server-controlled response fields use plain str instead, so a new factor or
+# challenge type (e.g. a future webauthn second factor) does not fail closed.
+OobChannel = Literal["sms", "voice", "auth0", "email"]
+ChallengeType = Literal["otp", "oob"]
+EnrollmentType = Literal["passkey", "email", "phone", "totp", "push-notification", "recovery-code", "password"]
+PreferredAuthMethod = Literal["sms", "voice"]
 
 
 class UserClaims(BaseModel):
@@ -471,12 +478,6 @@ class ListConnectedAccountConnectionsResponse(BaseModel):
 # MFA Types
 # =============================================================================
 
-# Type aliases using Literal types. Used to validate caller-supplied input.
-# Server-controlled response fields use plain str instead, so a new factor or
-# challenge type (e.g. a future webauthn second factor) does not fail closed.
-OobChannel = Literal["sms", "voice", "auth0", "email"]
-ChallengeType = Literal["otp", "oob"]
-
 
 class AuthenticatorResponse(BaseModel):
     """Represents an MFA authenticator enrolled by a user."""
@@ -701,10 +702,6 @@ class PasskeyPublicKeyOptions(BaseModel):
     user_verification: Optional[str] = Field(None, alias="userVerification")
 
 
-EnrollmentType = Literal["passkey", "email", "phone", "totp", "push-notification", "recovery-code", "password"]
-PreferredAuthMethod = Literal["sms", "voice"]
-
-
 class EnrollAuthenticationMethodRequest(BaseModel):
     type: EnrollmentType
     email: Optional[str] = None
@@ -719,14 +716,6 @@ class EnrollmentChallengeResponse(BaseModel):
     authentication_method_id: str
     auth_session: str
     authn_params_public_key: Optional[PasskeyPublicKeyOptions] = None
-
-    def __repr__(self) -> str:
-        return (
-            f"EnrollmentChallengeResponse("
-            f"authentication_method_id={self.authentication_method_id!r}, "
-            f"auth_session=[REDACTED], "
-            f"authn_params_public_key={self.authn_params_public_key!r})"
-        )
 
 
 class PasskeyAuthResponse(BaseModel):
@@ -807,13 +796,6 @@ class _PasskeyChallengeResponseBase(BaseModel):
     auth_session: str
     authn_params_public_key: PasskeyPublicKeyOptions
 
-    def __repr__(self) -> str:
-        return (
-            f"{self.__class__.__name__}("
-            f"auth_session=[REDACTED], "
-            f"authn_params_public_key={self.authn_params_public_key!r})"
-        )
-
 
 class PasskeySignupChallengeResponse(_PasskeyChallengeResponseBase):
     pass
@@ -832,22 +814,3 @@ class PasskeyTokenResponse(BaseModel):
     scope: Optional[str] = None
     id_token: Optional[str] = None
     refresh_token: Optional[str] = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _backfill_expires_at(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "expires_at" not in data and "expires_in" in data:
-            data["expires_at"] = int(time.time()) + int(data["expires_in"])
-        return data
-
-    def __repr__(self) -> str:
-        return (
-            f"PasskeyTokenResponse("
-            f"token_type={self.token_type!r}, "
-            f"expires_in={self.expires_in!r}, "
-            f"expires_at={self.expires_at!r}, "
-            f"scope={self.scope!r}, "
-            f"access_token=[REDACTED], "
-            f"id_token=[REDACTED], "
-            f"refresh_token=[REDACTED])"
-        )

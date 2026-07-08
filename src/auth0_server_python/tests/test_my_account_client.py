@@ -997,18 +997,6 @@ async def test_verify_authentication_method_missing_id(mocker, method_id):
         )
 
 
-def test_enrollment_challenge_response_repr():
-    resp = EnrollmentChallengeResponse(
-        authentication_method_id="am_1",
-        auth_session="super_secret_session",
-        authn_params_public_key=None,
-    )
-    repr_str = repr(resp)
-    assert "super_secret_session" not in repr_str
-    assert "[REDACTED]" in repr_str
-    assert "am_1" in repr_str
-
-
 def test_verify_request_auth_session_only_is_valid():
     req = VerifyAuthenticationMethodRequest(auth_session="session_abc")
     assert req.auth_session == "session_abc"

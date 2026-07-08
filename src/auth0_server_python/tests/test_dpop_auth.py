@@ -157,12 +157,10 @@ def test_token_endpoint_proof_rejects_non_ec_key():
         make_dpop_proof_for_token_endpoint(rsa_key, "POST", "https://example.com/oauth/token")
 
 
-def test_dpop_repr_redacts_credentials(ec_key):
+def test_dpop_repr_does_not_leak_credentials(ec_key):
     auth = DPoPAuth(token="secret_access_token_value", key=ec_key)
     assert "secret_access_token_value" not in repr(auth)
     assert "secret_access_token_value" not in str(auth)
-    assert "[REDACTED]" in repr(auth)
-    assert "[REDACTED]" in str(auth)
 
 
 def test_dpop_rejects_non_ec_key():

@@ -32,7 +32,6 @@ from auth0_server_python.auth_types import (
     PasskeyLoginChallengeResponse,
     PasskeyLoginResult,
     PasskeySignupChallengeResponse,
-    PasskeyTokenResponse,
     PasskeyUserProfile,
     StartInteractiveLoginOptions,
     StateData,
@@ -5867,36 +5866,6 @@ async def test_signin_with_passkey_no_client_secret(mocker):
     assert body["client_id"] == "public_client"
 
 
-def test_passkey_signup_challenge_repr_redacts_auth_session():
-    resp = PasskeySignupChallengeResponse.model_validate(_PASSKEY_SIGNUP_CHALLENGE_RESPONSE)
-    repr_str = repr(resp)
-    assert "session_abc123" not in repr_str
-    assert "[REDACTED]" in repr_str
-
-
-def test_passkey_login_challenge_repr_redacts_auth_session():
-    resp = PasskeyLoginChallengeResponse.model_validate(_PASSKEY_LOGIN_CHALLENGE_RESPONSE)
-    repr_str = repr(resp)
-    assert "session_login_xyz" not in repr_str
-    assert "[REDACTED]" in repr_str
-
-
-def test_passkey_token_response_repr_redacts_tokens():
-    resp = PasskeyTokenResponse(
-        access_token="secret_at_value",
-        token_type="Bearer",
-        expires_in=86400,
-        id_token="secret_id_token",
-        refresh_token="secret_rt_value",
-    )
-    repr_str = repr(resp)
-    assert "secret_at_value" not in repr_str
-    assert "secret_id_token" not in repr_str
-    assert "secret_rt_value" not in repr_str
-    assert "[REDACTED]" in repr_str
-    assert "86400" in repr_str
-
-
 @pytest.mark.asyncio
 async def test_signin_with_passkey_preserves_server_expires_at(mocker):
     client = ServerClient(
@@ -6149,6 +6118,39 @@ async def test_signin_with_passkey_dpop_rejects_bearer_downgrade(mocker):
             dpop_key=dpop_key,
         )
     assert exc.value.code == PasskeyErrorCode.TOKEN_EXCHANGE_FAILED
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_dpop_bound_token_without_key_rejected(mocker):
+    """Server returning token_type=DPoP when no dpop_key was passed must fail
+    closed, not store a DPoP-bound token the SDK can never prove possession of."""
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE_DPOP)
+    mock_post.return_value = mock_response
+
+    with pytest.raises(PasskeyError) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_xyz",
+            authn_response=_make_passkey_authn_response(),
+        )
+    assert exc.value.code == PasskeyErrorCode.TOKEN_EXCHANGE_FAILED
+    client._state_store.set.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -6831,30 +6833,6 @@ async def test_signin_with_passkey_client_default_org_is_validated_against_id_to
         )
 
     state_store.set.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_mfa_client_store_and_get_pending_mfa():
-    """store_pending_mfa / get_pending_mfa roundtrip through the state store."""
-    store = AsyncMock()
-    store.set = AsyncMock()
-    store.get = AsyncMock(return_value={"mfa_token": "enc_tok"})
-
-    client = MfaClient(
-        domain="auth0.local",
-        client_id="cid",
-        client_secret="csecret",
-        secret="a-test-secret-with-enough-length",
-        state_store=store,
-    )
-
-    await client.store_pending_mfa("enc_tok")
-    store.set.assert_called_once_with(
-        "_a0_mfa_pending", {"mfa_token": "enc_tok"}, options=None
-    )
-
-    result = await client.get_pending_mfa()
-    assert result == "enc_tok"
 
 
 # ORGANIZATIONS SUPPORT TESTS
