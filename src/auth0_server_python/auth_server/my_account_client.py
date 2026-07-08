@@ -432,6 +432,22 @@ class MyAccountClient:
         type_filter: Optional[str] = None,
         dpop_key: Optional["jwk.JWK"] = None,
     ) -> ListAuthenticationMethodsResponse:
+        """
+        List the user's enrolled authentication methods.
+
+        Args:
+            access_token: User's access token (scope: read:me:authentication-methods).
+            type_filter: Optional authentication-method type to filter results by.
+            dpop_key: Optional EC P-256 key for DPoP-bound token presentation.
+
+        Returns:
+            ListAuthenticationMethodsResponse containing the enrolled methods.
+
+        Raises:
+            MissingRequiredArgumentError: If access_token is not provided.
+            MyAccountApiError: If the API returns an error response.
+            ApiError: If the request fails due to network or other issues.
+        """
         if not access_token:
             raise MissingRequiredArgumentError("access_token")
 
@@ -480,6 +496,22 @@ class MyAccountClient:
         authentication_method_id: str,
         dpop_key: Optional["jwk.JWK"] = None,
     ) -> AuthenticationMethod:
+        """
+        Retrieve a single authentication method by ID.
+
+        Args:
+            access_token: User's access token (scope: read:me:authentication-methods).
+            authentication_method_id: ID of the authentication method to retrieve.
+            dpop_key: Optional EC P-256 key for DPoP-bound token presentation.
+
+        Returns:
+            AuthenticationMethod for the requested ID.
+
+        Raises:
+            MissingRequiredArgumentError: If access_token or authentication_method_id is not provided.
+            MyAccountApiError: If the API returns an error response.
+            ApiError: If the request fails due to network or other issues.
+        """
         if not access_token:
             raise MissingRequiredArgumentError("access_token")
         if not authentication_method_id:
@@ -525,6 +557,19 @@ class MyAccountClient:
         authentication_method_id: str,
         dpop_key: Optional["jwk.JWK"] = None,
     ) -> None:
+        """
+        Delete an authentication method by ID.
+
+        Args:
+            access_token: User's access token (scope: delete:me:authentication-methods).
+            authentication_method_id: ID of the authentication method to delete.
+            dpop_key: Optional EC P-256 key for DPoP-bound token presentation.
+
+        Raises:
+            MissingRequiredArgumentError: If access_token or authentication_method_id is not provided.
+            MyAccountApiError: If the API returns an error response.
+            ApiError: If the request fails due to network or other issues.
+        """
         if not access_token:
             raise MissingRequiredArgumentError("access_token")
         if not authentication_method_id:
@@ -569,6 +614,23 @@ class MyAccountClient:
         request: UpdateAuthenticationMethodRequest,
         dpop_key: Optional["jwk.JWK"] = None,
     ) -> AuthenticationMethod:
+        """
+        Update an authentication method by ID.
+
+        Args:
+            access_token: User's access token (scope: update:me:authentication-methods).
+            authentication_method_id: ID of the authentication method to update.
+            request: Fields to update on the authentication method.
+            dpop_key: Optional EC P-256 key for DPoP-bound token presentation.
+
+        Returns:
+            AuthenticationMethod reflecting the updated state.
+
+        Raises:
+            MissingRequiredArgumentError: If access_token, authentication_method_id, or request is not provided.
+            MyAccountApiError: If the API returns an error response.
+            ApiError: If the request fails due to network or other issues.
+        """
         if not access_token:
             raise MissingRequiredArgumentError("access_token")
         if not authentication_method_id:
