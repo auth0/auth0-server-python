@@ -193,25 +193,7 @@ Let a logged-in user manage their own enrolled authentication methods — enroll
 
 ### 9. DPoP — Sender-Constrained Tokens (Passkeys & MyAccount)
 
-Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. Generate an EC P-256 key and pass it to passkey sign-in or to the authentication-methods/factors calls on `MyAccountClient`:
-
-> [!NOTE]
-> `dpop_key` is currently supported only for `signin_with_passkey` and the authentication-methods/factors methods on `MyAccountClient` (enroll, verify, list, get, update, delete, get factors). It is **not yet supported for Connected Accounts** — see [examples/ConnectedAccounts.md](examples/ConnectedAccounts.md).
-
-```python
-from jwcrypto import jwk
-
-dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")  # you create and keep this key
-
-result = await auth0.signin_with_passkey(
-    auth_session=challenge.auth_session,
-    authn_response=authn_response,
-    dpop_key=dpop_key,
-    store_options={"request": request, "response": response}
-)
-```
-
-`dpop_key` is a Tier 0 secret you generate, keep in your secret store, and reuse for the bound token's lifetime — pass the **same** key to passkey sign-in and to the `MyAccountClient` authentication-methods/factors calls listed above. For usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
+Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. DPoP is supported for Passkey sign-in (`signin_with_passkey`) and the authentication-methods/factors methods on `MyAccountClient`. For key generation and usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
 
 ## Feedback
 
