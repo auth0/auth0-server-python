@@ -142,20 +142,6 @@ class MfaClient:
     # MFA STATE
     # ============================================================================
 
-    def _resolve_encrypted_token(
-        self,
-        options: dict[str, Any],
-    ) -> str:
-        """
-        Extract the encrypted mfa_token from options.
-
-        Raises MfaTokenInvalidError if the key is absent or empty.
-        """
-        token = options.get("mfa_token")
-        if not token:
-            raise MfaTokenInvalidError()
-        return token
-
     @staticmethod
     def _parse_error_body(response: httpx.Response) -> dict[str, Any]:
         """
@@ -265,7 +251,10 @@ class MfaClient:
         Raises:
             MfaListAuthenticatorsError: When the request fails.
         """
-        context = self.decrypt_mfa_token(self._resolve_encrypted_token(options))
+        mfa_token = options.get("mfa_token")
+        if not mfa_token:
+            raise MfaTokenInvalidError()
+        context = self.decrypt_mfa_token(mfa_token)
         base_url = await self._resolve_base_url(store_options)
         url = f"{base_url}/mfa/authenticators"
 
@@ -313,7 +302,10 @@ class MfaClient:
         Raises:
             MfaEnrollmentError: When enrollment fails.
         """
-        context = self.decrypt_mfa_token(self._resolve_encrypted_token(options))
+        mfa_token = options.get("mfa_token")
+        if not mfa_token:
+            raise MfaTokenInvalidError()
+        context = self.decrypt_mfa_token(mfa_token)
         factor_type = options["factor_type"]
         base_url = await self._resolve_base_url(store_options)
         url = f"{base_url}/mfa/associate"
@@ -398,7 +390,10 @@ class MfaClient:
         Raises:
             MfaChallengeError: When the challenge fails.
         """
-        context = self.decrypt_mfa_token(self._resolve_encrypted_token(options))
+        mfa_token = options.get("mfa_token")
+        if not mfa_token:
+            raise MfaTokenInvalidError()
+        context = self.decrypt_mfa_token(mfa_token)
         factor_type = options["factor_type"]
         base_url = await self._resolve_base_url(store_options)
         url = f"{base_url}/mfa/challenge"
@@ -479,7 +474,10 @@ class MfaClient:
             MfaVerifyError: When verification fails.
             MfaRequiredError: When chained MFA is required.
         """
-        context = self.decrypt_mfa_token(self._resolve_encrypted_token(options))
+        mfa_token = options.get("mfa_token")
+        if not mfa_token:
+            raise MfaTokenInvalidError()
+        context = self.decrypt_mfa_token(mfa_token)
 
         body: dict[str, Any] = {
             "client_id": self._client_id,
