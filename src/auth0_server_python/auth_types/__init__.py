@@ -3,6 +3,7 @@ Type definitions for auth0-server-python SDK.
 These Pydantic models provide type safety and validation for all SDK data structures.
 """
 
+import warnings
 from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -17,6 +18,25 @@ OobChannel = Literal["sms", "voice", "auth0", "email"]
 ChallengeType = Literal["otp", "oob"]
 EnrollmentType = Literal["passkey", "email", "phone", "totp", "push-notification", "recovery-code", "password"]
 PreferredAuthMethod = Literal["sms", "voice"]
+
+# Deprecated public aliases resolved lazily (PEP 562) so access emits a warning
+# while imports keep working. Remove in a future major release.
+_DEPRECATED_ALIASES = {
+    "AuthenticatorType": (
+        Literal["otp", "oob", "recovery-code"],
+        "AuthenticatorType is deprecated and will be removed in a future release. "
+        "AuthenticatorResponse.authenticator_type is now typed `str`; use `str` directly.",
+    ),
+}
+
+
+def __getattr__(name: str):
+    entry = _DEPRECATED_ALIASES.get(name)
+    if entry is not None:
+        value, message = entry
+        warnings.warn(message, DeprecationWarning, stacklevel=2)
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class UserClaims(BaseModel):
