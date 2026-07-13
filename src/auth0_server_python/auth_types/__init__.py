@@ -20,7 +20,7 @@ EnrollmentType = Literal["passkey", "email", "phone", "totp", "push-notification
 PreferredAuthMethod = Literal["sms", "voice"]
 
 # Deprecated public aliases resolved lazily (PEP 562) so access emits a warning
-# while imports keep working. Remove in a future major release.
+# while imports keep working. Remove in a future release.
 _DEPRECATED_ALIASES = {
     "AuthenticatorType": (
         Literal["otp", "oob", "recovery-code"],
