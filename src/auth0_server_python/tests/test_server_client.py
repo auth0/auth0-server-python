@@ -24,6 +24,7 @@ from auth0_server_python.auth_types import (
     LoginWithCustomTokenExchangeOptions,
     LogoutOptions,
     MfaRequirements,
+    SessionTransferTokenResult,
     StartInteractiveLoginOptions,
     StateData,
     TransactionData,
@@ -3909,6 +3910,232 @@ def test_state_merge_preserves_user_act_claim():
 
 
 # =============================================================================
+# Session Transfer Token (STT) Tests
+# =============================================================================
+
+# Fixed wire-protocol URNs, pinned as literals so a bad edit to the SDK constants is caught.
+STT_URN = "urn:auth0:params:oauth:token-type:session_transfer_token"
+ID_TOKEN_URN = "urn:ietf:params:oauth:token-type:id_token"
+
+
+def _stt_client(mocker, *, exchange_response=None):
+    """A ServerClient with the token endpoint mocked, returning (client, post_mock)."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+    )
+    mocker.patch.object(
+        client, "_fetch_oidc_metadata",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token"},
+    )
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = exchange_response or {
+        "access_token": "the-stt",
+        "token_type": "N_A",
+        "expires_in": 60,
+        "scope": "openid profile",
+        "issued_token_type": STT_URN,
+    }
+    mock_response.headers.get.return_value = "application/json"
+
+    post_mock = AsyncMock()
+    post_mock.__aenter__.return_value = post_mock
+    post_mock.__aexit__.return_value = None
+    post_mock.post.return_value = mock_response
+    mocker.patch("httpx.AsyncClient", return_value=post_mock)
+    return client, post_mock
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_success(mocker):
+    """Returns a SessionTransferTokenResult with the STT and session_transfer audience."""
+    client, post_mock = _stt_client(mocker)
+
+    result = await client.request_session_transfer_token(
+        subject_token="subj",
+        subject_token_type="urn:acme:customer-subject",
+        actor_token="agent-id-token",
+    )
+
+    assert isinstance(result, SessionTransferTokenResult)
+    assert result.session_transfer_token == "the-stt"
+    assert result.issued_token_type == STT_URN
+    assert result.expires_in == 60
+
+    data = post_mock.post.call_args[1]["data"]
+    assert data["audience"] == "urn:auth0.local:session_transfer"
+    assert data["grant_type"] == "urn:ietf:params:oauth:grant-type:token-exchange"
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_sources_actor_from_session(mocker):
+    """When actor_token is omitted, the agent session's ID token is used as the actor."""
+    client, post_mock = _stt_client(mocker)
+    client._state_store.get.return_value = {"id_token": "session-id-token"}
+    mocker.patch.object(client, "_is_id_token_usable", return_value=True)
+
+    await client.request_session_transfer_token(
+        subject_token="subj",
+        subject_token_type="urn:acme:customer-subject",
+    )
+
+    data = post_mock.post.call_args[1]["data"]
+    assert data["actor_token"] == "session-id-token"
+    assert data["actor_token_type"] == ID_TOKEN_URN
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_explicit_actor_overrides_session(mocker):
+    """An explicit actor_token wins and the session is never read."""
+    client, post_mock = _stt_client(mocker)
+
+    await client.request_session_transfer_token(
+        subject_token="subj",
+        subject_token_type="urn:acme:customer-subject",
+        actor_token="explicit-actor",
+    )
+
+    client._state_store.get.assert_not_called()
+    assert post_mock.post.call_args[1]["data"]["actor_token"] == "explicit-actor"
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_refreshes_expired_session_token(mocker):
+    """A stale session ID token is refreshed and the fresh token is used as the actor."""
+    client, post_mock = _stt_client(mocker)
+    client._state_store.get.return_value = {"id_token": "stale", "refresh_token": "rt"}
+    # First check (stale) fails, second (refreshed) passes.
+    mocker.patch.object(client, "_is_id_token_usable", side_effect=[False, True])
+    mocker.patch.object(
+        client, "get_token_by_refresh_token",
+        return_value={"id_token": "fresh-id-token", "access_token": "a", "expires_in": 3600},
+    )
+
+    await client.request_session_transfer_token(
+        subject_token="subj",
+        subject_token_type="urn:acme:customer-subject",
+    )
+
+    assert post_mock.post.call_args[1]["data"]["actor_token"] == "fresh-id-token"
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_never_persists_stt(mocker):
+    """The mint is stateless: the one-shot STT must never be written to the session store."""
+    client, _ = _stt_client(mocker)
+
+    await client.request_session_transfer_token(
+        subject_token="subj",
+        subject_token_type="urn:acme:customer-subject",
+        actor_token="explicit-actor",
+    )
+
+    client._state_store.set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_blank_actor_rejected(mocker):
+    """A passed-but-blank actor_token is a bug, not a fallback signal."""
+    client, _ = _stt_client(mocker)
+
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.request_session_transfer_token(
+            subject_token="subj",
+            subject_token_type="urn:acme:customer-subject",
+            actor_token="   ",
+        )
+    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_no_actor_raises_before_network(mocker):
+    """No explicit actor and no usable session token fails client-side with ACTOR_UNAVAILABLE."""
+    client, post_mock = _stt_client(mocker)
+    client._state_store.get.return_value = None
+
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.request_session_transfer_token(
+            subject_token="subj",
+            subject_token_type="urn:acme:customer-subject",
+        )
+    assert exc.value.code == CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE
+    post_mock.post.assert_not_called()
+
+
+def test_build_session_transfer_redirect_encodes_and_includes_organization():
+    """The redirect URL carries a URL-encoded STT and the organization when present."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+    )
+    result = SessionTransferTokenResult(
+        session_transfer_token="a b/c+d",
+        issued_token_type=STT_URN,
+        expires_in=60,
+    )
+
+    url = client.build_session_transfer_redirect(
+        "https://app.example.com/auth/login", result, organization="org_globex"
+    )
+
+    query = parse_qs(urlparse(url).query)
+    assert query["session_transfer_token"] == ["a b/c+d"]  # parse_qs decodes; encoding happened on the wire
+    assert query["organization"] == ["org_globex"]
+    assert "a+b" in url or "a%20b" in url  # the raw URL is encoded
+
+
+def _redirect_client():
+    return ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+    )
+
+
+def test_build_session_transfer_redirect_omits_organization_when_absent():
+    """No organization is passed → the parameter is absent, not empty."""
+    result = SessionTransferTokenResult(
+        session_transfer_token="stt", issued_token_type=STT_URN, expires_in=60
+    )
+
+    url = _redirect_client().build_session_transfer_redirect(
+        "https://app.example.com/auth/login", result
+    )
+
+    query = parse_qs(urlparse(url).query)
+    assert query["session_transfer_token"] == ["stt"]
+    assert "organization" not in query
+
+
+def test_build_session_transfer_redirect_appends_to_existing_query():
+    """A target login URL that already has a query string gets the STT appended with '&'."""
+    result = SessionTransferTokenResult(
+        session_transfer_token="stt", issued_token_type=STT_URN, expires_in=60
+    )
+
+    url = _redirect_client().build_session_transfer_redirect(
+        "https://app.example.com/auth/login?returnTo=/home", result
+    )
+
+    assert url.count("?") == 1
+    query = parse_qs(urlparse(url).query)
+    assert query["returnTo"] == ["/home"]
+    assert query["session_transfer_token"] == ["stt"]
+
+
+# =============================================================================
 # OIDC Metadata and JWKS Fetching Tests
 # =============================================================================
 
@@ -4964,8 +5191,9 @@ async def test_domain_migration_sessions_isolated():
     user = await client.get_user(store_options={"request": {}})
     assert user is None
 
-
-# ── MFA Integration Tests ────────────────────────────────────────────────────
+# =============================================================================
+# MFA  Tests
+# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -5186,8 +5414,9 @@ async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
 
 
 # =============================================================================
-# Organization and Invitation Tests
+# ORGANIZATIONS AND INVITATION TESTS
 # =============================================================================
+
 
 def _make_org_client(mocker, transaction_data: TransactionData, **extra):
     """Helper: build a ServerClient with mocked stores and standard JWT mocks."""
