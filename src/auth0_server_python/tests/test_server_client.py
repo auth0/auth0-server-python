@@ -28,6 +28,7 @@ from auth0_server_python.auth_types import (
     StartInteractiveLoginOptions,
     StateData,
     TransactionData,
+    UserClaims,
 )
 from auth0_server_python.error import (
     AccessTokenError,
@@ -47,6 +48,7 @@ from auth0_server_python.error import (
     MissingTransactionError,
     OrganizationTokenValidationError,
     PollingApiError,
+    SessionExpiredError,
     StartLinkUserError,
 )
 from auth0_server_python.utils import PKCE, State
@@ -6354,3 +6356,680 @@ async def test_client_level_org_used_when_options_org_is_none_not_set(mocker):
     await client.start_interactive_login(StartInteractiveLoginOptions())
 
     assert stored_tx.organization == "org_default"
+
+# =============================================================================
+# IPSIE session_expiry enforcement
+# =============================================================================
+
+
+def test_is_session_ceiling_reached_none_never_expires():
+    assert State.is_session_ceiling_reached(None) is False
+
+
+def test_is_session_ceiling_reached_future_and_past():
+    now = int(time.time())
+    # Comfortably in the future (beyond the leeway window) -> not reached.
+    assert State.is_session_ceiling_reached(now + 3600) is False
+    # In the past -> reached.
+    assert State.is_session_ceiling_reached(now - 10) is True
+
+
+def test_is_session_ceiling_reached_applies_negative_leeway():
+    now = int(time.time())
+    # Ceiling is 10s away but leeway is 30s, so it's treated as already reached.
+    assert State.is_session_ceiling_reached(now + 10) is True
+
+
+def test_is_session_ceiling_in_past_none_is_safe_default():
+    # No ceiling asserted -> never treated as expired.
+    assert State.is_session_ceiling_in_past(None, 1893456000) is False
+    assert State.is_session_ceiling_in_past(None, None) is False
+
+
+def test_is_session_ceiling_in_past_past_ceiling_relative_to_iat():
+    iat = 1893456000
+    # Ceiling well before iat -> already lapsed at login.
+    assert State.is_session_ceiling_in_past(iat - 3600, iat) is True
+
+
+def test_is_session_ceiling_in_past_future_ceiling_relative_to_iat():
+    iat = 1893456000
+    # Ceiling well after iat -> not lapsed.
+    assert State.is_session_ceiling_in_past(iat + 3600, iat) is False
+
+
+def test_is_session_ceiling_in_past_falls_back_to_now_when_iat_absent():
+    now = int(time.time())
+    # No iat -> compare against wall-clock now; a past ceiling is lapsed.
+    assert State.is_session_ceiling_in_past(now - 100, None) is True
+
+
+def test_is_session_ceiling_in_past_leeway_boundary():
+    iat = 1893456000
+    leeway = State.SESSION_EXPIRY_LEEWAY_SECONDS
+    # Ceiling exactly at iat + leeway is treated as already lapsed...
+    assert State.is_session_ceiling_in_past(iat + leeway, iat) is True
+    # ...one second beyond the leeway window is not.
+    assert State.is_session_ceiling_in_past(iat + leeway + 1, iat) is False
+
+
+def test_session_expired_error_message_is_generic():
+    message = str(SessionExpiredError())
+    # States the reason without leaking any timestamps or values.
+    assert message == "The session has expired and the user must re-authenticate."
+    assert not any(ch.isdigit() for ch in message)
+    assert SessionExpiredError().code == AccessTokenErrorCode.SESSION_EXPIRED
+
+
+@pytest.mark.parametrize("value,expected", [
+    (1900000000, 1900000000),       # plausible seconds -> kept
+    (1748566800000, None),          # milliseconds -> rejected
+    (10_000_000_000, None),         # at the implausible-future bound -> rejected
+    (0, None),                      # non-positive -> rejected
+    (-5, None),                     # negative -> rejected
+    (True, None),                   # bool is not a valid int here -> rejected
+    ("1748566800", None),           # numeric string -> rejected
+    ("not-a-number", None),         # garbage string -> rejected
+    (1.5, None),                    # float -> rejected
+    (None, None),                   # absent/null -> no ceiling
+])
+def test_user_claims_sanitizes_session_expiry(value, expected):
+    assert UserClaims(sub="u", session_expiry=value).session_expiry == expected
+
+
+def test_user_claims_session_expiry_absent_is_none():
+    assert UserClaims(sub="u").session_expiry is None
+
+
+def test_update_state_data_preserves_ceiling_across_refresh():
+    now = int(time.time())
+    ceiling = now + 3600
+    existing_state = {
+        "refresh_token": "refresh_xyz",
+        "token_sets": [],
+        "internal": {"sid": "some_sid", "created_at": now, "session_expires_at": ceiling},
+    }
+    # A refresh-token grant never carries session_expiry; the login ceiling stands.
+    refresh_response = {"access_token": "new_token", "scope": "openid", "expires_in": 3600}
+
+    updated = State.update_state_data("default", existing_state, refresh_response)
+
+    assert updated["internal"]["session_expires_at"] == ceiling
+
+
+@pytest.mark.asyncio
+async def test_get_session_expired_by_ceiling_returns_none_and_deletes():
+    now = int(time.time())
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "user": {"sub": "user123"},
+        "id_token": "token123",
+        "internal": {"sid": "some_sid", "created_at": now - 100, "session_expires_at": now - 10},
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    session_data = await client.get_session()
+    assert session_data is None
+    mock_state_store.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_session_within_ceiling_ok():
+    now = int(time.time())
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "user": {"sub": "user123"},
+        "id_token": "token123",
+        "internal": {"sid": "some_sid", "created_at": now, "session_expires_at": now + 3600},
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    session_data = await client.get_session()
+    assert session_data is not None
+    assert session_data["user"] == {"sub": "user123"}
+    mock_state_store.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_user_expired_by_ceiling_returns_none_and_deletes():
+    now = int(time.time())
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "user": {"sub": "user123"},
+        "internal": {"sid": "some_sid", "created_at": now - 100, "session_expires_at": now - 10},
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    user = await client.get_user()
+    assert user is None
+    mock_state_store.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_user_no_ceiling_unaffected():
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "user": {"sub": "user123"},
+        "internal": {"sid": "some_sid", "created_at": int(time.time())},
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    user = await client.get_user()
+    assert user == {"sub": "user123"}
+    mock_state_store.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_expired_by_ceiling_raises_without_refresh(mocker):
+    now = int(time.time())
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "refresh_token": "refresh_xyz",
+        "token_sets": [
+            {
+                "audience": "default",
+                "access_token": "cached_token",
+                "expires_at": now + 500,  # still valid, but ceiling overrides
+            }
+        ],
+        "internal": {"sid": "some_sid", "created_at": now - 100, "session_expires_at": now - 10},
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    # If the refresh path is reached, that's a bug — make it explode.
+    refresh_spy = mocker.patch.object(
+        client, "get_token_by_refresh_token", new_callable=AsyncMock,
+        side_effect=AssertionError("refresh must not be attempted after ceiling"),
+    )
+
+    with pytest.raises(SessionExpiredError) as exc:
+        await client.get_access_token()
+
+    assert exc.value.code == AccessTokenErrorCode.SESSION_EXPIRED
+    refresh_spy.assert_not_awaited()
+    mock_state_store.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_within_ceiling_serves_cached():
+    now = int(time.time())
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "refresh_token": "refresh_xyz",
+        "token_sets": [
+            {
+                "audience": "default",
+                "access_token": "cached_token",
+                "expires_at": now + 500,
+            }
+        ],
+        "internal": {"sid": "some_sid", "created_at": now, "session_expires_at": now + 3600},
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    token = await client.get_access_token()
+    assert token == "cached_token"
+    mock_state_store.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_for_connection_not_gated_by_ceiling():
+    # Token Vault connection tokens follow the upstream IdP's own expires_in,
+    # so a passed session ceiling must NOT block or tear down the session here.
+    now = int(time.time())
+    mock_state_store = AsyncMock()
+    mock_state_store.get.return_value = {
+        "refresh_token": "refresh_xyz",
+        "connection_token_sets": [
+            {
+                "connection": "google-oauth2",
+                "login_hint": "user@example.com",
+                "access_token": "cached_conn_token",
+                "expires_at": now + 500,
+            }
+        ],
+        "internal": {"sid": "some_sid", "created_at": now - 100, "session_expires_at": now - 10},
+    }
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        secret="some-secret"
+    )
+
+    token = await client.get_access_token_for_connection({"connection": "google-oauth2"})
+    assert token == "cached_conn_token"
+    mock_state_store.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_rejects_already_expired_ceiling(mocker):
+    """A session_expiry already in the past at login is rejected, not persisted."""
+    iat = int(time.time())
+
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        domain="tenant.auth0.com",
+    )
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
+    )
+
+    # Mock JWKS fetch
+    mocker.patch.object(
+        client,
+        "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+
+    # Mock OAuth fetch_token
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+        "id_token": "id_token_jwt",
+        "scope": "openid profile"
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+
+    # Mock jwt.get_unverified_header
+    mocker.patch("jwt.get_unverified_header", return_value={"kid": "test-key"})
+
+    # Mock PyJWK.from_dict
+    mock_signing_key = mocker.MagicMock()
+    mock_signing_key.key = "mock_pem_key"
+    mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
+
+    # Mock jwt.decode with a ceiling already in the past relative to iat
+    mocker.patch("jwt.decode", return_value={
+        "sub": "user123",
+        "iss": "https://tenant.auth0.com/",
+        "aud": "test_client",
+        "iat": iat,
+        "session_expiry": iat - 3600,
+    })
+
+    with pytest.raises(SessionExpiredError) as exc:
+        await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
+
+    assert exc.value.code == AccessTokenErrorCode.SESSION_EXPIRED
+    # The already-expired session must never be persisted. The transaction is
+    # cleaned up because its authorization code was already spent and cannot be
+    # reused — a retry starts a fresh login with a new transaction.
+    mock_state_store.set.assert_not_awaited()
+    mock_tx_store.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_future_ceiling_persists(mocker):
+    """A future session_expiry is stamped on the session and login succeeds."""
+    iat = int(time.time())
+    ceiling = iat + 3600
+
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        domain="tenant.auth0.com",
+    )
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
+    )
+
+    # Mock JWKS fetch
+    mocker.patch.object(
+        client,
+        "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+
+    # Mock OAuth fetch_token
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+        "id_token": "id_token_jwt",
+        "scope": "openid profile"
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+
+    # Mock jwt.get_unverified_header
+    mocker.patch("jwt.get_unverified_header", return_value={"kid": "test-key"})
+
+    # Mock PyJWK.from_dict
+    mock_signing_key = mocker.MagicMock()
+    mock_signing_key.key = "mock_pem_key"
+    mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
+
+    # Mock jwt.decode with a ceiling comfortably in the future
+    mocker.patch("jwt.decode", return_value={
+        "sub": "user123",
+        "iss": "https://tenant.auth0.com/",
+        "aud": "test_client",
+        "iat": iat,
+        "session_expiry": ceiling,
+    })
+
+    result = await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
+
+    assert "state_data" in result
+    mock_state_store.set.assert_awaited_once()
+    stored_state = mock_state_store.set.call_args.args[1]
+    assert stored_state.internal.session_expires_at == ceiling
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_no_ceiling_persists_normally(mocker):
+    """No session_expiry claim -> login behaves exactly as before (no ceiling)."""
+    iat = int(time.time())
+
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        domain="tenant.auth0.com",
+    )
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
+    )
+
+    # Mock JWKS fetch
+    mocker.patch.object(
+        client,
+        "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+
+    # Mock OAuth fetch_token
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+        "id_token": "id_token_jwt",
+        "scope": "openid profile"
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+
+    # Mock jwt.get_unverified_header
+    mocker.patch("jwt.get_unverified_header", return_value={"kid": "test-key"})
+
+    # Mock PyJWK.from_dict
+    mock_signing_key = mocker.MagicMock()
+    mock_signing_key.key = "mock_pem_key"
+    mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
+
+    # Mock jwt.decode without a session_expiry claim
+    mocker.patch("jwt.decode", return_value={
+        "sub": "user123",
+        "iss": "https://tenant.auth0.com/",
+        "aud": "test_client",
+        "iat": iat,
+    })
+
+    result = await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
+
+    assert "state_data" in result
+    mock_state_store.set.assert_awaited_once()
+    stored_state = mock_state_store.set.call_args.args[1]
+    assert stored_state.internal.session_expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_ignores_ceiling_from_userinfo(mocker):
+    """The ceiling is read only from the verified ID token. A session_expiry
+    present in the unverified userinfo response must NOT be persisted."""
+    iat = int(time.time())
+
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        domain="tenant.auth0.com",
+    )
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
+    )
+
+    # fetch_token returns a userinfo dict (no id_token), driving the userinfo
+    # branch. Its session_expiry must be ignored, not stamped on the session.
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+        "scope": "openid profile",
+        "userinfo": {
+            "sub": "user123",
+            "iat": iat,
+            "session_expiry": iat + 3600,
+        },
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+
+    result = await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
+
+    assert "state_data" in result
+    mock_state_store.set.assert_awaited_once()
+    stored_state = mock_state_store.set.call_args.args[1]
+    assert stored_state.internal.session_expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_malformed_ceiling_fails_open(mocker):
+    """A non-numeric session_expiry is treated as no ceiling, never a hard fail."""
+    iat = int(time.time())
+
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        domain="tenant.auth0.com",
+    )
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
+    )
+    mocker.patch.object(
+        client,
+        "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+        "id_token": "id_token_jwt",
+        "scope": "openid profile"
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+    mocker.patch("jwt.get_unverified_header", return_value={"kid": "test-key"})
+    mock_signing_key = mocker.MagicMock()
+    mock_signing_key.key = "mock_pem_key"
+    mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
+
+    mocker.patch("jwt.decode", return_value={
+        "sub": "user123",
+        "iss": "https://tenant.auth0.com/",
+        "aud": "test_client",
+        "iat": iat,
+        "session_expiry": "not-a-number",
+    })
+
+    # Must not raise — garbage claim degrades to no ceiling.
+    result = await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
+
+    assert "state_data" in result
+    mock_state_store.set.assert_awaited_once()
+    stored_state = mock_state_store.set.call_args.args[1]
+    assert stored_state.internal.session_expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_milliseconds_ceiling_fails_open(mocker):
+    """A millisecond-scale session_expiry is rejected as implausible -> no ceiling."""
+    iat = int(time.time())
+
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        domain="tenant.auth0.com",
+    )
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
+    )
+    mocker.patch.object(
+        client,
+        "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+        "id_token": "id_token_jwt",
+        "scope": "openid profile"
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+    mocker.patch("jwt.get_unverified_header", return_value={"kid": "test-key"})
+    mock_signing_key = mocker.MagicMock()
+    mock_signing_key.key = "mock_pem_key"
+    mocker.patch("jwt.PyJWK.from_dict", return_value=mock_signing_key)
+
+    mocker.patch("jwt.decode", return_value={
+        "sub": "user123",
+        "iss": "https://tenant.auth0.com/",
+        "aud": "test_client",
+        "iat": iat,
+        "session_expiry": 1748566800000,
+    })
+
+    # Must not raise — a ms value is implausible as Unix seconds, so no ceiling.
+    result = await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
+
+    assert "state_data" in result
+    mock_state_store.set.assert_awaited_once()
+    stored_state = mock_state_store.set.call_args.args[1]
+    assert stored_state.internal.session_expires_at is None
