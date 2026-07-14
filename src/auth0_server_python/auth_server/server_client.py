@@ -77,6 +77,9 @@ INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
 # issued_token_type URN for a Session Transfer Token (STT).
 SESSION_TRANSFER_TOKEN_TYPE = "urn:auth0:params:oauth:token-type:session_transfer_token"
 
+# actor_token_type URN when the actor is sourced from the agent session's ID token.
+ID_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token"
+
 
 class ServerClient(Generic[TStoreOptions]):
     """
@@ -2583,12 +2586,81 @@ class ServerClient(Generic[TStoreOptions]):
     # Impersonation via Session Transfer, built on Custom Token Exchange.
     # ============================================================================
 
+    async def _is_id_token_usable(self, token: str, store_options: Optional[dict[str, Any]]) -> bool:
+        """
+        Verifies the agent session's ID token (signature + expiry) before using it as an actor.
+
+        Full verification against JWKS - the same path the login callback uses - so an expired
+        or tampered token is rejected client-side rather than sent to the server as a dud.
+        """
+        if not token:
+            return False
+        try:
+            domain = await self._resolve_current_domain(store_options)
+            metadata = await self._get_oidc_metadata_cached(domain)
+            jwks = await self._get_jwks_cached(domain, metadata)
+            await self._verify_and_decode_jwt(token, jwks, audience=self._client_id)
+            return True
+        except Exception:
+            return False
+
+    async def _resolve_actor_token(
+        self,
+        actor_token: Optional[str],
+        actor_token_type: Optional[str],
+        store_options: Optional[dict[str, Any]]
+    ) -> tuple[str, str]:
+        """
+        Resolves the (actor_token, actor_token_type) pair for a session transfer request.
+
+        Raises:
+            CustomTokenExchangeError(ACTOR_UNAVAILABLE): if no usable actor can be resolved.
+        """
+        # Explicit actor wins; a passed-but-blank value is a bug, not a fallback signal.
+        if actor_token is not None:
+            if not actor_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "actor_token cannot be empty or whitespace-only"
+                )
+            return actor_token, (actor_token_type or ID_TOKEN_TYPE)
+
+        # Otherwise source it from the agent's session ID token.
+        state_data = await self._state_store.get(self._state_identifier, store_options)
+        if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
+            state_data = state_data.dict()
+        state_data = state_data or {}
+
+        session_id_token = state_data.get("id_token")
+
+        # Refresh a stale (or missing) ID token when the agent session has a refresh token.
+        if not await self._is_id_token_usable(session_id_token, store_options) and state_data.get("refresh_token"):
+            try:
+                refreshed = await self.get_token_by_refresh_token({
+                    "refresh_token": state_data["refresh_token"],
+                    "domain": state_data.get("domain") or self._domain,
+                })
+                updated_state_data = State.update_state_data(
+                    self.DEFAULT_AUDIENCE_STATE_KEY, state_data, refreshed)
+                await self._state_store.set(self._state_identifier, updated_state_data, options=store_options)
+                session_id_token = refreshed.get("id_token") or session_id_token
+            except Exception:
+                session_id_token = None
+
+        if await self._is_id_token_usable(session_id_token, store_options):
+            return session_id_token, ID_TOKEN_TYPE
+
+        raise CustomTokenExchangeError(
+            CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE,
+            "No usable actor token: pass actor_token or ensure the agent has a valid session."
+        )
+
     async def request_session_transfer_token(
         self,
         subject_token: str,
         subject_token_type: str,
-        actor_token: str,
-        actor_token_type: str,
+        actor_token: Optional[str] = None,
+        actor_token_type: Optional[str] = None,
         scope: Optional[str] = None,
         organization: Optional[str] = None,
         store_options: Optional[dict[str, Any]] = None
@@ -2603,24 +2675,21 @@ class ServerClient(Generic[TStoreOptions]):
         Args:
             subject_token: Your proof of which customer to impersonate (validated by your Action)
             subject_token_type: The subject token type URI routing to your CTE Profile
-            actor_token: The acting party's token (e.g. the agent's ID token); required
-            actor_token_type: Type URI of the actor token (e.g. the ID token URN); required
+            actor_token: The acting party's token; optional. Defaults to the agent session's ID token
+            actor_token_type: Type URI of the actor token; defaults to the ID token URN
             scope: Space-delimited list of scopes (optional)
             organization: Organization identifier (optional)
-            store_options: Optional options used to resolve the request domain
+            store_options: Optional options used to read the agent session and resolve the domain
 
         Returns:
             SessionTransferTokenResult containing the STT and its metadata
 
         Raises:
-            CustomTokenExchangeError: If no actor is provided or the exchange fails
+            CustomTokenExchangeError: If no actor can be resolved or the exchange fails
         """
         try:
-            if not actor_token or not actor_token.strip():
-                raise CustomTokenExchangeError(
-                    CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE,
-                    "actor_token is required to request a session transfer token"
-                )
+            actor_token, actor_token_type = await self._resolve_actor_token(
+                actor_token, actor_token_type, store_options)
 
             # Build the session_transfer audience from the resolved request domain.
             domain = await self._resolve_current_domain(store_options)
