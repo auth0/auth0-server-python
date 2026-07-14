@@ -198,6 +198,7 @@ class AccessTokenErrorCode:
     INCORRECT_AUDIENCE = "incorrect_audience"
     MISSING_SESSION_DOMAIN = "missing_session_domain"
     DOMAIN_MISMATCH = "domain_mismatch"
+    SESSION_EXPIRED = "session_expired"
 
 
 class OrganizationTokenValidationError(Auth0Error):
@@ -220,6 +221,19 @@ class AccessTokenForConnectionErrorCode:
     FETCH_ERROR = "retrieval_error"
     MISSING_SESSION_DOMAIN = "missing_session_domain"
     DOMAIN_MISMATCH = "domain_mismatch"
+
+
+class SessionExpiredError(Auth0Error):
+    """
+    Error raised when a session is rejected at login because its
+    session_expiry ceiling is already in the past.
+    """
+    code = AccessTokenErrorCode.SESSION_EXPIRED
+
+    def __init__(self, message: Optional[str] = None, cause=None):
+        super().__init__(message or "The session has expired and the user must re-authenticate.")
+        self.name = "SessionExpiredError"
+        self.cause = cause
 
 
 class CustomTokenExchangeError(Auth0Error):
