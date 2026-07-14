@@ -5412,7 +5412,7 @@ async def test_get_access_token_mfa_required_with_enroll_requirements(mocker):
 
 
 # =============================================================================
-# ORGANIZATIONS SUPPORT TESTS
+# ORGANIZATIONS AND INVITATION TESTS
 # =============================================================================
 
 
