@@ -8,7 +8,6 @@ Treat docs as part of the change. This is a **library**, so the public surface i
 |-----|--------|-----------|
 | `README.md` | Install + getting started (client construction, basic login) | Hand-written |
 | `examples/*.md` | One guide per use case (see mapping below) | Hand-written |
-| `CHANGELOG.md` | User-facing changes per release | Hand-written |
 
 > No `EXAMPLES.md` at the repo root — usage guides live as individual files under `examples/`.
 
@@ -24,6 +23,5 @@ Treat docs as part of the change. This is a **library**, so the public surface i
 | User linking (`start_/complete_link_user`, unlink) | `examples/UserLinking.md` |
 | Token retrieval / connection tokens | `examples/RetrievingData.md`, `examples/CustomTokenExchange.md` |
 | Custom-domain handling | `examples/MultipleCustomDomains.md` |
-| Any user-facing behavior change | `CHANGELOG.md` |
 
 > When you touch a public symbol that maps to a doc above, update that doc **in the same PR** — do not defer.

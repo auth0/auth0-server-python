@@ -8,8 +8,7 @@ Follows [Auth0's general contribution guidelines](https://github.com/auth0/open-
 2. `poetry install` to set up the environment.
 3. Make the change; add/update a test (every change ships with a test).
 4. Run `poetry run pytest` and `poetry run ruff check .` locally.
-5. Update `CHANGELOG.md` for user-facing changes.
-6. Open a PR against `main` and complete the PR template.
+5. Open a PR against `main` and complete the PR template.
 
 ## CI gates
 

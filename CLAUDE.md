@@ -61,7 +61,6 @@ auth0-server-python/
 - Mark new coroutine tests with `@pytest.mark.asyncio`.
 - Raise typed errors from the `Auth0Error` hierarchy (`error/__init__.py`), not bare `Exception`.
 - Update `README.md` and the relevant `examples/*.md` in the same PR when you change the public API, configuration options, or supported integration patterns.
-- Update `CHANGELOG.md` for user-facing changes.
 
 ### ⚠️ Ask First
 - Adding a new dependency or bumping one in `pyproject.toml` / `poetry.lock`.
