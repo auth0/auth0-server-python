@@ -15,6 +15,7 @@ Passkeys let users sign up and log in with [WebAuthn](https://www.w3.org/TR/weba
 - [1. Passkey Signup](#1-passkey-signup)
 - [2. Passkey Login](#2-passkey-login)
 - [3. DPoP-bound passkey tokens (optional)](#3-dpop-bound-passkey-tokens-optional)
+  - [Completing MFA on a passkey login (and where the session comes from)](#completing-mfa-on-a-passkey-login-and-where-the-session-comes-from)
 - [Error Handling](#error-handling)
 
 ## How the flow works
@@ -160,6 +161,54 @@ When `dpop_key` is supplied, the SDK attaches a token-endpoint proof so Auth0 is
 > [!WARNING]
 > The `dpop_key` private key is a **Tier 0 secret**. Keep it in your secret store (KMS/HSM), never log it (`repr()` is redacted, but `key.export_private()` is not), use **one key per user/session** (never share across principals), and use **EC P-256 only** — any other key type fails closed with a `ValueError` before any network call.
 
+### Completing MFA on a passkey login (and where the session comes from)
+
+When a passkey login needs a second factor, `signin_with_passkey` raises `MfaRequiredError` **before** it creates a session. You finish the login by challenging and verifying through `client.mfa`, then **store the returned tokens yourself** — on this path the SDK does not persist the session for you (`persist` defaults to `False`, and there is no existing session to update yet):
+
+```python
+from auth0_server_python.error import MfaRequiredError
+
+try:
+    result = await server_client.signin_with_passkey(
+        auth_session=auth_session,
+        authn_response=authn_response,
+        dpop_key=dpop_key,                     # optional; omit for Bearer tokens
+        store_options={"request": request, "response": response},
+    )
+    # No MFA needed: signin_with_passkey already persisted the session for you.
+    user = result.state_data["user"]
+
+except MfaRequiredError as e:
+    # 1. Challenge the factor (e.g. an authenticator-app OTP).
+    await server_client.mfa.challenge_authenticator(
+        {"mfa_token": e.mfa_token, "factor_type": "otp"},
+        store_options={"request": request, "response": response},
+    )
+
+    # 2. Verify the user's code. Re-supply the SAME dpop_key so the issued
+    #    token stays DPoP-bound. persist=False (the default) → the SDK returns
+    #    the tokens instead of writing a session.
+    verify_response = await server_client.mfa.verify(
+        {"mfa_token": e.mfa_token, "otp": otp_code},
+        dpop_key=dpop_key,                     # same key given to signin_with_passkey
+        store_options={"request": request, "response": response},
+    )
+
+    # 3. Persist the tokens into YOUR session yourself — this is the step the
+    #    SDK skips on the MFA path because no session existed at login time.
+    save_session_for_user(
+        access_token=verify_response.access_token,
+        id_token=verify_response.id_token,
+        refresh_token=verify_response.refresh_token,
+    )
+```
+
+> [!IMPORTANT]
+> Re-supply the **same** `dpop_key` to `verify`. Omitting it when the login was DPoP-bound would downgrade the result to a Bearer token; `verify` **rejects** that mismatch with `MfaVerifyError` rather than silently dropping the sender constraint. DPoP is preserved end to end — `persist=False` affects only *who writes the session*, never the token binding.
+
+> [!NOTE]
+> Do **not** pass `persist=True` on this path. It updates an *existing* session, and a passkey-first login has none yet, so it raises `MfaVerifyError("No existing session found…")` — discarding the tokens `verify` just obtained. Use `persist=False` and store the returned tokens as shown above. (This is pre-existing MFA-client behavior, unrelated to passkeys.)
+
 ## Error Handling
 
 The three passkey methods raise `PasskeyError` (a subclass of `Auth0Error`). Input-validation failures raise `MissingRequiredArgumentError`; a required step-up raises `MfaRequiredError`. For most code, catching `Auth0Error` is enough.
@@ -191,7 +240,9 @@ try:
         store_options={"request": request, "response": response},
     )
 except MfaRequiredError as e:
-    return start_mfa(e.mfa_token)          # step-up required — continue with MfaClient
+    return start_mfa(e.mfa_token)          # step-up required — challenge + verify via client.mfa,
+                                           # then store the returned tokens (see "Completing MFA
+                                           # on a passkey login" above)
 except PasskeyError as e:
     return {"error": e.code, "detail": e.message}   # branch on e.code, never on message text
 except Auth0Error as e:

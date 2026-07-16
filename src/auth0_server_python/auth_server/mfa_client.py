@@ -5,11 +5,15 @@ Handles Multi-Factor Authentication operations against the Auth0 MFA API.
 
 import json
 import time
-from typing import Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 import httpx
 
 from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
+from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
+
+if TYPE_CHECKING:
+    from jwcrypto import jwk
 from auth0_server_python.auth_types import (
     AuthenticatorResponse,
     ChallengeResponse,
@@ -446,7 +450,8 @@ class MfaClient:
     async def verify(
         self,
         options: dict[str, Any],
-        store_options: Optional[dict[str, Any]] = None
+        store_options: Optional[dict[str, Any]] = None,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> MfaVerifyResponse:
         """
         Verifies an MFA code and completes authentication.
@@ -466,12 +471,20 @@ class MfaClient:
                 - 'audience': str (optional, required if persist=True) - Audience for token_set
                 - 'scope': str (optional) - Scope for token_set
             store_options: Optional options passed to the State Store (e.g. request/response).
+            dpop_key: Optional EC P-256 JWK for DPoP-bound token exchange. Pass the
+                same key the login flow was bound to (e.g. the dpop_key given to
+                signin_with_passkey) so the MFA step-up preserves the sender
+                constraint. When provided, attaches a DPoP proof so Auth0 issues a
+                DPoP-bound token (token_type: DPoP); the SDK never stores this
+                Tier 0 key — the caller re-supplies it, consistent with every other
+                DPoP entry point.
 
         Returns:
             MfaVerifyResponse with access_token, token_type, etc.
 
         Raises:
-            MfaVerifyError: When verification fails.
+            MfaVerifyError: When verification fails, or when dpop_key was supplied
+                but the server returned an unbound (Bearer) token.
             MfaRequiredError: When chained MFA is required.
         """
         mfa_token = options.get("mfa_token")
@@ -506,11 +519,34 @@ class MfaClient:
             token_endpoint = f"{base_url}/oauth/token"
 
             async with self._get_http_client() as client:
+                headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                if dpop_key is not None:
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint
+                    )
                 response = await client.post(
                     token_endpoint,
                     data=body,
-                    headers={"Content-Type": "application/x-www-form-urlencoded"}
+                    headers=headers
                 )
+
+                # RFC 9449 §8.2 — the authorization server signals a required
+                # nonce with HTTP 400/401 + a DPoP-Nonce header. Rebuild the proof
+                # with the nonce and retry once.
+                if (
+                    dpop_key is not None
+                    and response.status_code in (400, 401)
+                    and response.headers.get("DPoP-Nonce")
+                ):
+                    nonce = response.headers["DPoP-Nonce"]
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint, nonce=nonce
+                    )
+                    response = await client.post(
+                        token_endpoint,
+                        data=body,
+                        headers=headers
+                    )
 
                 if response.status_code != 200:
                     error_data = self._parse_error_body(response)
@@ -532,6 +568,25 @@ class MfaClient:
 
                 token_response = response.json()
                 verify_response = MfaVerifyResponse(**token_response)
+
+                # DPoP binding must be consistent in both directions. token_type
+                # is the documented OAuth response field; per RFC 9449 a
+                # sender-constrained token is returned as token_type "DPoP".
+                token_is_dpop = verify_response.token_type.lower() == "dpop"
+                if dpop_key is not None and not token_is_dpop:
+                    # We asked for a bound token but got Bearer — cannot prove
+                    # possession on later calls; reject rather than downgrade.
+                    raise MfaVerifyError(
+                        "DPoP token binding failed: expected token_type 'DPoP', "
+                        f"got '{verify_response.token_type}'"
+                    )
+                if dpop_key is None and token_is_dpop:
+                    # Server issued a DPoP-bound token but no key was supplied —
+                    # we cannot prove possession, so accepting it would fail open.
+                    raise MfaVerifyError(
+                        "Server returned a DPoP-bound token but no dpop_key was "
+                        "provided; pass dpop_key to verify to bind it"
+                    )
 
                 # Clear the in-progress MFA state after successful verification.
                 if self._state_store:

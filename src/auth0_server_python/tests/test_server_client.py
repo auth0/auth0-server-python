@@ -7402,6 +7402,72 @@ async def test_signin_with_passkey_mfa_required_stores_pending_mfa(mocker):
 
 
 @pytest.mark.asyncio
+async def test_dpop_passkey_mfa_verify_preserves_binding(mocker):
+    """End-to-end: a DPoP passkey login that steps up through MFA keeps the
+    sender constraint when the caller re-supplies dpop_key to mfa.verify."""
+    dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")
+    mock_store = AsyncMock()
+    mock_store.get = AsyncMock(return_value=None)
+    mock_store.set = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=mock_store,
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+
+    # 1. Passkey grant returns mfa_required (DPoP proof was attached to this call).
+    mfa_required = AsyncMock()
+    mfa_required.status_code = 403
+    mfa_required.headers = {}
+    mfa_required.json = MagicMock(return_value={
+        "error": "mfa_required",
+        "error_description": "MFA required",
+        "mfa_token": "raw_mfa_token_xyz",
+    })
+    mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mfa_required)
+
+    with pytest.raises(MfaRequiredError) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_abc",
+            authn_response=_make_passkey_authn_response(),
+            dpop_key=dpop_key,
+        )
+
+    encrypted_mfa_token = exc.value.mfa_token
+
+    # 2. Caller re-supplies the same dpop_key to mfa.verify; token must be DPoP-bound.
+    captured = {}
+
+    async def mock_verify_post(self_client, url, **kwargs):
+        captured["headers"] = kwargs.get("headers", {})
+        bound = AsyncMock()
+        bound.status_code = 200
+        bound.headers = {}
+        bound.json = MagicMock(return_value={
+            "access_token": "bound_at", "token_type": "DPoP", "expires_in": 3600
+        })
+        return bound
+
+    mocker.patch("httpx.AsyncClient.post", new=mock_verify_post)
+
+    result = await client.mfa.verify(
+        {"mfa_token": encrypted_mfa_token, "otp": "123456"},
+        dpop_key=dpop_key,
+    )
+
+    assert result.token_type == "DPoP"
+    assert "DPoP" in captured["headers"]
+
+
+@pytest.mark.asyncio
 async def test_dpop_auth_async_json_body_survives_nonce_retry():
     """A DPoP-bound POST over AsyncClient (the MyAccount path) must resend an
     identical, non-empty body when the server answers 401 + DPoP-Nonce."""
