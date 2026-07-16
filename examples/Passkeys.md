@@ -51,6 +51,12 @@ challenge = await server_client.passkey_signup_challenge(
     user_profile=PasskeyUserProfile(
         email="new.user@example.com",
         name="Jane Doe",
+        username="jane.doe",
+        phone_number="+15551234567",
+        given_name="Jane",
+        family_name="Doe",
+        nickname="Janie",
+        picture="https://example.com/jane.png",
     ),
     connection="Username-Password-Authentication",  # optional database connection (realm)
     store_options={"request": request, "response": response},

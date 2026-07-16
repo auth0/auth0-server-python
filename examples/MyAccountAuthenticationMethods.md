@@ -158,8 +158,8 @@ from auth0_server_python.auth_types import UpdateAuthenticationMethodRequest
 
 method = await my_account.update_authentication_method(
     access_token=access_token,
-    authentication_method_id="passkey|abc123",
-    request=UpdateAuthenticationMethodRequest(name="My Work Laptop"),
+    authentication_method_id="totp|123",
+    request=UpdateAuthenticationMethodRequest(name="My Authenticator App"),
 )
 ```
 

@@ -397,18 +397,6 @@ class LoginWithCustomTokenExchangeResult(BaseModel):
     authorization_details: Optional[list[AuthorizationDetails]] = None
 
 
-class PasskeyLoginResult(BaseModel):
-    """
-    Result from signin_with_passkey.
-
-    Contains the session data established after the webauthn token exchange.
-    Mirrors LoginWithCustomTokenExchangeResult — passkey sign-in is a complete
-    login ceremony and creates a server-side session like every other login path.
-    """
-
-    state_data: dict[str, Any]
-
-
 # =============================================================================
 # Connected Accounts Types
 # =============================================================================
@@ -681,6 +669,18 @@ class MfaTokenContext(BaseModel):
 # =============================================================================
 # Passkey & MyAccount Authentication Methods Types
 # =============================================================================
+
+
+class PasskeyLoginResult(BaseModel):
+    """
+    Result from signin_with_passkey.
+
+    Contains the session data established after the webauthn token exchange.
+    Mirrors LoginWithCustomTokenExchangeResult — passkey sign-in is a complete
+    login ceremony and creates a server-side session like every other login path.
+    """
+
+    state_data: dict[str, Any]
 
 
 class PasskeyRpInfo(BaseModel):
