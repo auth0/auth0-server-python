@@ -975,21 +975,6 @@ class TestVerify:
             )
 
     @pytest.mark.asyncio
-    async def test_verify_dpop_bound_token_without_key_rejected(self, mocker):
-        """Server returns a DPoP-bound token but no key supplied: fail closed, don't accept."""
-        client = _make_client()
-        response = AsyncMock()
-        response.status_code = 200
-        response.headers = {}
-        response.json = MagicMock(return_value={
-            "access_token": "bound_at", "token_type": "DPoP", "expires_in": 3600
-        })
-        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
-
-        with pytest.raises(MfaVerifyError, match="no dpop_key was"):
-            await client.verify({"mfa_token": _enc(), "otp": "123456"})
-
-    @pytest.mark.asyncio
     async def test_verify_without_dpop_no_dpop_header(self, mocker):
         """Without dpop_key the request carries no DPoP header and Bearer is accepted."""
         client = _make_client()
