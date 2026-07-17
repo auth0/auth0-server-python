@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
+from auth0_server_python.auth_server.passwordless_client import PasswordlessClient
 from auth0_server_python.auth_types import (
     CompleteConnectAccountRequest,
     CompleteConnectAccountResponse,
@@ -191,6 +192,9 @@ class ServerClient(Generic[TStoreOptions]):
             state_identifier=self._state_identifier,
             headers=self._telemetry_headers,
         )
+
+        # Initialize Passwordless client (composes this client)
+        self._passwordless_client = PasswordlessClient(self)
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with telemetry headers injected."""
@@ -588,6 +592,71 @@ class ServerClient(Generic[TStoreOptions]):
 
             return auth_url
 
+    async def _persist_session_from_token_response(
+        self,
+        token_response: dict[str, Any],
+        user_claims: "UserClaims",
+        origin_domain: str,
+        audience: Optional[str],
+        session_expires_at: Optional[int],
+        issued_at: Optional[int],
+        id_token_claims: Optional[dict[str, Any]] = None,
+        user_info: Optional[dict[str, Any]] = None,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> StateData:
+        """
+        Build and persist a session ``StateData`` from a token endpoint response.
+
+        Shared by the interactive-login callback and the passwordless OTP verify
+        flow so both derive the session id, enforce the IPSIE ceiling, and write
+        the state store identically.
+
+        The session ``sid`` is taken from the verified ID token claims (falling
+        back to userinfo, then a random value) so OIDC back-channel logout — which
+        matches sessions by ``sid`` — can target sessions created here.
+
+        Raises:
+            SessionExpiredError: If the session ceiling is already in the past.
+        """
+        # Refuse to persist a session whose ceiling is already in the past.
+        if State.is_session_ceiling_in_past(session_expires_at, issued_at):
+            raise SessionExpiredError()
+
+        token_set = TokenSet(
+            audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
+            access_token=token_response.get("access_token", ""),
+            scope=token_response.get("scope", ""),
+            expires_at=int(time.time()) + token_response.get("expires_in", 3600),
+        )
+
+        # Prefer the ID token's `sid` claim, then userinfo, then a random value.
+        # A random sid would make the session untargetable by back-channel logout.
+        sid = None
+        if id_token_claims and id_token_claims.get("sid"):
+            sid = id_token_claims["sid"]
+        elif user_info and user_info.get("sid"):
+            sid = user_info["sid"]
+        if not sid:
+            sid = PKCE.generate_random_string(32)
+
+        state_data = StateData(
+            user=user_claims,
+            id_token=token_response.get("id_token"),
+            refresh_token=token_response.get("refresh_token"),
+            token_sets=[token_set],
+            domain=origin_domain,
+            internal={
+                "sid": sid,
+                "created_at": int(time.time()),
+                "session_expires_at": session_expires_at,
+            },
+        )
+
+        await self._state_store.set(
+            self._state_identifier, state_data, options=store_options
+        )
+        return state_data
+
     async def complete_interactive_login(
         self,
         url: str,
@@ -662,6 +731,9 @@ class ServerClient(Generic[TStoreOptions]):
         # ID token `iat`, used to detect a ceiling that is already past at login.
         issued_at = None
         id_token = token_response.get("id_token")
+        # Verified ID token claims, retained so the session `sid` can be sourced
+        # from them (back-channel logout matches on `sid`).
+        id_token_claims = None
 
         expected_org = transaction_data.organization
 
@@ -704,6 +776,7 @@ class ServerClient(Generic[TStoreOptions]):
                     validate_org_claims(claims, expected_org)
 
                 user_claims = UserClaims.parse_obj(claims)
+                id_token_claims = claims
                 session_expires_at = user_claims.session_expiry
                 issued_at = claims.get("iat")
             except ValueError as e:
@@ -734,41 +807,24 @@ class ServerClient(Generic[TStoreOptions]):
                 )
 
 
-        # Refuse to persist a session whose ceiling is already in the past.
-        if State.is_session_ceiling_in_past(session_expires_at, issued_at):
+        # Build + persist the session via the shared helper (enforces the IPSIE
+        # ceiling and sources `sid` from the ID token claims). On a past ceiling,
+        # clean up the transaction before surfacing the error.
+        try:
+            state_data = await self._persist_session_from_token_response(
+                token_response=token_response,
+                user_claims=user_claims,
+                origin_domain=origin_domain,
+                audience=transaction_data.audience,
+                session_expires_at=session_expires_at,
+                issued_at=issued_at,
+                id_token_claims=id_token_claims,
+                user_info=user_info if isinstance(user_info, dict) else None,
+                store_options=store_options,
+            )
+        except SessionExpiredError:
             await self._transaction_store.delete(transaction_identifier, options=store_options)
-            raise SessionExpiredError()
-
-        # Build a token set using the token response data
-        token_set = TokenSet(
-            audience=transaction_data.audience or self.DEFAULT_AUDIENCE_STATE_KEY,
-            access_token=token_response.get("access_token", ""),
-            scope=token_response.get("scope", ""),
-            expires_at=int(time.time()) +
-            token_response.get("expires_in", 3600)
-        )
-
-        # Generate a session id (sid) from token_response or transaction data, or create a new one
-        sid = user_info.get(
-            "sid") if user_info and "sid" in user_info else PKCE.generate_random_string(32)
-
-        # Construct state data to represent the session
-        state_data = StateData(
-            user=user_claims,
-            id_token=token_response.get("id_token"),
-            # might be None if not provided
-            refresh_token=token_response.get("refresh_token"),
-            token_sets=[token_set],
-            domain=origin_domain,
-            internal={
-                "sid": sid,
-                "created_at": int(time.time()),
-                "session_expires_at": session_expires_at
-            }
-        )
-
-        # Store the state data in the state store using store_options (Response required)
-        await self._state_store.set(self._state_identifier, state_data, options=store_options)
+            raise
 
         # Clean up transaction data after successful login
         await self._transaction_store.delete(transaction_identifier, options=store_options)
@@ -2627,3 +2683,12 @@ class ServerClient(Generic[TStoreOptions]):
     def mfa(self) -> MfaClient:
         """Access the MFA client for multi-factor authentication operations."""
         return self._mfa_client
+
+    # ============================================================================
+    # Passwordless (embedded login)
+    # ============================================================================
+
+    @property
+    def passwordless(self) -> PasswordlessClient:
+        """Access the passwordless client for embedded passwordless operations."""
+        return self._passwordless_client

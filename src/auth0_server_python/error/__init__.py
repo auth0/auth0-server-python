@@ -2,6 +2,7 @@
 Error classes for the auth0-server-python SDK.
 These exceptions provide specific error types for different failure scenarios.
 """
+
 from typing import Any, Optional
 
 
@@ -19,6 +20,7 @@ class MissingTransactionError(Auth0Error):
     This typically happens during the callback phase when the transaction
     from the initial authorization request cannot be found.
     """
+
     code = "missing_transaction_error"
 
     def __init__(self, message=None):
@@ -56,6 +58,7 @@ class PollingApiError(ApiError):
         super().__init__(code, message, cause)
         self.interval = interval
 
+
 class MyAccountApiError(Auth0Error):
     """
     Error raised when an API request to My Account API fails.
@@ -63,19 +66,20 @@ class MyAccountApiError(Auth0Error):
     """
 
     def __init__(
-            self,
-            title: Optional[str],
-            type: Optional[str],
-            detail: Optional[str],
-            status: Optional[int],
-            validation_errors: Optional[list[dict[str, str]]] = None
-        ):
+        self,
+        title: Optional[str],
+        type: Optional[str],
+        detail: Optional[str],
+        status: Optional[int],
+        validation_errors: Optional[list[dict[str, str]]] = None,
+    ):
         super().__init__(detail)
         self.title = title
         self.type = type
         self.detail = detail
         self.status = status
         self.validation_errors = validation_errors
+
 
 class AccessTokenError(Auth0Error):
     """Error raised when there's an issue with access tokens."""
@@ -92,6 +96,7 @@ class MissingRequiredArgumentError(Auth0Error):
     Error raised when a required argument is missing.
     Includes the name of the missing argument in the error message.
     """
+
     code = "missing_required_argument_error"
 
     def __init__(self, argument: str):
@@ -106,16 +111,19 @@ class ConfigurationError(Auth0Error):
     Error raised when SDK configuration is invalid.
     This includes invalid combinations of parameters or incorrect configuration values.
     """
+
     code = "configuration_error"
 
     def __init__(self, message: str):
         super().__init__(message)
         self.name = "ConfigurationError"
 
+
 class InvalidArgumentError(Auth0Error):
     """
     Error raised when a given argument is an invalid value.
     """
+
     code = "invalid_argument"
 
     def __init__(self, argument: str, message: str):
@@ -130,6 +138,7 @@ class IssuerValidationError(Auth0Error):
     This can happen when the issuer claim in a token does not match
     the expected issuer for the configured domain.
     """
+
     code = "issuer_validation_error"
 
     def __init__(self, message: str):
@@ -142,6 +151,7 @@ class BackchannelLogoutError(Auth0Error):
     Error raised during backchannel logout processing.
     This can happen when validating or processing logout tokens.
     """
+
     code = "backchannel_logout_error"
 
     def __init__(self, message: str):
@@ -156,6 +166,7 @@ class DomainResolverError(Auth0Error):
     This error indicates an issue with the custom domain resolver function
     provided for MCD (Multiple Custom Domains) support.
     """
+
     code = "domain_resolver_error"
 
     def __init__(self, message: str, original_error: Exception = None):
@@ -172,12 +183,14 @@ class AccessTokenForConnectionError(Auth0Error):
         self.code = code
         self.name = "AccessTokenForConnectionError"
 
+
 class StartLinkUserError(Auth0Error):
     """
     Error raised when user linking process fails to start.
     This typically happens when trying to link accounts without
     having an authenticated user first.
     """
+
     code = "start_link_user_error"
 
     def __init__(self, message: str):
@@ -187,8 +200,10 @@ class StartLinkUserError(Auth0Error):
 
 # Error code enumerations - these can be used to identify specific error scenarios
 
+
 class AccessTokenErrorCode:
     """Error codes for access token operations."""
+
     MISSING_SESSION = "missing_session"
     MISSING_REFRESH_TOKEN = "missing_refresh_token"
     FAILED_TO_REFRESH_TOKEN = "failed_to_refresh_token"
@@ -206,6 +221,7 @@ class OrganizationTokenValidationError(Auth0Error):
     Raised when org_id or org_name claim in the ID token fails validation
     against the organization value that was requested at login.
     """
+
     code = "organization_token_validation_error"
 
     def __init__(self, message: str):
@@ -215,6 +231,7 @@ class OrganizationTokenValidationError(Auth0Error):
 
 class AccessTokenForConnectionErrorCode:
     """Error codes for connection-specific token operations."""
+
     MISSING_REFRESH_TOKEN = "missing_refresh_token"
     FAILED_TO_RETRIEVE = "failed_to_retrieve"
     API_ERROR = "api_error"
@@ -228,6 +245,7 @@ class SessionExpiredError(Auth0Error):
     Error raised when a session is rejected at login because its
     session_expiry ceiling is already in the past.
     """
+
     code = AccessTokenErrorCode.SESSION_EXPIRED
 
     def __init__(self, message: Optional[str] = None, cause=None):
@@ -240,6 +258,7 @@ class CustomTokenExchangeError(Auth0Error):
     """
     Error raised during custom token exchange operations.
     """
+
     def __init__(self, code: str, message: str, cause=None):
         super().__init__(message)
         self.code = code
@@ -249,6 +268,7 @@ class CustomTokenExchangeError(Auth0Error):
 
 class CustomTokenExchangeErrorCode:
     """Error codes for custom token exchange operations."""
+
     INVALID_TOKEN_FORMAT = "invalid_token_format"
     MISSING_ACTOR_TOKEN_TYPE = "missing_actor_token_type"
     MISSING_ACTOR_TOKEN = "missing_actor_token"
@@ -260,15 +280,11 @@ class CustomTokenExchangeErrorCode:
 # MFA Error Classes
 # =============================================================================
 
+
 class MfaApiError(Auth0Error):
     """Base class for MFA API errors."""
 
-    def __init__(
-        self,
-        code: str,
-        message: str,
-        cause: Optional[dict[str, Any]] = None
-    ):
+    def __init__(self, code: str, message: str, cause: Optional[dict[str, Any]] = None):
         super().__init__(message)
         self.code = code
         self.cause = cause
@@ -312,11 +328,7 @@ class MfaRequiredError(AccessTokenError):
     """
 
     def __init__(
-        self,
-        message: str,
-        mfa_token: str,
-        mfa_requirements=None,
-        cause: Optional[Exception] = None
+        self, message: str, mfa_token: str, mfa_requirements=None, cause: Optional[Exception] = None
     ):
         super().__init__("mfa_required", message, cause)
         self.mfa_token = mfa_token
@@ -337,3 +349,61 @@ class MfaTokenInvalidError(Auth0Error):
     def __init__(self):
         super().__init__("The MFA token is invalid.")
         self.code = "mfa_token_invalid"
+
+
+# =============================================================================
+# Passwordless Error Classes
+# =============================================================================
+
+
+class PasswordlessError(ApiError):
+    """
+    Base class for passwordless (embedded login) errors.
+
+    Carries the Auth0 ``error`` / ``error_description`` from the API response
+    body so integrators can branch on a typed exception rather than parsing
+    strings.
+    """
+
+    def __init__(self, code: str, message: str, cause=None):
+        super().__init__(code, message, cause)
+        self.name = "PasswordlessError"
+        # When cause is the raw error dict from Auth0, surface its fields even
+        # though ApiError only reads attributes off exception-like causes.
+        if isinstance(cause, dict):
+            self.error = cause.get("error")
+            self.error_description = cause.get("error_description")
+
+
+class PasswordlessStartError(PasswordlessError):
+    """Error raised when POST /passwordless/start fails."""
+
+    def __init__(self, code: str, message: str, cause=None):
+        super().__init__(code, message, cause)
+        self.name = "PasswordlessStartError"
+
+
+class PasswordlessVerifyError(PasswordlessError):
+    """Error raised when the passwordless OTP token exchange fails."""
+
+    def __init__(self, code: str, message: str, cause=None):
+        super().__init__(code, message, cause)
+        self.name = "PasswordlessVerifyError"
+
+
+class PasswordlessErrorCode:
+    """Error codes for passwordless operations."""
+
+    # Start errors
+    BAD_CONNECTION = "bad.connection"
+    BAD_EMAIL = "bad.email"
+    SMS_PROVIDER_ERROR = "sms_provider_error"
+    TOO_MANY_REQUESTS = "too_many_requests"
+    # Verify errors
+    INVALID_GRANT = "invalid_grant"
+    INVALID_ISSUER = "invalid_issuer"
+    INVALID_AUDIENCE = "invalid_audience"
+    DISCOVERY_ERROR = "discovery_error"
+    # SDK-side
+    START_FAILED = "passwordless_start_failed"
+    VERIFY_FAILED = "passwordless_verify_failed"
