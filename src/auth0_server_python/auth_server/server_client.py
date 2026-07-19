@@ -622,11 +622,12 @@ class ServerClient(Generic[TStoreOptions]):
         if State.is_session_ceiling_in_past(session_expires_at, issued_at):
             raise SessionExpiredError()
 
+        now = int(time.time())
         token_set = TokenSet(
             audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
             access_token=token_response.get("access_token", ""),
             scope=token_response.get("scope", ""),
-            expires_at=int(time.time()) + token_response.get("expires_in", 3600),
+            expires_at=now + token_response.get("expires_in", 3600),
         )
 
         # Prefer the ID token's `sid` claim, then userinfo, then a random value.
@@ -647,7 +648,7 @@ class ServerClient(Generic[TStoreOptions]):
             domain=origin_domain,
             internal={
                 "sid": sid,
-                "created_at": int(time.time()),
+                "created_at": now,
                 "session_expires_at": session_expires_at,
             },
         )

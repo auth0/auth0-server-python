@@ -678,12 +678,13 @@ PASSWORDLESS_ALLOWED_AUTH_PARAMS = frozenset(
         "prompt",
         "max_age",
         "acr_values",
-        "connection_scope",
     }
 )
 
 # Minimal BCP 47 language tag: primary subtag plus optional subtags.
 _BCP47_LANGUAGE_RE = r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
+# E.164 phone number: '+' followed by up to 15 digits, first digit non-zero.
+_E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
 
 
 class _StartPasswordlessBase(BaseModel):
@@ -733,7 +734,7 @@ class StartPasswordlessSmsOptions(_StartPasswordlessBase):
     @field_validator("phone_number")
     @classmethod
     def _validate_phone_number(cls, value: str) -> str:
-        if not re.match(r"^\+[1-9]\d{1,14}$", value):
+        if not _E164_RE.match(value):
             raise ValueError("phone_number must be in E.164 format (e.g. '+14155550100')")
         return value
 
@@ -769,7 +770,7 @@ class VerifyPasswordlessOtpOptions(BaseModel):
     def _validate_phone_number(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
-        if not re.match(r"^\+[1-9]\d{1,14}$", value):
+        if not _E164_RE.match(value):
             raise ValueError("phone_number must be in E.164 format (e.g. '+14155550100')")
         return value
 
@@ -796,7 +797,9 @@ class VerifyPasswordlessOtpOptions(BaseModel):
 class PasswordlessStartResult(BaseModel):
     """Success payload from POST /passwordless/start."""
 
-    id: Optional[str] = None
+    # Auth0 returns the request id as `_id`; alias so `.id` is populated.
+    id: Optional[str] = Field(default=None, alias="_id")
 
     class Config:
         extra = "allow"  # Allow additional fields returned by Auth0
+        populate_by_name = True  # accept both `_id` (alias) and `id`

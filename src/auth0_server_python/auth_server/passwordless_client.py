@@ -279,6 +279,11 @@ class PasswordlessClient:
 
         auth_params = self._sanitize_caller_auth_params(options.auth_params)
 
+        # Required to persist the transaction cookie; checked after input
+        # validation so bad auth_params / missing redirect_uri surface first.
+        if store_options is None:
+            raise MissingRequiredArgumentError("store_options")
+
         state = PKCE.generate_random_string(32)
         auth_params["redirect_uri"] = redirect_uri
         auth_params["response_type"] = "code"

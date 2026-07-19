@@ -15,6 +15,7 @@ from auth0_server_python.auth_server.server_client import ServerClient
 from auth0_server_python.auth_types import (
     StartPasswordlessEmailOptions,
     StartPasswordlessSmsOptions,
+    TransactionData,
     VerifyPasswordlessOtpOptions,
 )
 from auth0_server_python.error import (
@@ -93,7 +94,8 @@ class TestStartOtp:
         assert body["client_secret"] == CLIENT_SECRET
         # OTP flow does not create a transaction.
         client._transaction_store.set.assert_not_awaited()
-        assert result.id == "req_123" or True  # extra fields allowed
+        # Auth0 returns the request id as `_id`; the model aliases it to `.id`.
+        assert result.id == "req_123"
 
     @pytest.mark.asyncio
     async def test_sms_otp_start(self):
@@ -153,7 +155,8 @@ class TestStartMagicLink:
         http = _mock_http(client, 200, {})
 
         await client.passwordless.start(
-            StartPasswordlessEmailOptions(email="user@example.com", send="link")
+            StartPasswordlessEmailOptions(email="user@example.com", send="link"),
+            store_options={},
         )
 
         body = http.post.call_args.kwargs["json"]
@@ -172,6 +175,19 @@ class TestStartMagicLink:
         assert set_call.kwargs["remove_if_expires"] is True
         assert tx_data.code_verifier is None
         assert tx_data.redirect_uri == REDIRECT_URI
+
+    @pytest.mark.asyncio
+    async def test_magic_link_requires_store_options(self):
+        # No store_options -> transaction cookie can't be persisted -> fail loudly.
+        client = _make_client()
+        _mock_http(client, 200, {})
+
+        with pytest.raises(MissingRequiredArgumentError):
+            await client.passwordless.start(
+                StartPasswordlessEmailOptions(email="user@example.com", send="link"),
+                store_options=None,
+            )
+        client._transaction_store.set.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_magic_link_requires_redirect_uri(self):
@@ -209,7 +225,8 @@ class TestStartMagicLink:
                 email="user@example.com",
                 send="link",
                 auth_params={"login_hint": "user@example.com"},
-            )
+            ),
+            store_options={},
         )
         ap = http.post.call_args.kwargs["json"]["authParams"]
         assert ap["login_hint"] == "user@example.com"
@@ -233,6 +250,23 @@ class TestStartMagicLink:
         client._transaction_store.set.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_connection_scope_not_allowed(self):
+        # connection_scope is a federated-connection param with no meaning for
+        # email/SMS passwordless; it is not in the allowlist and is rejected.
+        client = _make_client()
+        _mock_http(client, 200, {})
+
+        with pytest.raises(InvalidArgumentError):
+            await client.passwordless.start(
+                StartPasswordlessEmailOptions(
+                    email="user@example.com",
+                    send="link",
+                    auth_params={"connection_scope": "read:foo"},
+                )
+            )
+        client._transaction_store.set.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_client_ip_forwarded_on_start(self):
         client = _make_client()
         http = _mock_http(client, 200, {})
@@ -244,6 +278,57 @@ class TestStartMagicLink:
         )
         headers = http.post.call_args.kwargs["headers"]
         assert headers["auth0-forwarded-for"] == "203.0.113.7"
+
+
+# ── Magic link callback completion (complete_interactive_login) ──────────────
+
+
+class TestMagicLinkCallback:
+    @pytest.mark.asyncio
+    async def test_magic_link_callback_exchanges_code_without_pkce(self, mocker):
+        # Magic link is a plain auth-code exchange: lock that code_verifier=None
+        # reaches fetch_token (authlib drops the falsy field) so a forced verifier
+        # — which Auth0 would reject — is caught.
+        client = _make_client()
+        client._transaction_store.get.return_value = TransactionData(
+            code_verifier=None,
+            redirect_uri=REDIRECT_URI,
+            domain=DOMAIN,
+        )
+
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        mocker.patch.object(client._oauth, "metadata", METADATA)
+        mocker.patch.object(
+            client,
+            "_get_jwks_cached",
+            return_value={"keys": [{"kty": "RSA", "kid": "k1"}]},
+        )
+        mocker.patch.object(
+            client,
+            "_verify_and_decode_jwt",
+            return_value={"iss": ISSUER, "sub": "auth0|1", "sid": "SID-1", "iat": 1_000},
+        )
+        fetch_token = AsyncMock(
+            return_value={
+                "access_token": "at",
+                "id_token": "idt",
+                "expires_in": 3600,
+                "scope": "openid",
+            }
+        )
+        mocker.patch.object(client._oauth, "fetch_token", fetch_token)
+
+        result = await client.complete_interactive_login(
+            f"{REDIRECT_URI}?code=AUTHCODE&state=STATE-1"
+        )
+
+        assert fetch_token.await_args.kwargs["code_verifier"] is None
+        assert fetch_token.await_args.kwargs["code"] == "AUTHCODE"
+
+        # Session established; transaction consumed (single-use).
+        client._state_store.set.assert_awaited_once()
+        client._transaction_store.delete.assert_awaited_once()
+        assert result["state_data"]["internal"]["sid"] == "SID-1"
 
 
 # ── verify() ─────────────────────────────────────────────────────────────────
