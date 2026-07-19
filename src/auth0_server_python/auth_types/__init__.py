@@ -3,9 +3,10 @@ Type definitions for auth0-server-python SDK.
 These Pydantic models provide type safety and validation for all SDK data structures.
 """
 
+import re
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Upper bound (Unix seconds) for a plausible session_expiry
 SESSION_EXPIRY_MAX_PLAUSIBLE = 10_000_000_000
@@ -16,6 +17,7 @@ class UserClaims(BaseModel):
     User profile information as returned by Auth0.
     Contains standard OIDC claims about the authenticated user.
     """
+
     sub: str
     name: Optional[str] = None
     nickname: Optional[str] = None
@@ -32,7 +34,7 @@ class UserClaims(BaseModel):
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
 
-    @field_validator('session_expiry', mode='before')
+    @field_validator("session_expiry", mode="before")
     @classmethod
     def _sanitize_session_expiry(cls, value: Any) -> Optional[int]:
         if isinstance(value, bool) or not isinstance(value, int):
@@ -47,6 +49,7 @@ class TokenSet(BaseModel):
     Represents a set of tokens issued by Auth0.
     Contains the access token and related metadata.
     """
+
     audience: str
     access_token: str
     scope: Optional[str] = None
@@ -58,6 +61,7 @@ class ConnectionTokenSet(TokenSet):
     Token set specific to a connection.
     Extends TokenSet with connection-specific information.
     """
+
     connection: str
     login_hint: str
 
@@ -67,6 +71,7 @@ class InternalStateData(BaseModel):
     Internal data used for managing state.
     Not meant to be accessed directly by SDK users.
     """
+
     sid: str
     created_at: int
     # IPSIE session_expiry ceiling (Unix seconds), stamped at session creation
@@ -80,6 +85,7 @@ class SessionData(BaseModel):
     Represents a user session with Auth0.
     Contains user information and tokens.
     """
+
     user: Optional[UserClaims] = None
     id_token: Optional[str] = None
     refresh_token: Optional[str] = None
@@ -96,6 +102,7 @@ class StateData(SessionData):
     Complete state data stored in the state store.
     Extends SessionData with internal management information.
     """
+
     internal: InternalStateData
 
 
@@ -104,8 +111,11 @@ class TransactionData(BaseModel):
     Represents data for an in-progress authentication transaction.
     Used during the authorization code flow to correlate requests.
     """
+
     audience: Optional[str] = None
-    code_verifier: str
+    # Optional: interactive login sets this for PKCE; the passwordless magic-link
+    # transaction has no verifier (plain auth-code exchange), so it stays None.
+    code_verifier: Optional[str] = None
     app_state: Optional[Any] = None
     auth_session: Optional[str] = None
     redirect_uri: Optional[str] = None
@@ -121,6 +131,7 @@ class LogoutTokenClaims(BaseModel):
     Claims expected in a logout token.
     Used for backchannel logout processing.
     """
+
     sub: str
     sid: str
     iss: Optional[str] = None
@@ -131,6 +142,7 @@ class EncryptedStoreOptions(BaseModel):
     Options for encrypted stores.
     Contains the secret used for encryption.
     """
+
     secret: str
 
 
@@ -139,6 +151,7 @@ class ServerClientOptionsBase(BaseModel):
     Base options for configuring the Auth0 server client.
     Contains core settings required for all clients.
     """
+
     domain: str
     client_id: str
     client_secret: str
@@ -156,6 +169,7 @@ class ServerClientOptionsWithSecret(ServerClientOptionsBase):
     Client options using a secret for encryption.
     Extends base options with secret and duration settings.
     """
+
     secret: str
     state_absolute_duration: Optional[int] = 259200  # 3 days in seconds
 
@@ -165,6 +179,7 @@ class StartInteractiveLoginOptions(BaseModel):
     Options for starting the interactive login process.
     Configures how the authorization request is constructed.
     """
+
     pushed_authorization_requests: Optional[bool] = False
     app_state: Optional[Any] = None
     authorization_params: Optional[dict[str, Any]] = None
@@ -177,6 +192,7 @@ class LogoutOptions(BaseModel):
     Options for logout operations.
     Configures how the logout request is constructed.
     """
+
     return_to: Optional[str] = None
 
 
@@ -185,6 +201,7 @@ class AuthorizationParameters(BaseModel):
     Parameters used in authorization requests.
     Based on standard OAuth2/OIDC parameters.
     """
+
     scope: Optional[str] = None
     audience: Optional[str] = None
     redirect_uri: Optional[str] = None
@@ -192,11 +209,13 @@ class AuthorizationParameters(BaseModel):
     class Config:
         extra = "allow"  # Allow additional OAuth parameters
 
+
 class AuthorizationDetails(BaseModel):
     """
     Authorization details returned from Auth0.
     Used for Resource Access Rights (RAR).
     """
+
     type: str
     actions: Optional[list[str]] = None
     locations: Optional[list[str]] = None
@@ -211,6 +230,7 @@ class LoginBackchannelOptions(BaseModel):
     """
     Options for Client-Initiated Backchannel Authentication.
     """
+
     binding_message: str
     login_hint: dict[str, str]  # Should contain a 'sub' field
     authorization_params: Optional[dict[str, Any]] = None
@@ -223,6 +243,7 @@ class LoginBackchannelResult(BaseModel):
     """
     Result from Client-Initiated Backchannel Authentication.
     """
+
     authorization_details: Optional[list[AuthorizationDetails]] = None
 
 
@@ -230,8 +251,10 @@ class AccessTokenForConnectionOptions(BaseModel):
     """
     Options for retrieving an access token for a specific connection.
     """
+
     connection: str
     login_hint: Optional[str] = None
+
 
 class StartLinkUserOptions(BaseModel):
     connection: str
@@ -239,9 +262,11 @@ class StartLinkUserOptions(BaseModel):
     authorization_params: Optional[dict[str, Any]] = None
     app_state: Optional[Any] = None
 
+
 # =============================================================================
 # Multiple Custom Domain
 # =============================================================================
+
 
 class DomainResolverContext(BaseModel):
     """
@@ -259,12 +284,15 @@ class DomainResolverContext(BaseModel):
             host = context.request_headers.get('host', '').split(':')[0]
             return DOMAIN_MAP.get(host, DEFAULT_DOMAIN)
     """
+
     request_url: Optional[str] = None
     request_headers: Optional[dict[str, str]] = None
+
 
 # =============================================================================
 # Custom Token Exchange Types
 # =============================================================================
+
 
 class CustomTokenExchangeOptions(BaseModel):
     """
@@ -280,6 +308,7 @@ class CustomTokenExchangeOptions(BaseModel):
         organization: Organization identifier for the token exchange (optional)
         authorization_params: Additional OAuth parameters (optional)
     """
+
     subject_token: str
     subject_token_type: str
     audience: Optional[str] = None
@@ -304,6 +333,7 @@ class TokenExchangeResponse(BaseModel):
         refresh_token: Refresh token (optional)
         act: Actor claim for delegation/impersonation exchanges (optional)
     """
+
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
@@ -320,6 +350,7 @@ class LoginWithCustomTokenExchangeOptions(BaseModel):
 
     Combines token exchange parameters with session management.
     """
+
     subject_token: str
     subject_token_type: str
     audience: Optional[str] = None
@@ -336,12 +367,15 @@ class LoginWithCustomTokenExchangeResult(BaseModel):
 
     Contains session data established after token exchange.
     """
+
     state_data: dict[str, Any]
     authorization_details: Optional[list[AuthorizationDetails]] = None
+
 
 # =============================================================================
 # Connected Accounts Types
 # =============================================================================
+
 
 # BASE & SHARED
 class ConnectedAccountBase(BaseModel):
@@ -351,6 +385,7 @@ class ConnectedAccountBase(BaseModel):
     scopes: list[str]
     created_at: str
     expires_at: Optional[str] = None
+
 
 # ENTITIES (What exists)
 class ConnectedAccount(ConnectedAccountBase):
@@ -370,6 +405,7 @@ class ConnectedAccountConnection(BaseModel):
 
 # Connect Operations (How to connect)
 
+
 class ConnectAccountOptions(BaseModel):
     connection: str
     redirect_uri: Optional[str] = None
@@ -377,17 +413,20 @@ class ConnectAccountOptions(BaseModel):
     app_state: Optional[Any] = None
     authorization_params: Optional[dict[str, Any]] = None
 
+
 class ConnectAccountRequest(BaseModel):
     connection: str
     scopes: Optional[list[str]] = None
     redirect_uri: Optional[str] = None
     state: Optional[str] = None
     code_challenge: Optional[str] = None
-    code_challenge_method: Optional[str] = 'S256'
+    code_challenge_method: Optional[str] = "S256"
     authorization_params: Optional[dict[str, Any]] = None
+
 
 class ConnectParams(BaseModel):
     ticket: str
+
 
 class ConnectAccountResponse(BaseModel):
     auth_session: str
@@ -395,19 +434,23 @@ class ConnectAccountResponse(BaseModel):
     connect_params: ConnectParams
     expires_in: int
 
+
 class CompleteConnectAccountRequest(BaseModel):
     auth_session: str
     connect_code: str
     redirect_uri: str
     code_verifier: Optional[str] = None
 
+
 class CompleteConnectAccountResponse(ConnectedAccountBase):
     app_state: Optional[Any] = None
+
 
 # Manage operations
 class ListConnectedAccountsResponse(BaseModel):
     accounts: list[ConnectedAccount]
     next: Optional[str] = None
+
 
 class ListConnectedAccountConnectionsResponse(BaseModel):
     connections: list[ConnectedAccountConnection]
@@ -426,6 +469,7 @@ ChallengeType = Literal["otp", "oob"]
 
 class AuthenticatorResponse(BaseModel):
     """Represents an MFA authenticator enrolled by a user."""
+
     id: str
     authenticator_type: AuthenticatorType
     active: bool
@@ -439,14 +483,17 @@ class AuthenticatorResponse(BaseModel):
 
 # Enrollment Options
 
+
 class EnrollOtpOptions(BaseModel):
     """Options for enrolling an OTP authenticator."""
+
     authenticator_types: list[str]
     mfa_token: str
 
 
 class EnrollOobOptions(BaseModel):
     """Options for enrolling an OOB authenticator (SMS, Voice, Push)."""
+
     authenticator_types: list[str]
     oob_channels: list[OobChannel]
     phone_number: Optional[str] = None
@@ -455,6 +502,7 @@ class EnrollOobOptions(BaseModel):
 
 class EnrollEmailOptions(BaseModel):
     """Options for enrolling an email authenticator."""
+
     authenticator_types: list[str]
     oob_channels: list[OobChannel]
     email: Optional[str] = None
@@ -466,8 +514,10 @@ EnrollAuthenticatorOptions = Union[EnrollOtpOptions, EnrollOobOptions, EnrollEma
 
 # Enrollment Responses
 
+
 class OtpEnrollmentResponse(BaseModel):
     """Response when enrolling an OTP authenticator."""
+
     authenticator_type: Literal["otp"]
     secret: str
     barcode_uri: str
@@ -477,6 +527,7 @@ class OtpEnrollmentResponse(BaseModel):
 
 class OobEnrollmentResponse(BaseModel):
     """Response when enrolling an OOB authenticator."""
+
     authenticator_type: Literal["oob"]
     oob_channel: OobChannel
     oob_code: Optional[str] = None
@@ -491,8 +542,10 @@ EnrollmentResponse = Union[OtpEnrollmentResponse, OobEnrollmentResponse]
 
 # Challenge Types
 
+
 class ChallengeOptions(BaseModel):
     """Options for initiating an MFA challenge."""
+
     challenge_type: ChallengeType
     authenticator_id: Optional[str] = None
     mfa_token: str
@@ -500,6 +553,7 @@ class ChallengeOptions(BaseModel):
 
 class ChallengeResponse(BaseModel):
     """Response from initiating an MFA challenge."""
+
     challenge_type: ChallengeType
     oob_code: Optional[str] = None
     binding_method: Optional[str] = None
@@ -508,21 +562,26 @@ class ChallengeResponse(BaseModel):
 
 # List Options
 
+
 class ListAuthenticatorsOptions(BaseModel):
     """Options for listing MFA authenticators."""
+
     mfa_token: str
 
 
 # Verify Types
 
+
 class VerifyOtpOptions(BaseModel):
     """Verify with OTP code."""
+
     mfa_token: str
     otp: str
 
 
 class VerifyOobOptions(BaseModel):
     """Verify with OOB code + binding code."""
+
     mfa_token: str
     oob_code: str
     binding_code: str
@@ -530,6 +589,7 @@ class VerifyOobOptions(BaseModel):
 
 class VerifyRecoveryCodeOptions(BaseModel):
     """Verify with recovery code."""
+
     mfa_token: str
     recovery_code: str
 
@@ -539,6 +599,7 @@ VerifyMfaOptions = Union[VerifyOtpOptions, VerifyOobOptions, VerifyRecoveryCodeO
 
 class MfaVerifyResponse(BaseModel):
     """Response from MFA verification."""
+
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
@@ -551,24 +612,194 @@ class MfaVerifyResponse(BaseModel):
 
 # MFA Requirements
 
+
 class MfaRequirement(BaseModel):
     """A single MFA requirement entry."""
+
     type: str
 
 
 class MfaRequirements(BaseModel):
     """MFA requirements from an mfa_required error response."""
+
     enroll: Optional[list[MfaRequirement]] = None
     challenge: Optional[list[MfaRequirement]] = None
 
 
 # MFA Token Context (for encrypted storage)
 
+
 class MfaTokenContext(BaseModel):
     """Internal context stored inside encrypted mfa_token."""
+
     mfa_token: str
     audience: str
     scope: str
     mfa_requirements: Optional[MfaRequirements] = None
     created_at: int
 
+
+# =============================================================================
+# Passwordless Types
+# =============================================================================
+
+# Passwordless connection strategies (Legacy Passwordless connections).
+PasswordlessConnection = Literal["email", "sms"]
+
+# authParams keys the SDK owns and MUST NOT let a caller override for the
+# magic-link flow. A caller-controlled redirect_uri/state would allow the
+# emailed code+state to be redirected to an attacker (authorization-code
+# interception); the PKCE/nonce/response_type keys are protocol-controlled.
+# Mirrors nextjs-auth0's MAGIC_LINK_EXCLUDED_PARAMS / INTERNAL_AUTHORIZE_PARAMS.
+# Kept explicit so a rejected override gets a precise "set by the SDK" message.
+PASSWORDLESS_RESERVED_AUTH_PARAMS = frozenset(
+    {
+        "client_id",
+        "client_secret",
+        "redirect_uri",
+        "response_type",
+        "state",
+        "nonce",
+        "code_challenge",
+        "code_challenge_method",
+    }
+)
+
+# Caller-supplied authParams keys the SDK will forward. This is an allowlist
+# (Global §3: allowlists, not denylists) — any key outside it is rejected, so a
+# future security-relevant authorize parameter cannot pass through silently on
+# an SDK upgrade. Extend deliberately as new safe passthrough params are needed.
+PASSWORDLESS_ALLOWED_AUTH_PARAMS = frozenset(
+    {
+        "audience",
+        "login_hint",
+        "ui_locales",
+        "screen_hint",
+        "prompt",
+        "max_age",
+        "acr_values",
+    }
+)
+
+# Minimal BCP 47 language tag: primary subtag plus optional subtags.
+_BCP47_LANGUAGE_RE = r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
+# E.164 phone number: '+' followed by up to 15 digits, first digit non-zero.
+_E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
+
+
+class _StartPasswordlessBase(BaseModel):
+    """Shared options for starting a passwordless flow."""
+
+    # BCP 47 tag (e.g. "fr", "en-US"). Forwarded as x-request-language to
+    # localise the email/SMS template.
+    language: Optional[str] = None
+    # Extra params forwarded to /passwordless/start. SDK-owned keys
+    # (PASSWORDLESS_RESERVED_AUTH_PARAMS) are stripped in the client.
+    auth_params: Optional[dict[str, Any]] = None
+    # Organization id or name; validated against ID token claims on verify.
+    organization: Optional[str] = None
+    # Attempted solution to a captcha challenge, when the tenant requires one.
+    captcha: Optional[str] = None
+    # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` so brute-force
+    # and suspicious-IP protection key on the real user, not the app server. Only
+    # honored for confidential clients with "Trust Token Endpoint IP Header" on.
+    client_ip: Optional[str] = None
+
+    @field_validator("language")
+    @classmethod
+    def _validate_language(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not re.match(_BCP47_LANGUAGE_RE, value):
+            raise ValueError("language must be a valid BCP 47 tag (e.g. 'fr', 'en-US')")
+        return value
+
+
+class StartPasswordlessEmailOptions(_StartPasswordlessBase):
+    """Options for starting an email passwordless flow (OTP code or magic link)."""
+
+    connection: Literal["email"] = "email"
+    email: str
+    # "code" -> email OTP; "link" -> magic link.
+    send: Literal["code", "link"] = "code"
+
+
+class StartPasswordlessSmsOptions(_StartPasswordlessBase):
+    """Options for starting an SMS passwordless (OTP) flow."""
+
+    connection: Literal["sms"] = "sms"
+    # E.164 format, e.g. "+14155550100".
+    phone_number: str
+
+    @field_validator("phone_number")
+    @classmethod
+    def _validate_phone_number(cls, value: str) -> str:
+        if not _E164_RE.match(value):
+            raise ValueError("phone_number must be in E.164 format (e.g. '+14155550100')")
+        return value
+
+
+StartPasswordlessOptions = Union[StartPasswordlessEmailOptions, StartPasswordlessSmsOptions]
+
+
+class VerifyPasswordlessOtpOptions(BaseModel):
+    """
+    Options for verifying a passwordless OTP and establishing a session.
+
+    Exactly one of ``email`` / ``phone_number`` must be provided and must
+    match ``connection`` (email -> email, sms -> phone_number).
+    """
+
+    connection: PasswordlessConnection
+    # Public field name mirrors nextjs-auth0's `verificationCode`; sent to
+    # Auth0 as the `otp` form parameter.
+    verification_code: str
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    scope: Optional[str] = None
+    audience: Optional[str] = None
+    organization: Optional[str] = None
+    # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` on the OTP
+    # token exchange so brute-force protection keys on the real user, not the
+    # app server. Honored only for confidential clients with "Trust Token
+    # Endpoint IP Header" enabled.
+    client_ip: Optional[str] = None
+
+    @field_validator("phone_number")
+    @classmethod
+    def _validate_phone_number(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not _E164_RE.match(value):
+            raise ValueError("phone_number must be in E.164 format (e.g. '+14155550100')")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_identifier(self) -> "VerifyPasswordlessOtpOptions":
+        if self.connection == "email":
+            if not self.email:
+                raise ValueError("email is required when connection='email'")
+            if self.phone_number:
+                raise ValueError("phone_number must not be set when connection='email'")
+        else:  # sms
+            if not self.phone_number:
+                raise ValueError("phone_number is required when connection='sms'")
+            if self.email:
+                raise ValueError("email must not be set when connection='sms'")
+        return self
+
+    @property
+    def username(self) -> str:
+        """The Auth0 `username` value for the OTP grant (email or phone)."""
+        return self.email if self.connection == "email" else self.phone_number
+
+
+class PasswordlessStartResult(BaseModel):
+    """Success payload from POST /passwordless/start."""
+
+    # Auth0 returns the request id as `_id`; alias so `.id` is populated.
+    id: Optional[str] = Field(default=None, alias="_id")
+
+    class Config:
+        extra = "allow"  # Allow additional fields returned by Auth0
+        populate_by_name = True  # accept both `_id` (alias) and `id`

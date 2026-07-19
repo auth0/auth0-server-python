@@ -4282,6 +4282,122 @@ async def test_complete_login_issuer_validation_success(mocker):
 
 
 @pytest.mark.asyncio
+async def test_complete_login_sid_sourced_from_id_token_claim(mocker):
+    """
+    ID-token-only login must persist the session sid from the ID token's `sid`
+    claim (not a random value) so OIDC back-channel logout, which matches on
+    sid, can target the session.
+    """
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        domain="tenant.auth0.com",
+    )
+
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
+    )
+
+    # Mock JWKS fetch
+    mocker.patch.object(
+        client,
+        "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+
+    # Mock OAuth fetch_token (ID-token-only response, no userinfo)
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+        "id_token": "id_token_jwt"
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+
+    # Verified claims carry a `sid`
+    mocker.patch.object(
+        client,
+        "_verify_and_decode_jwt",
+        return_value={"sub": "user123", "iss": "https://tenant.auth0.com/", "sid": "SID-from-claim"}
+    )
+
+    result = await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
+
+    assert result["state_data"]["internal"]["sid"] == "SID-from-claim"
+
+
+@pytest.mark.asyncio
+async def test_complete_login_sid_falls_back_to_random_without_claim(mocker):
+    """
+    When the ID token carries no `sid`, a random one is generated so the session
+    is still persisted (back-channel logout simply cannot target it).
+    """
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        domain="tenant.auth0.com",
+    )
+
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="tenant.auth0.com",
+        client_id="test_client",
+        client_secret="test_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="test_secret_key_32_chars_long!!",
+    )
+
+    # Mock OIDC metadata
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
+    )
+
+    # Mock JWKS fetch
+    mocker.patch.object(
+        client,
+        "_get_jwks_cached",
+        return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
+    )
+
+    # Mock OAuth fetch_token (ID-token-only response, no userinfo)
+    async_fetch_token = AsyncMock()
+    async_fetch_token.return_value = {
+        "access_token": "token123",
+        "id_token": "id_token_jwt"
+    }
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+
+    # Verified claims carry NO `sid`
+    mocker.patch.object(
+        client,
+        "_verify_and_decode_jwt",
+        return_value={"sub": "user123", "iss": "https://tenant.auth0.com/"}
+    )
+
+    result = await client.complete_interactive_login("http://localhost/callback?code=abc&state=xyz")
+
+    sid = result["state_data"]["internal"]["sid"]
+    assert sid and sid != "user123"
+
+
+@pytest.mark.asyncio
 async def test_complete_login_issuer_mismatch_raises_error(mocker):
     """Test that issuer mismatch in ID token raises IssuerValidationError."""
     mock_tx_store = AsyncMock()
