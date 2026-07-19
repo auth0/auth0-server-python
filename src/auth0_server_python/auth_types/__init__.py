@@ -16,8 +16,6 @@ SESSION_EXPIRY_MAX_PLAUSIBLE = 10_000_000_000
 # challenge type (e.g. a future webauthn second factor) does not fail closed.
 OobChannel = Literal["sms", "voice", "auth0", "email"]
 ChallengeType = Literal["otp", "oob"]
-EnrollmentType = Literal["passkey", "email", "phone", "totp", "push-notification", "recovery-code", "password"]
-PreferredAuthMethod = Literal["sms", "voice"]
 
 # Deprecated public aliases resolved lazily (PEP 562) so access emits a warning
 # while imports keep working. Remove in a future release.
@@ -722,22 +720,6 @@ class PasskeyPublicKeyOptions(BaseModel):
     user_verification: Optional[str] = Field(None, alias="userVerification")
 
 
-class EnrollAuthenticationMethodRequest(BaseModel):
-    type: EnrollmentType
-    email: Optional[str] = None
-    phone_number: Optional[str] = None
-    preferred_authentication_method: Optional[PreferredAuthMethod] = None
-    identity_user_id: Optional[str] = None  # OAS: IdentityAuthenticationMethodBase.identity_user_id
-    connection: Optional[str] = None
-
-
-class EnrollmentChallengeResponse(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    authentication_method_id: str
-    auth_session: str
-    authn_params_public_key: Optional[PasskeyPublicKeyOptions] = None
-
-
 class PasskeyAuthResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     id: str
@@ -746,58 +728,6 @@ class PasskeyAuthResponse(BaseModel):
     authenticator_attachment: Optional[str] = Field(None, alias="authenticatorAttachment")
     response: dict[str, str]
     client_extension_results: Optional[dict[str, Any]] = Field(None, alias="clientExtensionResults")
-
-
-class VerifyAuthenticationMethodRequest(BaseModel):
-    auth_session: str
-    authn_response: Optional[PasskeyAuthResponse] = None
-    otp_code: Optional[str] = None
-    recovery_code: Optional[str] = None
-    password: Optional[str] = None
-
-
-class AuthenticationMethod(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    id: str
-    type: str
-    created_at: str
-    confirmed: Optional[bool] = None
-    usage: Optional[list[str]] = None
-    identity_user_id: Optional[str] = None
-    credential_device_type: Optional[str] = None
-    credential_backed_up: Optional[bool] = None
-    key_id: Optional[str] = None
-    public_key: Optional[str] = None
-    transports: Optional[list[str]] = None
-    user_agent: Optional[str] = None
-    user_handle: Optional[str] = None
-    aaguid: Optional[str] = None
-    relying_party_id: Optional[str] = None
-    phone_number: Optional[str] = None
-    preferred_authentication_method: Optional[str] = None
-    email: Optional[str] = None
-    name: Optional[str] = None
-    last_password_reset: Optional[str] = None
-
-
-class UpdateAuthenticationMethodRequest(BaseModel):
-    name: Optional[str] = None
-    preferred_authentication_method: Optional[str] = None
-
-
-class ListAuthenticationMethodsResponse(BaseModel):
-    authentication_methods: list[AuthenticationMethod]
-
-
-class Factor(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    type: str
-    usage: Optional[list[str]] = None
-
-
-class GetFactorsResponse(BaseModel):
-    factors: list[Factor]
 
 
 class PasskeyUserProfile(BaseModel):

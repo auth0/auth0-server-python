@@ -187,14 +187,6 @@ For more details and examples, see [examples/RetrievingData.md](examples/Retriev
 
 Sign users up or in with [WebAuthn](https://www.w3.org/TR/webauthn-2/) passkeys (Touch ID, Face ID, Windows Hello, or a security key) instead of a password, via [Auth0 passkeys](https://auth0.com/docs/authenticate/database-connections/passkeys). The ceremony is two steps — request a challenge, sign it in the browser, then complete sign-in — and establishes a server-side session like every other login path. For the signup and login flows, organizations, step-up MFA, and error handling, see [examples/Passkeys.md](examples/Passkeys.md).
 
-### 8. My Account API — Authentication Methods
-
-Let a logged-in user manage their own enrolled authentication methods — enroll a new passkey (or other factor), list, rename, and delete — via the [My Account API](https://auth0.com/docs/manage-users/my-account-api). For obtaining a scoped token, the enroll/verify ceremony, listing, updating, deleting, and error handling, see [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md).
-
-### 9. DPoP — Sender-Constrained Tokens (Passkeys & MyAccount)
-
-Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. DPoP is supported for Passkey sign-in (`signin_with_passkey`) and the authentication-methods/factors methods on `MyAccountClient`. For key generation and usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
-
 ## Feedback
 
 ### Contributing
