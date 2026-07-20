@@ -5,11 +5,15 @@ Handles Multi-Factor Authentication operations against the Auth0 MFA API.
 
 import json
 import time
-from typing import Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 import httpx
 
 from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
+from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
+
+if TYPE_CHECKING:
+    from jwcrypto import jwk
 from auth0_server_python.auth_types import (
     AuthenticatorResponse,
     ChallengeResponse,
@@ -447,6 +451,7 @@ class MfaClient:
         self,
         options: dict[str, Any],
         store_options: Optional[dict[str, Any]] = None,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> MfaVerifyResponse:
         """
         Verifies an MFA code and completes authentication.
@@ -466,12 +471,16 @@ class MfaClient:
                 - 'audience': str (optional, required if persist=True) - Audience for token_set
                 - 'scope': str (optional) - Scope for token_set
             store_options: Optional options passed to the State Store (e.g. request/response).
+            dpop_key: Optional EC P-256 JWK to DPoP-bind the token. Pass the same
+                key used at login (e.g. given to signin_with_passkey) to preserve
+                the sender constraint through step-up. Never stored by the SDK.
 
         Returns:
             MfaVerifyResponse with access_token, token_type, etc.
 
         Raises:
-            MfaVerifyError: When verification fails.
+            MfaVerifyError: When verification fails, or when dpop_key was supplied
+                but the server returned an unbound (Bearer) token.
             MfaRequiredError: When chained MFA is required.
         """
         mfa_token = options.get("mfa_token")
@@ -506,11 +515,32 @@ class MfaClient:
             token_endpoint = f"{base_url}/oauth/token"
 
             async with self._get_http_client() as client:
+                headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                if dpop_key is not None:
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint
+                    )
                 response = await client.post(
                     token_endpoint,
                     data=body,
-                    headers={"Content-Type": "application/x-www-form-urlencoded"}
+                    headers=headers
                 )
+
+                # Rebuild the proof with the nonce and retry once.
+                if (
+                    dpop_key is not None
+                    and response.status_code in (400, 401)
+                    and response.headers.get("DPoP-Nonce")
+                ):
+                    nonce = response.headers["DPoP-Nonce"]
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint, nonce=nonce
+                    )
+                    response = await client.post(
+                        token_endpoint,
+                        data=body,
+                        headers=headers
+                    )
 
                 if response.status_code != 200:
                     error_data = self._parse_error_body(response)
@@ -532,6 +562,15 @@ class MfaClient:
 
                 token_response = response.json()
                 verify_response = MfaVerifyResponse(**token_response)
+
+                # Reject a Bearer downgrade when a DPoP token was requested
+                # (RFC 9449: a bound token has token_type "DPoP").
+                token_is_dpop = verify_response.token_type.lower() == "dpop"
+                if dpop_key is not None and not token_is_dpop:
+                    raise MfaVerifyError(
+                        "DPoP token binding failed: expected token_type 'DPoP', "
+                        f"got '{verify_response.token_type}'"
+                    )
 
                 # Clear the in-progress MFA state after successful verification.
                 if self._state_store:
