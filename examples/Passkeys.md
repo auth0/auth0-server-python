@@ -5,12 +5,16 @@ Passkeys let users sign up and log in with [WebAuthn](https://www.w3.org/TR/weba
 > [!NOTE]
 > Passkeys require a [Custom Domain](https://auth0.com/docs/customize/custom-domains) (WebAuthn binds the credential to the relying-party domain) and the native passkey feature enabled on your tenant. See the [Auth0 passkey documentation](https://auth0.com/docs/authenticate/database-connections/passkeys).
 
+> [!NOTE]
+> Managing a logged-in user's enrolled passkeys (enroll a new passkey, list, rename, delete) is a **separate** surface on the My Account API. See [examples/MyAccountAuthenticationMethods.md](MyAccountAuthenticationMethods.md).
+
 ## Table of Contents
 
 - [How the flow works](#how-the-flow-works)
 - [Prerequisites](#prerequisites)
 - [1. Passkey Signup](#1-passkey-signup)
 - [2. Passkey Login](#2-passkey-login)
+- [3. DPoP-bound passkey tokens (optional)](#3-dpop-bound-passkey-tokens-optional)
   - [Completing MFA on a passkey login (and where the session comes from)](#completing-mfa-on-a-passkey-login-and-where-the-session-comes-from)
 - [Error Handling](#error-handling)
 
@@ -132,6 +136,31 @@ result = await server_client.signin_with_passkey(
 > [!NOTE]
 > The SDK is transparent to the signup-vs-login difference in the credential `response` — both flow through the same `PasskeyAuthResponse.response` dict. Send exactly the keys the browser produced.
 
+## 3. DPoP-bound passkey tokens (optional)
+
+Pass an optional `dpop_key` to bind the issued tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)), so a stolen token alone cannot be replayed. DPoP is **opt-in**: omit `dpop_key` and sign-in returns ordinary Bearer tokens with no behaviour change.
+
+```python
+from jwcrypto import jwk
+
+dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")  # you generate and keep this key (Tier 0)
+
+result = await server_client.signin_with_passkey(
+    auth_session=challenge.auth_session,
+    authn_response=authn_response,
+    dpop_key=dpop_key,
+    store_options={"request": request, "response": response},
+)
+```
+
+When `dpop_key` is supplied, the SDK attaches a token-endpoint proof so Auth0 issues a DPoP-bound token, transparently handles the server-nonce challenge, and **rejects a Bearer downgrade** — if the server returns an unbound token, `signin_with_passkey` raises `PasskeyError` rather than silently accepting a token bound to a key it never used.
+
+> [!TIP]
+> Reuse the **same** `dpop_key` for any subsequent My Account API calls made with the resulting token — the token is bound to that one key. See [MyAccountAuthenticationMethods.md → DPoP](MyAccountAuthenticationMethods.md#dpop).
+
+> [!WARNING]
+> The `dpop_key` private key is a **Tier 0 secret**. Keep it in your secret store (KMS/HSM), never log it (`repr()` is redacted, but `key.export_private()` is not), use **one key per user/session** (never share across principals), and use **EC P-256 only** — any other key type fails closed with a `ValueError` before any network call.
+
 ### Completing MFA on a passkey login (and where the session comes from)
 
 When a passkey login needs a second factor, `signin_with_passkey` raises `MfaRequiredError` **before** it creates a session. You finish the login by challenging and verifying through `client.mfa`, then **store the returned tokens yourself** — on this path the SDK does not persist the session for you (`persist` defaults to `False`, and there is no existing session to update yet):
@@ -143,6 +172,7 @@ try:
     result = await server_client.signin_with_passkey(
         auth_session=auth_session,
         authn_response=authn_response,
+        dpop_key=dpop_key,                     # optional; omit for Bearer tokens
         store_options={"request": request, "response": response},
     )
     # No MFA needed: signin_with_passkey already persisted the session for you.
@@ -155,10 +185,12 @@ except MfaRequiredError as e:
         store_options={"request": request, "response": response},
     )
 
-    # 2. Verify the user's code. persist=False (the default) → the SDK
-    #    returns the tokens instead of writing a session.
+    # 2. Verify the user's code. Re-supply the SAME dpop_key so the issued
+    #    token stays DPoP-bound. persist=False (the default) → the SDK returns
+    #    the tokens instead of writing a session.
     verify_response = await server_client.mfa.verify(
         {"mfa_token": e.mfa_token, "otp": otp_code},
+        dpop_key=dpop_key,                     # same key given to signin_with_passkey
         store_options={"request": request, "response": response},
     )
 
@@ -170,6 +202,9 @@ except MfaRequiredError as e:
         refresh_token=verify_response.refresh_token,
     )
 ```
+
+> [!IMPORTANT]
+> Re-supply the **same** `dpop_key` to `verify`. Omitting it when the login was DPoP-bound would downgrade the result to a Bearer token; `verify` **rejects** that mismatch with `MfaVerifyError` rather than silently dropping the sender constraint. DPoP is preserved end to end — `persist=False` affects only *who writes the session*, never the token binding.
 
 > [!NOTE]
 > Do **not** pass `persist=True` on this path. It updates an *existing* session, and a passkey-first login has none yet, so it raises `MfaVerifyError("No existing session found…")` — discarding the tokens `verify` just obtained. Use `persist=False` and store the returned tokens as shown above. (This is pre-existing MFA-client behavior, unrelated to passkeys.)
@@ -217,7 +252,7 @@ except Auth0Error as e:
 ### Common error codes (`PasskeyErrorCode`)
 
 - `passkey_challenge_error` — the signup/login challenge request failed
-- `passkey_token_error` — token exchange failed
+- `passkey_token_error` — token exchange failed (also used for a rejected DPoP downgrade)
 - `invalid_response` — Auth0 returned a response that could not be parsed
 
 > [!NOTE]

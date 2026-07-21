@@ -6,6 +6,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from jwcrypto import jwk
 
 from auth0_server_python.auth_server.mfa_client import DEFAULT_MFA_TOKEN_TTL, MfaClient
 from auth0_server_python.auth_types import (
@@ -892,3 +893,106 @@ class TestVerify:
                 {"mfa_token": _enc(), "otp": "123456",
                  "persist": True, "audience": "https://api.example.com"}
             )
+
+    @pytest.mark.asyncio
+    async def test_verify_dpop_attaches_proof_header(self, mocker):
+        """When dpop_key is supplied, a DPoP proof header is sent and a bound token accepted."""
+        client = _make_client()
+        dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")
+        response = AsyncMock()
+        response.status_code = 200
+        response.headers = {}
+        response.json = MagicMock(return_value={
+            "access_token": "bound_at", "token_type": "DPoP", "expires_in": 3600
+        })
+
+        captured_request = {}
+
+        async def mock_post(self_client, url, **kwargs):
+            captured_request["kwargs"] = kwargs
+            return response
+
+        mocker.patch("httpx.AsyncClient.post", new=mock_post)
+
+        result = await client.verify(
+            {"mfa_token": _enc(), "otp": "123456"},
+            dpop_key=dpop_key,
+        )
+        assert result.token_type == "DPoP"
+        assert "DPoP" in captured_request["kwargs"]["headers"]
+
+    @pytest.mark.asyncio
+    async def test_verify_dpop_nonce_retry(self, mocker):
+        """RFC 9449 §8.2: a DPoP-Nonce challenge triggers exactly one retry with the nonce."""
+        client = _make_client()
+        dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")
+
+        challenge = AsyncMock()
+        challenge.status_code = 400
+        challenge.headers = {"DPoP-Nonce": "server-nonce-123"}
+        challenge.json = MagicMock(return_value={"error": "use_dpop_nonce"})
+
+        success = AsyncMock()
+        success.status_code = 200
+        success.headers = {}
+        success.json = MagicMock(return_value={
+            "access_token": "bound_at", "token_type": "DPoP", "expires_in": 3600
+        })
+
+        proofs = []
+
+        async def mock_post(self_client, url, **kwargs):
+            proofs.append(kwargs["headers"].get("DPoP"))
+            return challenge if len(proofs) == 1 else success
+
+        mocker.patch("httpx.AsyncClient.post", new=mock_post)
+
+        result = await client.verify(
+            {"mfa_token": _enc(), "otp": "123456"},
+            dpop_key=dpop_key,
+        )
+        assert result.token_type == "DPoP"
+        assert len(proofs) == 2
+        assert proofs[0] != proofs[1]
+
+    @pytest.mark.asyncio
+    async def test_verify_dpop_rejects_bearer_downgrade(self, mocker):
+        """dpop_key supplied but server returns Bearer: reject rather than downgrade."""
+        client = _make_client()
+        dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")
+        response = AsyncMock()
+        response.status_code = 200
+        response.headers = {}
+        response.json = MagicMock(return_value={
+            "access_token": "at", "token_type": "Bearer", "expires_in": 3600
+        })
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response)
+
+        with pytest.raises(MfaVerifyError, match="DPoP token binding failed"):
+            await client.verify(
+                {"mfa_token": _enc(), "otp": "123456"},
+                dpop_key=dpop_key,
+            )
+
+    @pytest.mark.asyncio
+    async def test_verify_without_dpop_no_dpop_header(self, mocker):
+        """Without dpop_key the request carries no DPoP header and Bearer is accepted."""
+        client = _make_client()
+        response = AsyncMock()
+        response.status_code = 200
+        response.headers = {}
+        response.json = MagicMock(return_value={
+            "access_token": "at", "token_type": "Bearer", "expires_in": 3600
+        })
+
+        captured_request = {}
+
+        async def mock_post(self_client, url, **kwargs):
+            captured_request["kwargs"] = kwargs
+            return response
+
+        mocker.patch("httpx.AsyncClient.post", new=mock_post)
+
+        result = await client.verify({"mfa_token": _enc(), "otp": "123456"})
+        assert result.token_type == "Bearer"
+        assert "DPoP" not in captured_request["kwargs"]["headers"]

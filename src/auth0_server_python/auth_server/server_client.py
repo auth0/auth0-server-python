@@ -7,7 +7,10 @@ import asyncio
 import json
 import time
 from collections import OrderedDict
-from typing import Any, Callable, Generic, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Callable, Generic, Optional, TypeVar, Union
+
+if TYPE_CHECKING:
+    from jwcrypto import jwk
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
@@ -16,6 +19,7 @@ from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import ValidationError
 
+from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_types import (
@@ -2801,6 +2805,7 @@ class ServerClient(Generic[TStoreOptions]):
         organization: Optional[str] = None,
         scope: Optional[str] = None,
         audience: Optional[str] = None,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> PasskeyLoginResult:
         """
         Completes passkey authentication by exchanging the WebAuthn assertion
@@ -2818,6 +2823,9 @@ class ServerClient(Generic[TStoreOptions]):
             organization: Auth0 organization ID or name.
             scope: OAuth2 scope string.
             audience: Target API audience.
+            dpop_key: Optional EC P-256 JWK for DPoP-bound token exchange. When provided,
+                      attaches a DPoP proof header so Auth0 issues a DPoP-bound token
+                      (token_type: DPoP). Required when the tenant mandates DPoP binding.
 
         Returns:
             PasskeyLoginResult containing state_data with user claims and token sets,
@@ -2862,7 +2870,27 @@ class ServerClient(Generic[TStoreOptions]):
                 body["audience"] = audience
 
             async with self._get_http_client() as client:
-                response = await client.post(token_endpoint, json=body)
+                headers = {}
+                if dpop_key is not None:
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint
+                    )
+                response = await client.post(token_endpoint, json=body, headers=headers)
+
+                # RFC 9449 — the authorization server signals a required nonce
+                # with HTTP 400 + error="use_dpop_nonce" + DPoP-Nonce. Accept
+                # 401 as well so the retry holds against servers that mirror the
+                # resource-server status.
+                if (
+                    dpop_key is not None
+                    and response.status_code in (400, 401)
+                    and response.headers.get("DPoP-Nonce")
+                ):
+                    nonce = response.headers["DPoP-Nonce"]
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint, nonce=nonce
+                    )
+                    response = await client.post(token_endpoint, json=body, headers=headers)
 
                 if response.status_code != 200:
                     try:
@@ -2902,6 +2930,23 @@ class ServerClient(Generic[TStoreOptions]):
                     token_data["expires_at"] = int(time.time()) + token_data["expires_in"]
 
                 token_response = PasskeyTokenResponse.model_validate(token_data)
+
+                token_is_dpop = token_response.token_type.lower() == "dpop"
+                if dpop_key is not None and not token_is_dpop:
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
+                        f"DPoP token binding failed: expected token_type 'DPoP', "
+                        f"got '{token_response.token_type}'",
+                    )
+                if dpop_key is None and token_is_dpop:
+                    # Server issued a DPoP-bound token but no proof key was
+                    # supplied — we cannot prove possession on later calls, so
+                    # storing it as Bearer would silently fail open. Reject.
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
+                        "Server returned a DPoP-bound token but no dpop_key was "
+                        "provided; pass dpop_key to signin_with_passkey to bind it",
+                    )
 
             if resolved_org and not token_response.id_token:
                 raise OrganizationTokenValidationError(
