@@ -1,10 +1,11 @@
 import json
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
 from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
+from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
 from auth0_server_python.auth_types import (
     AuthenticationMethod,
     CompleteConnectAccountRequest,
@@ -26,6 +27,18 @@ from auth0_server_python.error import (
     MissingRequiredArgumentError,
     MyAccountApiError,
 )
+
+if TYPE_CHECKING:
+    from jwcrypto import jwk
+
+
+def _make_auth(
+    access_token: str,
+    dpop_key: Optional["jwk.JWK"] = None,
+) -> httpx.Auth:
+    if dpop_key is not None:
+        return DPoPAuth(access_token, dpop_key)
+    return BearerAuth(access_token)
 
 
 class MyAccountClient:
@@ -356,12 +369,14 @@ class MyAccountClient:
     async def get_factors(
         self,
         access_token: str,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> GetFactorsResponse:
         """
         Retrieve the list of factors available for enrollment.
 
         Args:
             access_token: User's access token (scope: read:me:factors).
+            dpop_key: Optional EC P-256 key for DPoP-bound token presentation.
 
         Returns:
             GetFactorsResponse containing the available factors.
@@ -378,7 +393,7 @@ class MyAccountClient:
             async with self._get_http_client() as client:
                 response = await client.get(
                     url=f"{self.audience}v1/factors",
-                    auth=BearerAuth(access_token),
+                    auth=_make_auth(access_token, dpop_key),
                 )
 
                 if response.status_code != 200:
@@ -415,6 +430,7 @@ class MyAccountClient:
         self,
         access_token: str,
         type_filter: Optional[str] = None,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> ListAuthenticationMethodsResponse:
         """
         List the user's enrolled authentication methods.
@@ -422,6 +438,7 @@ class MyAccountClient:
         Args:
             access_token: User's access token (scope: read:me:authentication-methods).
             type_filter: Optional authentication-method type to filter results by.
+            dpop_key: Optional EC P-256 key for DPoP-bound token presentation.
 
         Returns:
             ListAuthenticationMethodsResponse containing the enrolled methods.
@@ -443,7 +460,7 @@ class MyAccountClient:
                 response = await client.get(
                     url=f"{self.audience}v1/authentication-methods",
                     params=params,
-                    auth=BearerAuth(access_token),
+                    auth=_make_auth(access_token, dpop_key),
                 )
 
                 if response.status_code != 200:
@@ -477,6 +494,7 @@ class MyAccountClient:
         self,
         access_token: str,
         authentication_method_id: str,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> AuthenticationMethod:
         """
         Retrieve a single authentication method by ID.
@@ -484,6 +502,7 @@ class MyAccountClient:
         Args:
             access_token: User's access token (scope: read:me:authentication-methods).
             authentication_method_id: ID of the authentication method to retrieve.
+            dpop_key: Optional EC P-256 key for DPoP-bound token presentation.
 
         Returns:
             AuthenticationMethod for the requested ID.
@@ -502,7 +521,7 @@ class MyAccountClient:
             async with self._get_http_client() as client:
                 response = await client.get(
                     url=f"{self.audience}v1/authentication-methods/{quote(authentication_method_id, safe='')}",
-                    auth=BearerAuth(access_token),
+                    auth=_make_auth(access_token, dpop_key),
                 )
 
                 if response.status_code != 200:
@@ -536,6 +555,7 @@ class MyAccountClient:
         self,
         access_token: str,
         authentication_method_id: str,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> None:
         """
         Delete an authentication method by ID.
@@ -543,6 +563,7 @@ class MyAccountClient:
         Args:
             access_token: User's access token (scope: delete:me:authentication-methods).
             authentication_method_id: ID of the authentication method to delete.
+            dpop_key: Optional EC P-256 key for DPoP-bound token presentation.
 
         Raises:
             MissingRequiredArgumentError: If access_token or authentication_method_id is not provided.
@@ -558,7 +579,7 @@ class MyAccountClient:
             async with self._get_http_client() as client:
                 response = await client.delete(
                     url=f"{self.audience}v1/authentication-methods/{quote(authentication_method_id, safe='')}",
-                    auth=BearerAuth(access_token),
+                    auth=_make_auth(access_token, dpop_key),
                 )
 
                 if response.status_code != 204:
@@ -591,6 +612,7 @@ class MyAccountClient:
         access_token: str,
         authentication_method_id: str,
         request: UpdateAuthenticationMethodRequest,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> AuthenticationMethod:
         """
         Update an authentication method by ID.
@@ -599,6 +621,7 @@ class MyAccountClient:
             access_token: User's access token (scope: update:me:authentication-methods).
             authentication_method_id: ID of the authentication method to update.
             request: Fields to update on the authentication method.
+            dpop_key: Optional EC P-256 key for DPoP-bound token presentation.
 
         Returns:
             AuthenticationMethod reflecting the updated state.
@@ -620,7 +643,7 @@ class MyAccountClient:
                 response = await client.patch(
                     url=f"{self.audience}v1/authentication-methods/{quote(authentication_method_id, safe='')}",
                     json=request.model_dump(exclude_none=True),
-                    auth=BearerAuth(access_token),
+                    auth=_make_auth(access_token, dpop_key),
                 )
 
                 if response.status_code != 200:
@@ -654,6 +677,7 @@ class MyAccountClient:
         self,
         access_token: str,
         request: EnrollAuthenticationMethodRequest,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> EnrollmentChallengeResponse:
         """Step 1 of 2: Start enrollment (POST /me/v1/authentication-methods).
 
@@ -673,7 +697,7 @@ class MyAccountClient:
                 response = await client.post(
                     url=f"{self.audience}v1/authentication-methods",
                     json=request.model_dump(exclude_none=True),
-                    auth=BearerAuth(access_token),
+                    auth=_make_auth(access_token, dpop_key),
                 )
 
                 if response.status_code != 202:
@@ -749,6 +773,7 @@ class MyAccountClient:
         access_token: str,
         authentication_method_id: str,
         request: VerifyAuthenticationMethodRequest,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> AuthenticationMethod:
         """Step 2 of 2: Verify enrollment (POST /me/v1/authentication-methods/{id}/verify).
 
@@ -766,7 +791,7 @@ class MyAccountClient:
                 response = await client.post(
                     url=f"{self.audience}v1/authentication-methods/{quote(authentication_method_id, safe='')}/verify",
                     json=request.model_dump(by_alias=True, exclude_none=True),
-                    auth=BearerAuth(access_token),
+                    auth=_make_auth(access_token, dpop_key),
                 )
 
                 if response.status_code != 201:
