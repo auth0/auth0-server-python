@@ -337,3 +337,25 @@ class MfaTokenInvalidError(Auth0Error):
     def __init__(self):
         super().__init__("The MFA token is invalid.")
         self.code = "mfa_token_invalid"
+
+
+# =============================================================================
+# Passkey Error Classes
+# =============================================================================
+
+class PasskeyError(Auth0Error):
+    """
+    Error raised during passkey authentication operations.
+    """
+    def __init__(self, code: str, message: str, cause=None):
+        super().__init__(message)
+        self.code = code
+        self.name = "PasskeyError"
+        self.cause = cause
+
+
+class PasskeyErrorCode:
+    """Error codes for passkey operations."""
+    CHALLENGE_FAILED = "passkey_challenge_error"
+    TOKEN_EXCHANGE_FAILED = "passkey_token_error"
+    INVALID_RESPONSE = "invalid_response"
