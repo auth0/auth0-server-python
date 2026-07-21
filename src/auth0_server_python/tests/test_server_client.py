@@ -3963,9 +3963,9 @@ STT_URN = "urn:auth0:params:oauth:token-type:session_transfer_token"
 ID_TOKEN_URN = "urn:ietf:params:oauth:token-type:id_token"
 
 
-def _stt_client(mocker, *, exchange_response=None):
-    """A ServerClient with the token endpoint mocked, returning (client, post_mock)."""
-    client = ServerClient(
+def _stt_base_client():
+    """A bare ServerClient for STT tests (no network/session mocking)."""
+    return ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
         client_secret="<client_secret>",
@@ -3973,6 +3973,11 @@ def _stt_client(mocker, *, exchange_response=None):
         transaction_store=AsyncMock(),
         secret="some-secret",
     )
+
+
+def _stt_client(mocker, *, exchange_response=None):
+    """A ServerClient with the token endpoint mocked, returning (client, post_mock)."""
+    client = _stt_base_client()
     mocker.patch.object(
         client, "_fetch_oidc_metadata",
         return_value={"token_endpoint": "https://auth0.local/oauth/token"},
@@ -4138,24 +4143,13 @@ def test_build_session_transfer_redirect_encodes_and_includes_organization():
     assert "a+b" in url or "a%20b" in url  # the raw URL is encoded
 
 
-def _redirect_client():
-    return ServerClient(
-        domain="auth0.local",
-        client_id="<client_id>",
-        client_secret="<client_secret>",
-        state_store=AsyncMock(),
-        transaction_store=AsyncMock(),
-        secret="some-secret",
-    )
-
-
 def test_build_session_transfer_redirect_omits_organization_when_absent():
     """No organization is passed → the parameter is absent, not empty."""
     result = SessionTransferTokenResult(
         session_transfer_token="stt", issued_token_type=STT_URN, expires_in=60
     )
 
-    url = _redirect_client().build_session_transfer_redirect(
+    url = _stt_base_client().build_session_transfer_redirect(
         "https://app.example.com/auth/login", result
     )
 
@@ -4170,7 +4164,7 @@ def test_build_session_transfer_redirect_appends_to_existing_query():
         session_transfer_token="stt", issued_token_type=STT_URN, expires_in=60
     )
 
-    url = _redirect_client().build_session_transfer_redirect(
+    url = _stt_base_client().build_session_transfer_redirect(
         "https://app.example.com/auth/login?returnTo=/home", result
     )
 
@@ -4178,6 +4172,139 @@ def test_build_session_transfer_redirect_appends_to_existing_query():
     query = parse_qs(urlparse(url).query)
     assert query["returnTo"] == ["/home"]
     assert query["session_transfer_token"] == ["stt"]
+
+
+def _stt_result():
+    return SessionTransferTokenResult(
+        session_transfer_token="stt", issued_token_type=STT_URN, expires_in=60
+    )
+
+
+def test_build_session_transfer_redirect_allows_http_for_localhost():
+    """http is allowed for localhost (local dev)."""
+    url = _stt_base_client().build_session_transfer_redirect(
+        "http://localhost:3000/auth/login", _stt_result())
+    assert "session_transfer_token=stt" in url
+
+
+def test_build_session_transfer_redirect_allows_http_for_127_0_0_1():
+    """http is allowed for the 127.0.0.1 loopback address."""
+    url = _stt_base_client().build_session_transfer_redirect(
+        "http://127.0.0.1:3000/auth/login", _stt_result())
+    assert "session_transfer_token=stt" in url
+
+
+def test_build_session_transfer_redirect_rejects_non_https():
+    """A non-loopback http target is rejected - the STT must not ride an insecure URL."""
+    with pytest.raises(InvalidArgumentError):
+        _stt_base_client().build_session_transfer_redirect(
+            "http://app.example.com/auth/login", _stt_result())
+
+
+def test_build_session_transfer_redirect_rejects_non_absolute():
+    """A non-absolute target URL is rejected."""
+    with pytest.raises(InvalidArgumentError):
+        _stt_base_client().build_session_transfer_redirect("app.example.com/auth/login", _stt_result())
+
+
+def test_build_session_transfer_redirect_rejects_blank_target():
+    """A blank target URL is rejected."""
+    with pytest.raises(MissingRequiredArgumentError):
+        _stt_base_client().build_session_transfer_redirect("   ", _stt_result())
+
+
+def test_build_session_transfer_redirect_rejects_blank_organization():
+    """A blank organization fails fast rather than being forwarded as an empty param."""
+    with pytest.raises(InvalidArgumentError):
+        _stt_base_client().build_session_transfer_redirect(
+            "https://app.example.com/auth/login", _stt_result(), organization="  ")
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_surfaces_server_issued_token_type(mocker):
+    """A non-STT issued_token_type is surfaced verbatim, never fabricated as the STT URN."""
+    client, _ = _stt_client(mocker, exchange_response={
+        "access_token": "tok", "token_type": "Bearer", "expires_in": 300,
+        "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    })
+
+    result = await client.request_session_transfer_token(
+        subject_token="subj", subject_token_type="urn:acme:sub", actor_token="a",
+    )
+
+    assert result.issued_token_type == "urn:ietf:params:oauth:token-type:access_token"
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_empty_issued_token_type_when_absent(mocker):
+    """When the server omits issued_token_type, the result carries an empty string, not the URN."""
+    client, _ = _stt_client(mocker, exchange_response={
+        "access_token": "tok", "token_type": "N_A", "expires_in": 60,
+    })
+
+    result = await client.request_session_transfer_token(
+        subject_token="subj", subject_token_type="urn:acme:sub", actor_token="a",
+    )
+
+    assert result.issued_token_type == ""
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_blank_subject_token_rejected_before_network(mocker):
+    """A blank subject_token fails with INVALID_TOKEN_FORMAT before any network call."""
+    client, post_mock = _stt_client(mocker)
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.request_session_transfer_token(
+            subject_token="   ", subject_token_type="urn:acme:sub", actor_token="a")
+    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT
+    post_mock.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_blank_subject_token_type_rejected(mocker):
+    """A blank subject_token_type fails with INVALID_TOKEN_FORMAT before any network call."""
+    client, post_mock = _stt_client(mocker)
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.request_session_transfer_token(
+            subject_token="subj", subject_token_type="   ", actor_token="a")
+    assert exc.value.code == CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT
+    post_mock.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_refresh_without_id_token_is_unavailable(mocker):
+    """A refresh that returns no ID token leaves no usable actor -> ACTOR_UNAVAILABLE."""
+    client, _ = _stt_client(mocker)
+    client._state_store.get.return_value = {"id_token": "stale", "refresh_token": "rt"}
+    mocker.patch.object(client, "_is_id_token_usable", return_value=False)
+    mocker.patch.object(client, "get_token_by_refresh_token",
+                        return_value={"access_token": "a", "expires_in": 3600})  # no id_token
+
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.request_session_transfer_token(
+            subject_token="subj", subject_token_type="urn:acme:sub",
+        )
+    assert exc.value.code == CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_rejects_cross_domain_session_in_resolver_mode(mocker):
+    """In resolver mode, an actor is not sourced from a session on a different domain."""
+    async def resolver(context):
+        return "tenant-a.auth0.com"
+
+    client = ServerClient(
+        domain=resolver, client_id="<client_id>", client_secret="<client_secret>",
+        state_store=AsyncMock(), transaction_store=AsyncMock(), secret="some-secret",
+    )
+    client._state_store.get.return_value = {"id_token": "t", "domain": "tenant-b.auth0.com"}
+
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.request_session_transfer_token(
+            subject_token="subj", subject_token_type="urn:acme:sub",
+            store_options={"request": None, "response": None},
+        )
+    assert exc.value.code == CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE
 
 
 # =============================================================================

@@ -2656,13 +2656,16 @@ class ServerClient(Generic[TStoreOptions]):
         """
         if not token:
             return False
+        domain = await self._resolve_current_domain(store_options)
+        metadata = await self._get_oidc_metadata_cached(domain)
+        jwks = await self._get_jwks_cached(domain, metadata)
         try:
-            domain = await self._resolve_current_domain(store_options)
-            metadata = await self._get_oidc_metadata_cached(domain)
-            jwks = await self._get_jwks_cached(domain, metadata)
+            # aud is the client_id for a standard Auth0 ID token.
             await self._verify_and_decode_jwt(token, jwks, audience=self._client_id)
             return True
-        except Exception:
+        except (jwt.PyJWTError, ValueError):
+            # Only token-level failures mean "unusable"; infra errors (JWKS fetch, domain
+            # resolution) propagate above rather than being masked as ACTOR_UNAVAILABLE.
             return False
 
     async def _resolve_actor_token(
@@ -2692,21 +2695,34 @@ class ServerClient(Generic[TStoreOptions]):
             state_data = state_data.dict()
         state_data = state_data or {}
 
+        # In resolver mode, don't source the actor from a session on a different domain.
+        if self._domain_resolver:
+            session_domain = self._get_session_domain(state_data)
+            current_domain = await self._resolve_current_domain(store_options)
+            if not session_domain or self._normalize_url(session_domain) != self._normalize_url(current_domain):
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE,
+                    "No usable actor token: the agent session is on a different domain."
+                )
+
         session_id_token = state_data.get("id_token")
 
         # Refresh a stale (or missing) ID token when the agent session has a refresh token.
         if not await self._is_id_token_usable(session_id_token, store_options) and state_data.get("refresh_token"):
+            refresh_domain = self._get_session_domain(state_data) or await self._resolve_current_domain(store_options)
             try:
                 refreshed = await self.get_token_by_refresh_token({
                     "refresh_token": state_data["refresh_token"],
-                    "domain": state_data.get("domain") or self._domain,
+                    "domain": refresh_domain,
                 })
+            except (ApiError, AccessTokenError):
+                # A genuine refresh failure means no usable actor; unexpected errors propagate.
+                refreshed = None
+            if refreshed:
                 updated_state_data = State.update_state_data(
                     self.DEFAULT_AUDIENCE_STATE_KEY, state_data, refreshed)
                 await self._state_store.set(self._state_identifier, updated_state_data, options=store_options)
                 session_id_token = refreshed.get("id_token") or session_id_token
-            except Exception:
-                session_id_token = None
 
         if await self._is_id_token_usable(session_id_token, store_options):
             return session_id_token, ID_TOKEN_TYPE
@@ -2749,6 +2765,18 @@ class ServerClient(Generic[TStoreOptions]):
             CustomTokenExchangeError: If no actor can be resolved or the exchange fails
         """
         try:
+            # Validate the subject up front - before any session read/refresh/network.
+            if not subject_token or not subject_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token cannot be empty or whitespace-only"
+                )
+            if not subject_token_type or not subject_token_type.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token_type cannot be empty or whitespace-only"
+                )
+
             actor_token, actor_token_type = await self._resolve_actor_token(
                 actor_token, actor_token_type, store_options)
 
@@ -2770,7 +2798,9 @@ class ServerClient(Generic[TStoreOptions]):
 
             return SessionTransferTokenResult(
                 session_transfer_token=response.access_token,
-                issued_token_type=response.issued_token_type or SESSION_TRANSFER_TOKEN_TYPE,
+                # Return the server's value as-is; don't default to the STT URN, or a non-STT
+                # response would be mislabelled as an STT.
+                issued_token_type=response.issued_token_type or "",
                 expires_in=response.expires_in,
                 token_type=response.token_type,
                 scope=response.scope,
@@ -2793,16 +2823,28 @@ class ServerClient(Generic[TStoreOptions]):
         """
         Builds the redirect URL that hands the STT to the target app's login URL.
 
+        target_login_url must be a trusted, app-controlled absolute https URL (http is allowed
+        only for localhost/loopback) - the STT is a single-use credential and must not leak to an
+        untrusted host.
+
         Args:
-            target_login_url: The target app's login URL
+            target_login_url: The target app's login URL (absolute, https)
             result: The SessionTransferTokenResult from request_session_transfer_token
             organization: Organization identifier to forward (optional)
 
         Returns:
             A URL string with session_transfer_token (and organization) as query parameters
+
+        Raises:
+            MissingRequiredArgumentError: If target_login_url is missing or blank
+            InvalidArgumentError: If target_login_url is not an absolute https URL, or organization is blank
         """
+        URL.validate_https_redirect_target(target_login_url, "target_login_url")
+
         params = {"session_transfer_token": result.session_transfer_token}
-        if organization:
+        if organization is not None:
+            if not organization.strip():
+                raise InvalidArgumentError("organization", "organization must not be blank")
             params["organization"] = organization
 
         return URL.build_url(target_login_url, params)

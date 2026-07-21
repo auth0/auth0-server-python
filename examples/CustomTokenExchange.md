@@ -263,7 +263,7 @@ if act:
 
 - `ACTOR_UNAVAILABLE`: no usable actor token (client-side; raised before any network call)
 - `SETACTOR_REQUIRED`: an STT was requested but the Action did not call `setActor` (server 400)
-- `SESSION_TRANSFER_DISABLED`: the session-transfer feature is off for the tenant/client (server 400)
+- `SESSION_TRANSFER_DISABLED`: the session-transfer feature is not enabled for the tenant/client (server 400)
 
 ## Additional Resources
 
