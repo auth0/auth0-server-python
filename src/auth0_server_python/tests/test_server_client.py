@@ -4213,6 +4213,13 @@ def test_build_session_transfer_redirect_rejects_blank_target():
         _stt_base_client().build_session_transfer_redirect("   ", _stt_result())
 
 
+def test_build_session_transfer_redirect_rejects_fragment():
+    """A fragment is rejected - it would swallow the STT query param, dropping the token."""
+    with pytest.raises(InvalidArgumentError):
+        _stt_base_client().build_session_transfer_redirect(
+            "https://app.example.com/auth/login#section", _stt_result())
+
+
 def test_build_session_transfer_redirect_rejects_blank_organization():
     """A blank organization fails fast rather than being forwarded as an empty param."""
     with pytest.raises(InvalidArgumentError):
@@ -4285,6 +4292,24 @@ async def test_request_session_transfer_token_refresh_without_id_token_is_unavai
             subject_token="subj", subject_token_type="urn:acme:sub",
         )
     assert exc.value.code == CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_surfaces_server_error(mocker):
+    """A server 400 surfaces as CustomTokenExchangeError carrying the server's error/description."""
+    client, post_mock = _stt_client(mocker)
+    post_mock.post.return_value.status_code = 400
+    post_mock.post.return_value.json.return_value = {
+        "error": "invalid_request",
+        "error_description": "setActor is required when requesting a session transfer token via token exchange.",
+    }
+
+    with pytest.raises(CustomTokenExchangeError) as exc:
+        await client.request_session_transfer_token(
+            subject_token="subj", subject_token_type="urn:acme:sub", actor_token="a",
+        )
+    assert exc.value.code == "invalid_request"
+    assert "setActor is required" in str(exc.value)
 
 
 @pytest.mark.asyncio

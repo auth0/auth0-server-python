@@ -240,6 +240,9 @@ class URL:
             raise InvalidArgumentError(
                 name, "must use https (http is allowed only for localhost/loopback)"
             )
+        # A fragment would swallow the appended query params, dropping the token silently.
+        if parsed.fragment:
+            raise InvalidArgumentError(name, "must not contain a fragment")
 
     @staticmethod
     def build_url(base_url: str, params: dict[str, Any]) -> str:
