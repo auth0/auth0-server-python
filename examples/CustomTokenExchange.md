@@ -179,6 +179,92 @@ Use standard URNs when possible:
 "urn:company:legacy-token"
 ```
 
+## 8. Impersonation via Session Transfer (STT)
+
+Custom Token Exchange can also mint a **Session Transfer Token (STT)** instead of an API access token. An STT lets an initiator app (for example a support console) log an agent into a target web app **as** a customer, with the agent recorded in the `act` claim - so a support engineer can reproduce a customer's exact experience without their password.
+
+This is a two-role, two-hop flow:
+
+- **Initiator** (the agent's app) mints the STT and redirects with it. This is where the new SDK methods live.
+- **Target** (the customer's app) forwards the STT to `/authorize` on a normal interactive login, which establishes the impersonated session.
+
+The STT is opaque, single-use, and short-lived (~60s). The SDK requests it and helps build the redirect - it never decodes or stores it.
+
+### Initiator: request an STT and build the redirect
+
+```python
+from auth0_server_python.auth_server.server_client import ServerClient
+from auth0_server_python.error import CustomTokenExchangeError
+
+# Mint the STT. The audience (urn:{domain}:session_transfer), grant type, and the actor are
+# set by the SDK - the actor is sourced from the logged-in agent's session.
+result = await auth0.request_session_transfer_token(
+    subject_token=subject_token,            # your proof of which customer to impersonate
+    subject_token_type="urn:acme:customer-subject",
+    organization=None,                      # optional; forwarded to the redirect
+    store_options={"request": request, "response": None},
+)
+
+# result.session_transfer_token is the opaque, one-shot STT (~60s). Never store it.
+redirect_url = auth0.build_session_transfer_redirect(
+    "https://customer-app.example.com/auth/login", result, organization=None
+)
+return RedirectResponse(redirect_url)       # your framework performs the redirect
+```
+
+`SessionTransferTokenResult` carries `session_transfer_token`, `issued_token_type` (the session-transfer URN - the field to branch on), `expires_in`, and an informational `token_type` (`N_A`). There is no `act` on this result; `act` appears later, on the target session.
+
+> **NOTE**: An actor is mandatory - an STT is only issued when the Action set one. By default the SDK sources the actor from the logged-in agent's session ID token, refreshing it when expired. If the agent is not logged in (no usable session ID token and none can be refreshed), the call fails client-side with `ACTOR_UNAVAILABLE` before any network request.
+
+> **NOTE**: To use your own actor token instead of the session, pass `actor_token` (and optionally `actor_token_type`, which defaults to the ID token URN). An explicit `actor_token` takes precedence and the session is not read at all. It must be an **unexpired, asymmetrically-signed JWT** (RS256 or PS256) - an Auth0 session ID token satisfies this; an HS256 or expired token is rejected by the server.
+>
+> ```python
+> result = await auth0.request_session_transfer_token(
+>     subject_token=subject_token,
+>     subject_token_type="urn:acme:customer-subject",
+>     actor_token=agent_id_token,   # explicit override - session is not used
+>     store_options={"request": request, "response": None},
+> )
+> ```
+
+### Target: forward the STT to `/authorize`
+
+On the target, the STT rides through your normal login. `start_interactive_login` forwards arbitrary authorization parameters to `/authorize`, so your login route just passes `session_transfer_token` (and `organization`, when the STT was issued in an org context) straight through:
+
+```python
+from auth0_server_python.auth_types import StartInteractiveLoginOptions
+
+url = await auth0.start_interactive_login(
+    StartInteractiveLoginOptions(authorization_params={
+        "session_transfer_token": request.query_params["session_transfer_token"],
+        # "organization": org,   # when the STT was issued in an org context
+    }),
+    store_options={"request": request, "response": None},
+)
+return RedirectResponse(url)
+```
+
+After the callback completes, read the acting party off the session user - the same way as the [Actor Tokens (Delegation)](#3-actor-tokens-delegation) section above:
+
+```python
+session = await auth0.get_session(store_options={"request": request, "response": None})
+act = (session or {}).get("user", {}).get("act")
+if act:
+    print(f"Impersonated by: {act['sub']}")   # drive an impersonation banner, etc.
+```
+
+> **NOTE**: Both clients need one-time configuration through the Auth0 Dashboard or Management API. The issuing (initiator) client must be allowed to create session transfer tokens. The redeeming (target) client must be allowed to accept delegated-access sessions and to receive the token as a query parameter. See the [Auth0 documentation](https://auth0.com/docs/authenticate/custom-token-exchange) for the exact client settings.
+
+> **NOTE**: `build_session_transfer_redirect` attaches a single-use credential to `target_login_url`, so that URL must be a trusted, app-controlled value - never one derived from untrusted input (such as a user-supplied `returnTo`), which could leak the token to an attacker host.
+
+> **NOTE**: The impersonation session is hard-capped at 2 hours and cannot mint a refresh token (`offline_access` is dropped when an actor is present). To continue past that, re-run the flow.
+
+### STT error codes
+
+- `ACTOR_UNAVAILABLE`: no usable actor token (client-side; raised before any network call)
+- `SETACTOR_REQUIRED`: an STT was requested but the Action did not call `setActor` (server 400)
+- `SESSION_TRANSFER_DISABLED`: the session-transfer feature is not enabled for the tenant/client (server 400)
+
 ## Additional Resources
 
 - [Auth0 Custom Token Exchange Documentation](https://auth0.com/docs/authenticate/custom-token-exchange)

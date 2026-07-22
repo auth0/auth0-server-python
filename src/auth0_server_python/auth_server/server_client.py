@@ -41,6 +41,7 @@ from auth0_server_python.auth_types import (
     PasskeySignupChallengeResponse,
     PasskeyTokenResponse,
     PasskeyUserProfile,
+    SessionTransferTokenResult,
     StartInteractiveLoginOptions,
     StateData,
     TokenExchangeResponse,
@@ -85,6 +86,12 @@ TStoreOptions = TypeVar('TStoreOptions')
 # dynamically from the resolved domain at login time.
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
                              "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
+
+# issued_token_type URN for a Session Transfer Token (STT).
+SESSION_TRANSFER_TOKEN_TYPE = "urn:auth0:params:oauth:token-type:session_transfer_token"
+
+# actor_token_type URN when the actor is sourced from the agent session's ID token.
+ID_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token"
 
 
 class ServerClient(Generic[TStoreOptions]):
@@ -2634,6 +2641,213 @@ class ServerClient(Generic[TStoreOptions]):
                 f"Login with custom token exchange failed: {str(e)}",
                 e
             )
+
+    # ============================================================================
+    # SESSION TRANSFER TOKEN (STT)
+    # Impersonation via Session Transfer, built on Custom Token Exchange.
+    # ============================================================================
+
+    async def _is_id_token_usable(self, token: str, store_options: Optional[dict[str, Any]]) -> bool:
+        """
+        Verifies the agent session's ID token (signature + expiry) before using it as an actor.
+
+        Full verification against JWKS - the same path the login callback uses - so an expired
+        or tampered token is rejected client-side rather than sent to the server as a dud.
+        """
+        if not token:
+            return False
+        domain = await self._resolve_current_domain(store_options)
+        metadata = await self._get_oidc_metadata_cached(domain)
+        jwks = await self._get_jwks_cached(domain, metadata)
+        try:
+            # aud is the client_id for a standard Auth0 ID token.
+            await self._verify_and_decode_jwt(token, jwks, audience=self._client_id)
+            return True
+        except (jwt.PyJWTError, ValueError):
+            # Only token-level failures mean "unusable"; infra errors (JWKS fetch, domain
+            # resolution) propagate above rather than being masked as ACTOR_UNAVAILABLE.
+            return False
+
+    async def _resolve_actor_token(
+        self,
+        actor_token: Optional[str],
+        actor_token_type: Optional[str],
+        store_options: Optional[dict[str, Any]]
+    ) -> tuple[str, str]:
+        """
+        Resolves the (actor_token, actor_token_type) pair for a session transfer request.
+
+        Raises:
+            CustomTokenExchangeError(ACTOR_UNAVAILABLE): if no usable actor can be resolved.
+        """
+        # Explicit actor wins; a passed-but-blank value is a bug, not a fallback signal.
+        if actor_token is not None:
+            if not actor_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "actor_token cannot be empty or whitespace-only"
+                )
+            return actor_token, (actor_token_type or ID_TOKEN_TYPE)
+
+        # Otherwise source it from the agent's session ID token.
+        state_data = await self._state_store.get(self._state_identifier, store_options)
+        if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
+            state_data = state_data.dict()
+        state_data = state_data or {}
+
+        # In resolver mode, don't source the actor from a session on a different domain.
+        if self._domain_resolver:
+            session_domain = self._get_session_domain(state_data)
+            current_domain = await self._resolve_current_domain(store_options)
+            if not session_domain or self._normalize_url(session_domain) != self._normalize_url(current_domain):
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE,
+                    "No usable actor token: the agent session is on a different domain."
+                )
+
+        session_id_token = state_data.get("id_token")
+
+        # Refresh a stale (or missing) ID token when the agent session has a refresh token.
+        if not await self._is_id_token_usable(session_id_token, store_options) and state_data.get("refresh_token"):
+            refresh_domain = self._get_session_domain(state_data) or await self._resolve_current_domain(store_options)
+            try:
+                refreshed = await self.get_token_by_refresh_token({
+                    "refresh_token": state_data["refresh_token"],
+                    "domain": refresh_domain,
+                })
+            except (ApiError, AccessTokenError):
+                # A genuine refresh failure means no usable actor; unexpected errors propagate.
+                refreshed = None
+            if refreshed:
+                updated_state_data = State.update_state_data(
+                    self.DEFAULT_AUDIENCE_STATE_KEY, state_data, refreshed)
+                await self._state_store.set(self._state_identifier, updated_state_data, options=store_options)
+                session_id_token = refreshed.get("id_token") or session_id_token
+
+        if await self._is_id_token_usable(session_id_token, store_options):
+            return session_id_token, ID_TOKEN_TYPE
+
+        raise CustomTokenExchangeError(
+            CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE,
+            "No usable actor token: pass actor_token or ensure the agent has a valid session."
+        )
+
+    async def request_session_transfer_token(
+        self,
+        subject_token: str,
+        subject_token_type: str,
+        actor_token: Optional[str] = None,
+        actor_token_type: Optional[str] = None,
+        scope: Optional[str] = None,
+        organization: Optional[str] = None,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> SessionTransferTokenResult:
+        """
+        Requests a Session Transfer Token (STT) for impersonation via session transfer.
+
+        Performs a custom token exchange against the session_transfer audience. The returned
+        STT is opaque and single-use; hand it to build_session_transfer_redirect and do not
+        decode or store it. The act claim is not on this result.
+
+        Args:
+            subject_token: Your proof of which customer to impersonate (validated by your Action)
+            subject_token_type: The subject token type URI routing to your CTE Profile
+            actor_token: The acting party's token; optional. Defaults to the agent session's ID token
+            actor_token_type: Type URI of the actor token; defaults to the ID token URN
+            scope: Space-delimited list of scopes (optional)
+            organization: Organization identifier (optional)
+            store_options: Optional options used to read the agent session and resolve the domain
+
+        Returns:
+            SessionTransferTokenResult containing the STT and its metadata
+
+        Raises:
+            CustomTokenExchangeError: If no actor can be resolved or the exchange fails
+        """
+        try:
+            # Validate the subject up front - before any session read/refresh/network.
+            if not subject_token or not subject_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token cannot be empty or whitespace-only"
+                )
+            if not subject_token_type or not subject_token_type.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token_type cannot be empty or whitespace-only"
+                )
+
+            actor_token, actor_token_type = await self._resolve_actor_token(
+                actor_token, actor_token_type, store_options)
+
+            # Build the session_transfer audience from the resolved request domain.
+            domain = await self._resolve_current_domain(store_options)
+            audience = f"urn:{domain}:session_transfer"
+
+            options = CustomTokenExchangeOptions(
+                subject_token=subject_token,
+                subject_token_type=subject_token_type,
+                audience=audience,
+                scope=scope,
+                actor_token=actor_token,
+                actor_token_type=actor_token_type,
+                organization=organization,
+            )
+
+            response = await self.custom_token_exchange(options, store_options)
+
+            return SessionTransferTokenResult(
+                session_transfer_token=response.access_token,
+                # Return the server's value as-is; don't default to the STT URN, or a non-STT
+                # response would be mislabelled as an STT.
+                issued_token_type=response.issued_token_type or "",
+                expires_in=response.expires_in,
+                token_type=response.token_type,
+                scope=response.scope,
+            )
+        except (CustomTokenExchangeError, ApiError):
+            raise
+        except Exception as e:
+            raise CustomTokenExchangeError(
+                CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
+                f"Session transfer token request failed: {str(e)}",
+                e
+            )
+
+    def build_session_transfer_redirect(
+        self,
+        target_login_url: str,
+        result: SessionTransferTokenResult,
+        organization: Optional[str] = None
+    ) -> str:
+        """
+        Builds the redirect URL that hands the STT to the target app's login URL.
+
+        target_login_url must be a trusted, app-controlled absolute https URL (http is allowed
+        only for localhost/loopback) - the STT is a single-use credential and must not leak to an
+        untrusted host.
+
+        Args:
+            target_login_url: The target app's login URL (absolute, https)
+            result: The SessionTransferTokenResult from request_session_transfer_token
+            organization: Organization identifier to forward (optional)
+
+        Returns:
+            A URL string with session_transfer_token (and organization) as query parameters
+
+        Raises:
+            MissingRequiredArgumentError: If target_login_url is missing or blank
+            InvalidArgumentError: If target_login_url is not an absolute https URL, or organization is blank
+        """
+        URL.validate_https_redirect_target(target_login_url, "target_login_url")
+
+        params = {"session_transfer_token": result.session_transfer_token}
+        if organization is not None:
+            if not organization.strip():
+                raise InvalidArgumentError("organization", "organization must not be blank")
+            params["organization"] = organization
+
+        return URL.build_url(target_login_url, params)
 
     # ============================================================================
     # MFA (Multi-Factor Authentication)

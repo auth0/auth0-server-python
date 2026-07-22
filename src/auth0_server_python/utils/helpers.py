@@ -8,7 +8,12 @@ from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from auth0_server_python.auth_types import DomainResolverContext
-from auth0_server_python.error import DomainResolverError, OrganizationTokenValidationError
+from auth0_server_python.error import (
+    DomainResolverError,
+    InvalidArgumentError,
+    MissingRequiredArgumentError,
+    OrganizationTokenValidationError,
+)
 
 
 class PKCE:
@@ -218,6 +223,27 @@ class State:
 
 
 class URL:
+    @staticmethod
+    def validate_https_redirect_target(url: str, name: str) -> None:
+        """
+        Require url to be an absolute https URL (http allowed only for localhost/loopback).
+
+        Raises MissingRequiredArgumentError if blank, InvalidArgumentError otherwise.
+        """
+        if not url or not url.strip():
+            raise MissingRequiredArgumentError(name)
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            raise InvalidArgumentError(name, "must be an absolute URL")
+        is_loopback = parsed.hostname in ("localhost", "127.0.0.1", "::1")
+        if parsed.scheme != "https" and not (parsed.scheme == "http" and is_loopback):
+            raise InvalidArgumentError(
+                name, "must use https (http is allowed only for localhost/loopback)"
+            )
+        # A fragment would swallow the appended query params, dropping the token silently.
+        if parsed.fragment:
+            raise InvalidArgumentError(name, "must not contain a fragment")
+
     @staticmethod
     def build_url(base_url: str, params: dict[str, Any]) -> str:
         """
