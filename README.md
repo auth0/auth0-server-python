@@ -23,7 +23,7 @@ pip install auth0-server-python
 If you’re using Poetry:
 
 ```shell
-poetry install auth0-server-python
+poetry add auth0-server-python
 ```
 
 ### 2. Create the Auth0 SDK client
@@ -39,8 +39,8 @@ auth0 = ServerClient(
     client_id='<AUTH0_CLIENT_ID>',
     client_secret='<AUTH0_CLIENT_SECRET>',
     secret='<AUTH0_SECRET>',
-    authorization_params= {
-      redirect_uri: '<AUTH0_REDIRECT_URI>',
+    authorization_params={
+        "redirect_uri": '<AUTH0_REDIRECT_URI>',
     }
 )
 ```
@@ -82,8 +82,10 @@ app = FastAPI()
 
 
 @app.get("/auth/login")
-async def login(request: Request):
-    authorization_url = await auth0.start_interactive_login()
+async def login(request: Request, response: Response):
+    authorization_url = await auth0.start_interactive_login(
+        store_options={"request": request, "response": response}
+    )
     return RedirectResponse(url=authorization_url)
 ```
 
@@ -98,8 +100,11 @@ Here is an example of what this would look like in FastAPI, with `redirect_uri` 
 
 ```python
 @app.get("/auth/callback")
-async def callback(request: Request):
-    result = await auth0.complete_interactive_login(str(request.url))
+async def callback(request: Request, response: Response):
+    result = await auth0.complete_interactive_login(
+        str(request.url),
+        store_options={"request": request, "response": response}
+    )
     # Store session or set cookies as needed
     return RedirectResponse(url="/")
 ```
@@ -228,3 +233,10 @@ Please do not report security vulnerabilities on the public GitHub issue tracker
 <p align="center">
   This project is licensed under the MIT license. See the <a href="https://github.com/auth0/auth0-server-python/blob/main/LICENSE"> LICENSE</a> file for more info.
 </p>
+
+<!-- TODO: add usage example for logout -->
+<!-- TODO: add usage example for get_token_by_refresh_token -->
+<!-- TODO: add usage example for get_token_for_connection -->
+<!-- TODO: add usage example for backchannel_authentication -->
+<!-- TODO: add usage example for initiate_backchannel_authentication -->
+<!-- TODO: add usage example for backchannel_authentication_grant -->

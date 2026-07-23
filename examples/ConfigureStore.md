@@ -24,7 +24,12 @@ When you **start** or **complete** an Auth0 flow, you can pass a `store_options`
 
 ```python
 store_options = {"request": request, "response": response}
-await auth_client.start_login(app_state={"return_to": "/profile"}, store_options=store_options)
+from auth0_server_python.auth_types import StartInteractiveLoginOptions
+
+await server_client.start_interactive_login(
+    StartInteractiveLoginOptions(app_state={"return_to": "/profile"}),
+    store_options=store_options
+)
 ```
 ## 2.Stateless Store (All Data in Cookies)
 ### When to Use It
@@ -84,7 +89,7 @@ When users log in:
 @app.get("/auth/login")
 async def login(request: Request, response: Response):
     store_options = {"request": request, "response": response}
-    redirect_url = await request.app.state.auth_client.start_login(
+    redirect_url = await request.app.state.auth_client.start_interactive_login(
         store_options=store_options
     )
     return RedirectResponse(url=redirect_url)
@@ -395,7 +400,7 @@ Often you need `request` and `response` objects to set or clear cookies. In your
 @app.get("/auth/login")
 async def login(request: Request, response: Response):
     store_options = {"request": request, "response": response}
-    auth_url = await auth_client.start_login(
+    auth_url = await auth_client.start_interactive_login(
         store_options=store_options
     )
     return RedirectResponse(auth_url)
@@ -405,7 +410,7 @@ Likewise for logout or completing the login callback:
 @app.get("/auth/callback")
 async def callback(request: Request, response: Response):
     store_options = {"request": request, "response": response}
-    session_data = await auth_client.complete_login(
+    session_data = await auth_client.complete_interactive_login(
         str(request.url), 
         store_options=store_options
     )

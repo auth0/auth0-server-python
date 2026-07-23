@@ -5,7 +5,7 @@
 The SDK's `get_user()` can be used to retrieve the current logged-in user:
 
 ```python
-user = await serverClient.get_user();
+user = await server_client.get_user()
 ```
 
 ### Passing Store Options
@@ -27,7 +27,7 @@ Read more above in [Configuring the Store](./ConfigureStore.md).
 The SDK's `get_session()` can be used to retrieve the current session data:
 
 ```python
-session = await serverClient.get_session();
+session = await server_client.get_session()
 ```
 
 ### Passing Store Options
@@ -244,7 +244,7 @@ access_token_for_google = await server_client.get_access_token_for_connection(co
 ```
 
 - `connection`: The connection for which an access token should be retrieved, e.g. `google-oauth2` for Google.
-- `loginHint`: Optional login hint to inform which connection account to use, can be useful when multiple accounts for the connection exist for the same user. 
+- `login_hint`: Optional login hint to inform which connection account to use, can be useful when multiple accounts for the connection exist for the same user. 
 
 The SDK will cache the token internally, and return it from the cache when not expired. When no token is found in the cache, or the token is expired, calling `get_access_token_for_connection()` will call Auth0 to retrieve a new token and update the cache.
 
