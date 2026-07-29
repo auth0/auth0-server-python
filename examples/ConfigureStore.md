@@ -37,7 +37,7 @@ If you’re using `auth0-fastapi`, you already have:
 2. **CookieTransactionStore** – stores short-lived transaction data (PKCE code_verifier) in another encrypted cookie.
 
 ```python
-from store.abstract import StateStore, TransactionStore
+from auth0_server_python.store import StateStore, TransactionStore
 
 class StatelessStateStore(StateStore):
     def __init__(self, secret: str, cookie_name: str = "_a0_session"):
@@ -98,9 +98,10 @@ A **stateful** approach stores only a **session ID** in the cookie, while the ac
 ### 3.1. Redis-Based Example
 Let’s walk through a `RedisStateStore` that inherits from `StateStore`:
 ```python
+import json
 import aioredis
 from typing import Any, Dict, Optional
-from store.abstract import StateStore
+from auth0_server_python.store import StateStore
 
 class RedisStateStore(StateStore):
     """
@@ -133,7 +134,6 @@ class RedisStateStore(StateStore):
         #    encrypted_data = self.encrypt(session_id, state)
         #    await self.redis_client.set(session_id, encrypted_data)
         # For demo, let's store it as JSON without encryption:
-        import json
         await self.redis_client.set(session_id, json.dumps(state))
 
         # Now set a cookie in the response with just the session_id
@@ -166,7 +166,6 @@ class RedisStateStore(StateStore):
             return None
         
         # If you used self.encrypt(...) on set, call self.decrypt(...) here.
-        import json
         return json.loads(raw_data)
 
     async def delete(
@@ -206,7 +205,6 @@ class RedisStateStore(StateStore):
         for k in keys:
             raw_data = await self.redis_client.get(k)
             if raw_data:
-                import json
                 session_data = json.loads(raw_data)
                 # If your session_data stores an internal dict with `sid` or `sub`
                 internal = session_data.get("internal", {})
@@ -240,9 +238,10 @@ Now your user’s session data is in **Redis**, and only a minimal session ID is
 If you prefer a **SQL database** for session data, here’s a `PostgresStateStore` example using [asyncpg](https://github.com/MagicStack/asyncpg).
 
 ```python
+import json
 import asyncpg
 from typing import Any, Dict, Optional
-from store.abstract import StateStore
+from auth0_server_python.store import StateStore
 
 class PostgresStateStore(StateStore):
     """
@@ -277,7 +276,6 @@ class PostgresStateStore(StateStore):
             # Optionally encrypt `state`:
             # encrypted_data = self.encrypt(session_id, state)
             # For simplicity, store as JSON
-            import json
             data_json = json.dumps(state)
 
             # Insert or update the session
@@ -322,7 +320,6 @@ class PostgresStateStore(StateStore):
             if not row:
                 return None
             # If you used encryption, do self.decrypt(...)
-            import json
             return json.loads(row["session_data"])
 
     async def delete(
