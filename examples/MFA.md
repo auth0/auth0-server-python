@@ -34,6 +34,7 @@ The Auth0 MFA API allows you to manage multi-factor authentication for users in 
     - [Verify with OTP](#verify-with-otp)
     - [Verify with Recovery Code](#verify-with-recovery-code)
     - [Verify with Push Notification (Polling)](#verify-with-push-notification-polling)
+    - [Verify with DPoP (sender-constrained tokens)](#verify-with-dpop-sender-constrained-tokens)
   - [Session Persistence](#session-persistence)
     - [Automatic Session Update](#automatic-session-update)
     - [Manual Session Update](#manual-session-update)
@@ -122,6 +123,9 @@ except MfaRequiredError as error:
     context = server_client.mfa.decrypt_mfa_token(error.mfa_token)
     mfa_token = context.mfa_token  # Raw token for MFA API calls
 ```
+
+> [!NOTE]
+> `get_access_token()` is not the only origin of `MfaRequiredError`. A passkey login (`signin_with_passkey`) raises the same error when a second factor is required — but there is **no session yet** at that point, which changes how you complete and persist the flow. See [Passkeys.md → Completing MFA on a passkey login](Passkeys.md#completing-mfa-on-a-passkey-login-and-where-the-session-comes-from).
 
 ### MFA Token Encryption Design
 
@@ -414,7 +418,7 @@ except Exception as error:
 ```
 
 > [!NOTE]
-> Setting `persist=True` automatically updates the session store with the new tokens, similar to nextjs-auth0 and auth0-spa-js SDKs. This eliminates the need for manual token management after MFA verification.
+> Setting `persist=True` automatically updates the session store with the new tokens, eliminating the need for manual token management after MFA verification.
 
 > [!TIP]
 > The `verify()` response may include a `recovery_code` field. This is returned when a user completes their first MFA enrollment, or when they verify using a recovery code (a new one is generated to replace the used code). Always check for this field and display it to the user.
@@ -516,9 +520,33 @@ async def poll_push_verification(server_client, mfa_token, oob_code, timeout=60)
 > [!NOTE]
 > When polling for push notification approval, the API returns an `authorization_pending` error until the user approves or denies the request. A `slow_down` error indicates you should increase the polling interval.
 
+### Verify with DPoP (sender-constrained tokens)
+
+When the login that triggered MFA was DPoP-bound (for example a `signin_with_passkey(dpop_key=...)` that returned `MfaRequiredError`), pass the **same** `dpop_key` to `verify()` so the token minted by the MFA step-up stays sender-constrained:
+
+```python
+verify_response = await server_client.mfa.verify(
+    {
+        "mfa_token": mfa_token,
+        "otp": "123456",
+    },
+    dpop_key=dpop_key,  # the same EC P-256 key the login was bound to
+)
+
+assert verify_response.token_type == "DPoP"
+```
+
+The SDK does not store your private key, so you must re-supply it on the `verify()` call. It attaches a token-endpoint DPoP proof, transparently handles the server-nonce challenge, and **rejects a Bearer downgrade** — if `dpop_key` was supplied but the server returned an unbound token (or vice versa), `verify()` raises `MfaVerifyError` instead of silently dropping the sender constraint.
+
+> [!WARNING]
+> The `dpop_key` is a **Tier 0 secret**. Keep it in your secret store, never log it, use one key per user/session, and use **EC P-256 only**.
+
 ## Session Persistence
 
-By default, `verify()` returns tokens without persisting them to the session store. However, you can automatically persist tokens by setting `persist=True`, similar to how nextjs-auth0 and auth0-spa-js handle MFA.
+By default, `verify()` returns tokens without persisting them to the session store. However, you can automatically persist tokens by setting `persist=True`.
+
+> [!WARNING]
+> `persist=True` **updates an existing session** — it does not create one. On a passkey-first login (`signin_with_passkey` → `MfaRequiredError`) no session exists yet, so `persist=True` raises `MfaVerifyError("No existing session found to update with MFA tokens")` and discards the tokens `verify()` just obtained. On that path, use `persist=False` (the default) and store the returned tokens yourself — see [Passkeys.md → Completing MFA on a passkey login](Passkeys.md#completing-mfa-on-a-passkey-login-and-where-the-session-comes-from).
 
 ### Automatic Session Update
 

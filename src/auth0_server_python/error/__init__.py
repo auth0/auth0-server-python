@@ -274,6 +274,9 @@ class CustomTokenExchangeErrorCode:
     MISSING_ACTOR_TOKEN = "missing_actor_token"
     TOKEN_EXCHANGE_FAILED = "token_exchange_failed"
     INVALID_RESPONSE = "invalid_response"
+    ACTOR_UNAVAILABLE = "actor_unavailable"
+    SETACTOR_REQUIRED = "setactor_required"
+    SESSION_TRANSFER_DISABLED = "session_transfer_disabled"
 
 
 # =============================================================================
@@ -407,3 +410,25 @@ class PasswordlessErrorCode:
     # SDK-side
     START_FAILED = "passwordless_start_failed"
     VERIFY_FAILED = "passwordless_verify_failed"
+
+
+# =============================================================================
+# Passkey Error Classes
+# =============================================================================
+
+class PasskeyError(Auth0Error):
+    """
+    Error raised during passkey authentication operations.
+    """
+    def __init__(self, code: str, message: str, cause=None):
+        super().__init__(message)
+        self.code = code
+        self.name = "PasskeyError"
+        self.cause = cause
+
+
+class PasskeyErrorCode:
+    """Error codes for passkey operations."""
+    CHALLENGE_FAILED = "passkey_challenge_error"
+    TOKEN_EXCHANGE_FAILED = "passkey_token_error"
+    INVALID_RESPONSE = "invalid_response"

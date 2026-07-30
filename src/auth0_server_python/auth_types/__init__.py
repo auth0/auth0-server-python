@@ -4,12 +4,40 @@ These Pydantic models provide type safety and validation for all SDK data struct
 """
 
 import re
+import warnings
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Upper bound (Unix seconds) for a plausible session_expiry
 SESSION_EXPIRY_MAX_PLAUSIBLE = 10_000_000_000
+
+# Type aliases using Literal types. Used to validate caller-supplied input.
+# Server-controlled response fields use plain str instead, so a new factor or
+# challenge type (e.g. a future webauthn second factor) does not fail closed.
+OobChannel = Literal["sms", "voice", "auth0", "email"]
+ChallengeType = Literal["otp", "oob"]
+EnrollmentType = Literal["passkey", "email", "phone", "totp", "push-notification", "recovery-code", "password"]
+PreferredAuthMethod = Literal["sms", "voice"]
+
+# Deprecated public aliases resolved lazily (PEP 562) so access emits a warning
+# while imports keep working. Remove in a future release.
+_DEPRECATED_ALIASES = {
+    "AuthenticatorType": (
+        Literal["otp", "oob", "recovery-code"],
+        "AuthenticatorType is deprecated and will be removed in a future release. "
+        "AuthenticatorResponse.authenticator_type is now typed `str`; use `str` directly.",
+    ),
+}
+
+
+def __getattr__(name: str):
+    entry = _DEPRECATED_ALIASES.get(name)
+    if entry is not None:
+        value, message = entry
+        warnings.warn(message, DeprecationWarning, stacklevel=2)
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class UserClaims(BaseModel):
@@ -372,6 +400,24 @@ class LoginWithCustomTokenExchangeResult(BaseModel):
     authorization_details: Optional[list[AuthorizationDetails]] = None
 
 
+class SessionTransferTokenResult(BaseModel):
+    """
+    Response from a session transfer token (STT) request.
+
+    Attributes:
+        session_transfer_token: The opaque, single-use session transfer token
+        issued_token_type: Format of issued token (the session-transfer URN)
+        expires_in: Token lifetime in seconds
+        token_type: Token type as returned by the server (typically "N_A")
+        scope: Granted scopes (if returned)
+    """
+    session_transfer_token: str
+    issued_token_type: str
+    expires_in: int
+    token_type: Optional[str] = None
+    scope: Optional[str] = None
+
+
 # =============================================================================
 # Connected Accounts Types
 # =============================================================================
@@ -461,17 +507,15 @@ class ListConnectedAccountConnectionsResponse(BaseModel):
 # MFA Types
 # =============================================================================
 
-# Type aliases using Literal types
-AuthenticatorType = Literal["otp", "oob", "recovery-code"]
-OobChannel = Literal["sms", "voice", "auth0", "email"]
-ChallengeType = Literal["otp", "oob"]
-
 
 class AuthenticatorResponse(BaseModel):
     """Represents an MFA authenticator enrolled by a user."""
 
+    model_config = ConfigDict(extra="allow")
     id: str
-    authenticator_type: AuthenticatorType
+    # Server-controlled value; kept as str so a new factor type (e.g. a future
+    # webauthn second factor) does not fail closed when Auth0 adds it.
+    authenticator_type: str
     active: bool
     name: Optional[str] = None
     oob_channel: Optional[OobChannel] = None
@@ -554,7 +598,10 @@ class ChallengeOptions(BaseModel):
 class ChallengeResponse(BaseModel):
     """Response from initiating an MFA challenge."""
 
-    challenge_type: ChallengeType
+    model_config = ConfigDict(extra="allow")
+    # Server-controlled value; kept as str so a new challenge type does not fail
+    # closed when Auth0 adds it.
+    challenge_type: str
     oob_code: Optional[str] = None
     binding_method: Optional[str] = None
     expires_in: Optional[int] = None
@@ -600,6 +647,7 @@ VerifyMfaOptions = Union[VerifyOtpOptions, VerifyOobOptions, VerifyRecoveryCodeO
 class MfaVerifyResponse(BaseModel):
     """Response from MFA verification."""
 
+    model_config = ConfigDict(extra="allow")
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
@@ -803,3 +851,173 @@ class PasswordlessStartResult(BaseModel):
     class Config:
         extra = "allow"  # Allow additional fields returned by Auth0
         populate_by_name = True  # accept both `_id` (alias) and `id`
+
+
+# =============================================================================
+# Passkey & MyAccount Authentication Methods Types
+# =============================================================================
+
+
+class PasskeyLoginResult(BaseModel):
+    """
+    Result from signin_with_passkey.
+
+    Contains the session data established after the webauthn token exchange.
+    Mirrors LoginWithCustomTokenExchangeResult — passkey sign-in is a complete
+    login ceremony and creates a server-side session like every other login path.
+    """
+
+    state_data: dict[str, Any]
+
+
+class PasskeyRpInfo(BaseModel):
+    id: str
+    name: str
+
+
+class PasskeyUserInfo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    id: str
+    name: str
+    display_name: Optional[str] = Field(None, alias="displayName")
+
+
+class PasskeyPubKeyCredParam(BaseModel):
+    type: str
+    alg: int
+
+
+class PasskeyAuthenticatorSelection(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    resident_key: Optional[str] = Field(None, alias="residentKey")
+    user_verification: Optional[str] = Field(None, alias="userVerification")
+
+
+class PasskeyPublicKeyOptions(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+    challenge: str
+    rp: Optional[PasskeyRpInfo] = None
+    rp_id: Optional[str] = Field(None, alias="rpId")
+    user: Optional[PasskeyUserInfo] = None
+    pub_key_cred_params: Optional[list[PasskeyPubKeyCredParam]] = Field(
+        None, alias="pubKeyCredParams"
+    )
+    authenticator_selection: Optional[PasskeyAuthenticatorSelection] = Field(
+        None, alias="authenticatorSelection"
+    )
+    timeout: Optional[int] = None
+    user_verification: Optional[str] = Field(None, alias="userVerification")
+
+
+class EnrollAuthenticationMethodRequest(BaseModel):
+    type: EnrollmentType
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    preferred_authentication_method: Optional[PreferredAuthMethod] = None
+    identity_user_id: Optional[str] = None  # OAS: IdentityAuthenticationMethodBase.identity_user_id
+    connection: Optional[str] = None
+
+
+class EnrollmentChallengeResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    authentication_method_id: str
+    auth_session: str
+    authn_params_public_key: Optional[PasskeyPublicKeyOptions] = None
+
+
+class PasskeyAuthResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    id: str
+    raw_id: str = Field(alias="rawId")
+    type: str
+    authenticator_attachment: Optional[str] = Field(None, alias="authenticatorAttachment")
+    response: dict[str, str]
+    client_extension_results: Optional[dict[str, Any]] = Field(None, alias="clientExtensionResults")
+
+
+class VerifyAuthenticationMethodRequest(BaseModel):
+    auth_session: str
+    authn_response: Optional[PasskeyAuthResponse] = None
+    otp_code: Optional[str] = None
+    recovery_code: Optional[str] = None
+    password: Optional[str] = None
+
+
+class AuthenticationMethod(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    type: str
+    created_at: str
+    confirmed: Optional[bool] = None
+    usage: Optional[list[str]] = None
+    identity_user_id: Optional[str] = None
+    credential_device_type: Optional[str] = None
+    credential_backed_up: Optional[bool] = None
+    key_id: Optional[str] = None
+    public_key: Optional[str] = None
+    transports: Optional[list[str]] = None
+    user_agent: Optional[str] = None
+    user_handle: Optional[str] = None
+    aaguid: Optional[str] = None
+    relying_party_id: Optional[str] = None
+    phone_number: Optional[str] = None
+    preferred_authentication_method: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    last_password_reset: Optional[str] = None
+
+
+class UpdateAuthenticationMethodRequest(BaseModel):
+    name: Optional[str] = None
+    preferred_authentication_method: Optional[str] = None
+
+
+class ListAuthenticationMethodsResponse(BaseModel):
+    authentication_methods: list[AuthenticationMethod]
+
+
+class Factor(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    type: str
+    usage: Optional[list[str]] = None
+
+
+class GetFactorsResponse(BaseModel):
+    factors: list[Factor]
+
+
+class PasskeyUserProfile(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    email: Optional[str] = None
+    name: Optional[str] = None
+    username: Optional[str] = None
+    phone_number: Optional[str] = None
+    given_name: Optional[str] = None
+    family_name: Optional[str] = None
+    nickname: Optional[str] = None
+    picture: Optional[str] = None
+
+
+class _PasskeyChallengeResponseBase(BaseModel):
+    auth_session: str
+    authn_params_public_key: PasskeyPublicKeyOptions
+
+
+class PasskeySignupChallengeResponse(_PasskeyChallengeResponseBase):
+    pass
+
+
+class PasskeyLoginChallengeResponse(_PasskeyChallengeResponseBase):
+    pass
+
+
+class PasskeyTokenResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    expires_at: int
+    scope: Optional[str] = None
+    id_token: Optional[str] = None
+    refresh_token: Optional[str] = None

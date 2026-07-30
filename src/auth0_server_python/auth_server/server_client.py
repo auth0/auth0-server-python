@@ -7,7 +7,10 @@ import asyncio
 import json
 import time
 from collections import OrderedDict
-from typing import Any, Callable, Generic, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Callable, Generic, Optional, TypeVar, Union
+
+if TYPE_CHECKING:
+    from jwcrypto import jwk
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
@@ -16,6 +19,7 @@ from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import ValidationError
 
+from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.passwordless_client import PasswordlessClient
@@ -32,6 +36,13 @@ from auth0_server_python.auth_types import (
     LogoutOptions,
     LogoutTokenClaims,
     MfaRequirements,
+    PasskeyAuthResponse,
+    PasskeyLoginChallengeResponse,
+    PasskeyLoginResult,
+    PasskeySignupChallengeResponse,
+    PasskeyTokenResponse,
+    PasskeyUserProfile,
+    SessionTransferTokenResult,
     StartInteractiveLoginOptions,
     StateData,
     TokenExchangeResponse,
@@ -56,6 +67,8 @@ from auth0_server_python.error import (
     MissingRequiredArgumentError,
     MissingTransactionError,
     OrganizationTokenValidationError,
+    PasskeyError,
+    PasskeyErrorCode,
     PollingApiError,
     SessionExpiredError,
     StartLinkUserError,
@@ -75,6 +88,12 @@ TStoreOptions = TypeVar('TStoreOptions')
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
                              "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
 
+# issued_token_type URN for a Session Transfer Token (STT).
+SESSION_TRANSFER_TOKEN_TYPE = "urn:auth0:params:oauth:token-type:session_transfer_token"
+
+# actor_token_type URN when the actor is sourced from the agent session's ID token.
+ID_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token"
+
 
 class ServerClient(Generic[TStoreOptions]):
     """
@@ -82,6 +101,9 @@ class ServerClient(Generic[TStoreOptions]):
     and token operations using Authlib for OIDC functionality.
     """
     DEFAULT_AUDIENCE_STATE_KEY = "default"
+    GRANT_TYPE_PASSKEY = "urn:okta:params:oauth:grant-type:webauthn"
+    PASSKEY_REGISTER_PATH = "/passkey/register"
+    PASSKEY_CHALLENGE_PATH = "/passkey/challenge"
 
     # ============================================================================
     # INITIALIZATION
@@ -2505,7 +2527,8 @@ class ServerClient(Generic[TStoreOptions]):
                         # before trusting any claim from the token.
                         if self._normalize_url(claims.get("iss", "")) == self._normalize_url(metadata.get("issuer")):
                             token_response.act = claims.get("act")
-                    except Exception:
+                    except (jwt.InvalidTokenError, ValueError, KeyError):
+                        # Malformed/absent act claim only; other failures propagate.
                         token_response.act = None
 
                 return token_response
@@ -2677,6 +2700,213 @@ class ServerClient(Generic[TStoreOptions]):
             )
 
     # ============================================================================
+    # SESSION TRANSFER TOKEN (STT)
+    # Impersonation via Session Transfer, built on Custom Token Exchange.
+    # ============================================================================
+
+    async def _is_id_token_usable(self, token: str, store_options: Optional[dict[str, Any]]) -> bool:
+        """
+        Verifies the agent session's ID token (signature + expiry) before using it as an actor.
+
+        Full verification against JWKS - the same path the login callback uses - so an expired
+        or tampered token is rejected client-side rather than sent to the server as a dud.
+        """
+        if not token:
+            return False
+        domain = await self._resolve_current_domain(store_options)
+        metadata = await self._get_oidc_metadata_cached(domain)
+        jwks = await self._get_jwks_cached(domain, metadata)
+        try:
+            # aud is the client_id for a standard Auth0 ID token.
+            await self._verify_and_decode_jwt(token, jwks, audience=self._client_id)
+            return True
+        except (jwt.PyJWTError, ValueError):
+            # Only token-level failures mean "unusable"; infra errors (JWKS fetch, domain
+            # resolution) propagate above rather than being masked as ACTOR_UNAVAILABLE.
+            return False
+
+    async def _resolve_actor_token(
+        self,
+        actor_token: Optional[str],
+        actor_token_type: Optional[str],
+        store_options: Optional[dict[str, Any]]
+    ) -> tuple[str, str]:
+        """
+        Resolves the (actor_token, actor_token_type) pair for a session transfer request.
+
+        Raises:
+            CustomTokenExchangeError(ACTOR_UNAVAILABLE): if no usable actor can be resolved.
+        """
+        # Explicit actor wins; a passed-but-blank value is a bug, not a fallback signal.
+        if actor_token is not None:
+            if not actor_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "actor_token cannot be empty or whitespace-only"
+                )
+            return actor_token, (actor_token_type or ID_TOKEN_TYPE)
+
+        # Otherwise source it from the agent's session ID token.
+        state_data = await self._state_store.get(self._state_identifier, store_options)
+        if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
+            state_data = state_data.dict()
+        state_data = state_data or {}
+
+        # In resolver mode, don't source the actor from a session on a different domain.
+        if self._domain_resolver:
+            session_domain = self._get_session_domain(state_data)
+            current_domain = await self._resolve_current_domain(store_options)
+            if not session_domain or self._normalize_url(session_domain) != self._normalize_url(current_domain):
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE,
+                    "No usable actor token: the agent session is on a different domain."
+                )
+
+        session_id_token = state_data.get("id_token")
+
+        # Refresh a stale (or missing) ID token when the agent session has a refresh token.
+        if not await self._is_id_token_usable(session_id_token, store_options) and state_data.get("refresh_token"):
+            refresh_domain = self._get_session_domain(state_data) or await self._resolve_current_domain(store_options)
+            try:
+                refreshed = await self.get_token_by_refresh_token({
+                    "refresh_token": state_data["refresh_token"],
+                    "domain": refresh_domain,
+                })
+            except (ApiError, AccessTokenError):
+                # A genuine refresh failure means no usable actor; unexpected errors propagate.
+                refreshed = None
+            if refreshed:
+                updated_state_data = State.update_state_data(
+                    self.DEFAULT_AUDIENCE_STATE_KEY, state_data, refreshed)
+                await self._state_store.set(self._state_identifier, updated_state_data, options=store_options)
+                session_id_token = refreshed.get("id_token") or session_id_token
+
+        if await self._is_id_token_usable(session_id_token, store_options):
+            return session_id_token, ID_TOKEN_TYPE
+
+        raise CustomTokenExchangeError(
+            CustomTokenExchangeErrorCode.ACTOR_UNAVAILABLE,
+            "No usable actor token: pass actor_token or ensure the agent has a valid session."
+        )
+
+    async def request_session_transfer_token(
+        self,
+        subject_token: str,
+        subject_token_type: str,
+        actor_token: Optional[str] = None,
+        actor_token_type: Optional[str] = None,
+        scope: Optional[str] = None,
+        organization: Optional[str] = None,
+        store_options: Optional[dict[str, Any]] = None
+    ) -> SessionTransferTokenResult:
+        """
+        Requests a Session Transfer Token (STT) for impersonation via session transfer.
+
+        Performs a custom token exchange against the session_transfer audience. The returned
+        STT is opaque and single-use; hand it to build_session_transfer_redirect and do not
+        decode or store it. The act claim is not on this result.
+
+        Args:
+            subject_token: Your proof of which customer to impersonate (validated by your Action)
+            subject_token_type: The subject token type URI routing to your CTE Profile
+            actor_token: The acting party's token; optional. Defaults to the agent session's ID token
+            actor_token_type: Type URI of the actor token; defaults to the ID token URN
+            scope: Space-delimited list of scopes (optional)
+            organization: Organization identifier (optional)
+            store_options: Optional options used to read the agent session and resolve the domain
+
+        Returns:
+            SessionTransferTokenResult containing the STT and its metadata
+
+        Raises:
+            CustomTokenExchangeError: If no actor can be resolved or the exchange fails
+        """
+        try:
+            # Validate the subject up front - before any session read/refresh/network.
+            if not subject_token or not subject_token.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token cannot be empty or whitespace-only"
+                )
+            if not subject_token_type or not subject_token_type.strip():
+                raise CustomTokenExchangeError(
+                    CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
+                    "subject_token_type cannot be empty or whitespace-only"
+                )
+
+            actor_token, actor_token_type = await self._resolve_actor_token(
+                actor_token, actor_token_type, store_options)
+
+            # Build the session_transfer audience from the resolved request domain.
+            domain = await self._resolve_current_domain(store_options)
+            audience = f"urn:{domain}:session_transfer"
+
+            options = CustomTokenExchangeOptions(
+                subject_token=subject_token,
+                subject_token_type=subject_token_type,
+                audience=audience,
+                scope=scope,
+                actor_token=actor_token,
+                actor_token_type=actor_token_type,
+                organization=organization,
+            )
+
+            response = await self.custom_token_exchange(options, store_options)
+
+            return SessionTransferTokenResult(
+                session_transfer_token=response.access_token,
+                # Return the server's value as-is; don't default to the STT URN, or a non-STT
+                # response would be mislabelled as an STT.
+                issued_token_type=response.issued_token_type or "",
+                expires_in=response.expires_in,
+                token_type=response.token_type,
+                scope=response.scope,
+            )
+        except (CustomTokenExchangeError, ApiError):
+            raise
+        except Exception as e:
+            raise CustomTokenExchangeError(
+                CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
+                f"Session transfer token request failed: {str(e)}",
+                e
+            )
+
+    def build_session_transfer_redirect(
+        self,
+        target_login_url: str,
+        result: SessionTransferTokenResult,
+        organization: Optional[str] = None
+    ) -> str:
+        """
+        Builds the redirect URL that hands the STT to the target app's login URL.
+
+        target_login_url must be a trusted, app-controlled absolute https URL (http is allowed
+        only for localhost/loopback) - the STT is a single-use credential and must not leak to an
+        untrusted host.
+
+        Args:
+            target_login_url: The target app's login URL (absolute, https)
+            result: The SessionTransferTokenResult from request_session_transfer_token
+            organization: Organization identifier to forward (optional)
+
+        Returns:
+            A URL string with session_transfer_token (and organization) as query parameters
+
+        Raises:
+            MissingRequiredArgumentError: If target_login_url is missing or blank
+            InvalidArgumentError: If target_login_url is not an absolute https URL, or organization is blank
+        """
+        URL.validate_https_redirect_target(target_login_url, "target_login_url")
+
+        params = {"session_transfer_token": result.session_transfer_token}
+        if organization is not None:
+            if not organization.strip():
+                raise InvalidArgumentError("organization", "organization must not be blank")
+            params["organization"] = organization
+
+        return URL.build_url(target_login_url, params)
+
+    # ============================================================================
     # MFA (Multi-Factor Authentication)
     # ============================================================================
 
@@ -2693,3 +2923,372 @@ class ServerClient(Generic[TStoreOptions]):
     def passwordless(self) -> PasswordlessClient:
         """Access the passwordless client for embedded passwordless operations."""
         return self._passwordless_client
+
+    # ============================================================================
+    # PASSKEY AUTHENTICATION
+    # ============================================================================
+
+    async def passkey_signup_challenge(
+        self,
+        user_profile: Optional[PasskeyUserProfile] = None,
+        connection: Optional[str] = None,
+        organization: Optional[str] = None,
+        user_metadata: Optional[dict[str, Any]] = None,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> PasskeySignupChallengeResponse:
+        """
+        Step 1 of 2: Initiate a passkey signup challenge (POST /passkey/register).
+
+        Pass the returned authn_params_public_key to navigator.credentials.create(),
+        then call signin_with_passkey() with the auth_session and credential result.
+
+        Args:
+            user_profile: Optional user profile data (email, name, username, etc.).
+                          Use PasskeyUserProfile — supports extra fields for forward compatibility.
+            connection: Auth0 database connection name (realm).
+            organization: Auth0 organization ID or name.
+            user_metadata: Optional custom metadata added at the root of the request body,
+                           not nested inside user_profile (per Auth0 API spec).
+            store_options: Optional options for domain resolution.
+
+        Returns:
+            PasskeySignupChallengeResponse with auth_session and authn_params_public_key.
+
+        Raises:
+            PasskeyError: If the challenge request fails.
+        """
+        try:
+            domain = await self._resolve_current_domain(store_options)
+
+            resolved_org = organization or self._organization
+            body: dict[str, Any] = {"client_id": self._client_id}
+            if self._client_secret:
+                body["client_secret"] = self._client_secret
+            if user_profile:
+                body["user_profile"] = user_profile.model_dump(exclude_none=True)
+            if user_metadata:
+                body["user_metadata"] = user_metadata
+            if connection:
+                body["realm"] = connection
+            if resolved_org:
+                body["organization"] = resolved_org
+
+            async with self._get_http_client() as client:
+                url = f"https://{domain}{self.PASSKEY_REGISTER_PATH}"
+                response = await client.post(url, json=body)
+
+                if response.status_code != 200:
+                    try:
+                        error_data = response.json()
+                    except (json.JSONDecodeError, ValueError):
+                        raise PasskeyError(
+                            PasskeyErrorCode.CHALLENGE_FAILED,
+                            f"Passkey signup challenge failed with status {response.status_code}",
+                        )
+                    raise PasskeyError(
+                        error_data.get("error", PasskeyErrorCode.CHALLENGE_FAILED),
+                        error_data.get("error_description", "Passkey signup challenge failed"),
+                    )
+
+                try:
+                    data = response.json()
+                except (json.JSONDecodeError, ValueError):
+                    raise PasskeyError(
+                        PasskeyErrorCode.INVALID_RESPONSE,
+                        "Failed to parse passkey signup challenge response as JSON",
+                    )
+
+                return PasskeySignupChallengeResponse.model_validate(data)
+
+        except Exception as e:
+            if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError)):
+                raise
+            raise PasskeyError(PasskeyErrorCode.CHALLENGE_FAILED, "Passkey signup challenge failed", e) from e
+
+    async def passkey_login_challenge(
+        self,
+        username: Optional[str] = None,
+        connection: Optional[str] = None,
+        organization: Optional[str] = None,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> PasskeyLoginChallengeResponse:
+        """
+        Step 1 of 2: Initiate a passkey login challenge (POST /passkey/challenge).
+
+        Pass the returned authn_params_public_key to navigator.credentials.get(),
+        then call signin_with_passkey() with the auth_session and credential result.
+
+        Args:
+            username: Optional username hint for conditional UI.
+            connection: Auth0 database connection name (realm).
+            organization: Auth0 organization ID or name.
+            store_options: Optional options for domain resolution.
+
+        Returns:
+            PasskeyLoginChallengeResponse with auth_session and authn_params_public_key.
+
+        Raises:
+            PasskeyError: If the challenge request fails.
+        """
+        try:
+            domain = await self._resolve_current_domain(store_options)
+
+            resolved_org = organization or self._organization
+            body: dict[str, Any] = {"client_id": self._client_id}
+            if self._client_secret:
+                body["client_secret"] = self._client_secret
+            if username:
+                body["username"] = username
+            if connection:
+                body["realm"] = connection
+            if resolved_org:
+                body["organization"] = resolved_org
+
+            async with self._get_http_client() as client:
+                url = f"https://{domain}{self.PASSKEY_CHALLENGE_PATH}"
+                response = await client.post(url, json=body)
+
+                if response.status_code != 200:
+                    try:
+                        error_data = response.json()
+                    except (json.JSONDecodeError, ValueError):
+                        raise PasskeyError(
+                            PasskeyErrorCode.CHALLENGE_FAILED,
+                            f"Passkey login challenge failed with status {response.status_code}",
+                        )
+                    raise PasskeyError(
+                        error_data.get("error", PasskeyErrorCode.CHALLENGE_FAILED),
+                        error_data.get("error_description", "Passkey login challenge failed"),
+                    )
+
+                try:
+                    data = response.json()
+                except (json.JSONDecodeError, ValueError):
+                    raise PasskeyError(
+                        PasskeyErrorCode.INVALID_RESPONSE,
+                        "Failed to parse passkey login challenge response as JSON",
+                    )
+
+                return PasskeyLoginChallengeResponse.model_validate(data)
+
+        except Exception as e:
+            if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError)):
+                raise
+            raise PasskeyError(PasskeyErrorCode.CHALLENGE_FAILED, "Passkey login challenge failed", e) from e
+
+    async def signin_with_passkey(
+        self,
+        auth_session: str,
+        authn_response: PasskeyAuthResponse,
+        store_options: Optional[dict[str, Any]] = None,
+        connection: Optional[str] = None,
+        organization: Optional[str] = None,
+        scope: Optional[str] = None,
+        audience: Optional[str] = None,
+        dpop_key: Optional["jwk.JWK"] = None,
+    ) -> PasskeyLoginResult:
+        """
+        Completes passkey authentication by exchanging the WebAuthn assertion
+        for tokens and establishing a server-side session.
+
+        This is step 2 of 2: call passkey_signup_challenge or passkey_login_challenge
+        first to obtain auth_session and the WebAuthn challenge options.
+
+        Args:
+            auth_session: Session credential from passkey_signup_challenge or passkey_login_challenge.
+            authn_response: Serialized WebAuthn credential from navigator.credentials.create/get.
+            store_options: Options passed to the state store (e.g., request/response for cookies).
+                           Passed through to the store on every call.
+            connection: Auth0 database connection name (realm).
+            organization: Auth0 organization ID or name.
+            scope: OAuth2 scope string.
+            audience: Target API audience.
+            dpop_key: Optional EC P-256 JWK for DPoP-bound token exchange. When provided,
+                      attaches a DPoP proof header so Auth0 issues a DPoP-bound token
+                      (token_type: DPoP). Required when the tenant mandates DPoP binding.
+
+        Returns:
+            PasskeyLoginResult containing state_data with user claims and token sets,
+            consistent with complete_interactive_login and login_with_custom_token_exchange.
+
+        Raises:
+            MissingRequiredArgumentError: If auth_session or authn_response is missing.
+            PasskeyError: If token exchange or session creation fails.
+            OrganizationTokenValidationError: If an organization was requested but the
+                token response included no ID token, or the ID token's org claim does
+                not match.
+        """
+        if not auth_session:
+            raise MissingRequiredArgumentError("auth_session")
+        if authn_response is None:
+            raise MissingRequiredArgumentError("authn_response")
+
+        try:
+            domain = await self._resolve_current_domain(store_options)
+            metadata = await self._get_oidc_metadata_cached(domain)
+
+            token_endpoint = metadata.get("token_endpoint")
+            if not token_endpoint:
+                raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Token endpoint missing in OIDC metadata")
+
+            resolved_org = organization or self._organization
+            body: dict[str, Any] = {
+                "grant_type": self.GRANT_TYPE_PASSKEY,
+                "client_id": self._client_id,
+                "auth_session": auth_session,
+                "authn_response": authn_response.model_dump(by_alias=True, exclude_none=True),
+            }
+            if self._client_secret:
+                body["client_secret"] = self._client_secret
+            if connection:
+                body["realm"] = connection
+            if resolved_org:
+                body["organization"] = resolved_org
+            if scope:
+                body["scope"] = scope
+            if audience:
+                body["audience"] = audience
+
+            async with self._get_http_client() as client:
+                headers = {}
+                if dpop_key is not None:
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint
+                    )
+                response = await client.post(token_endpoint, json=body, headers=headers)
+
+                # RFC 9449 — the authorization server signals a required nonce
+                # with HTTP 400 + error="use_dpop_nonce" + DPoP-Nonce. Accept
+                # 401 as well so the retry holds against servers that mirror the
+                # resource-server status.
+                if (
+                    dpop_key is not None
+                    and response.status_code in (400, 401)
+                    and response.headers.get("DPoP-Nonce")
+                ):
+                    nonce = response.headers["DPoP-Nonce"]
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint, nonce=nonce
+                    )
+                    response = await client.post(token_endpoint, json=body, headers=headers)
+
+                if response.status_code != 200:
+                    try:
+                        error_data = response.json()
+                    except (json.JSONDecodeError, ValueError):
+                        raise PasskeyError(
+                            PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
+                            f"Passkey token exchange failed with status {response.status_code}",
+                        )
+                    error_code = error_data.get("error", PasskeyErrorCode.TOKEN_EXCHANGE_FAILED)
+                    if error_code == "mfa_required":
+                        # Passkey grant persists the pending token here so the
+                        # challenge/verify routes can retrieve it server-side.
+                        # Returns only when no mfa_token is present.
+                        await self._mfa_client._raise_mfa_required(
+                            error_data,
+                            audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
+                            scope=scope or "",
+                            default_description="Multifactor authentication required",
+                            store_pending=True,
+                            store_options=store_options,
+                        )
+                    raise PasskeyError(
+                        error_code,
+                        error_data.get("error_description", "Passkey token exchange failed"),
+                    )
+
+                try:
+                    token_data = response.json()
+                except (json.JSONDecodeError, ValueError):
+                    raise PasskeyError(
+                        PasskeyErrorCode.INVALID_RESPONSE, "Failed to parse passkey token response as JSON"
+                    )
+
+                # Add required fields if they are missing
+                if "expires_in" in token_data and "expires_at" not in token_data:
+                    token_data["expires_at"] = int(time.time()) + token_data["expires_in"]
+
+                token_response = PasskeyTokenResponse.model_validate(token_data)
+
+                token_is_dpop = token_response.token_type.lower() == "dpop"
+                if dpop_key is not None and not token_is_dpop:
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
+                        f"DPoP token binding failed: expected token_type 'DPoP', "
+                        f"got '{token_response.token_type}'",
+                    )
+                if dpop_key is None and token_is_dpop:
+                    # Server issued a DPoP-bound token but no proof key was
+                    # supplied — we cannot prove possession on later calls, so
+                    # storing it as Bearer would silently fail open. Reject.
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
+                        "Server returned a DPoP-bound token but no dpop_key was "
+                        "provided; pass dpop_key to signin_with_passkey to bind it",
+                    )
+
+            if resolved_org and not token_response.id_token:
+                raise OrganizationTokenValidationError(
+                    "Organization was requested but the token response included no ID token; "
+                    "cannot verify organization membership"
+                )
+
+            # Extract user claims from ID token if present
+            user_claims = None
+            sid = PKCE.generate_random_string(32)
+            if token_response.id_token:
+                jwks = await self._get_jwks_cached(domain, metadata)
+                try:
+                    claims = await self._verify_and_decode_jwt(
+                        token_response.id_token, jwks, audience=self._client_id
+                    )
+                    origin_issuer = metadata.get("issuer")
+                    if not origin_issuer:
+                        raise IssuerValidationError(
+                            "Issuer missing from OIDC metadata. Cannot validate ID token issuer."
+                        )
+                    token_issuer = claims.get("iss", "")
+                    if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
+                        raise IssuerValidationError(
+                            "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+                        )
+                    if resolved_org:
+                        validate_org_claims(claims, resolved_org)
+                    user_claims = UserClaims.model_validate(claims)
+                    sid = claims.get("sid", sid)
+                except ValueError as e:
+                    raise ApiError("jwks_key_not_found", str(e))
+                except jwt.InvalidSignatureError as e:
+                    raise ApiError("invalid_signature", f"ID token signature verification failed: {str(e)}", e)
+                except jwt.InvalidAudienceError as e:
+                    raise ApiError("invalid_audience", f"ID token audience mismatch: {str(e)}", e)
+                except jwt.ExpiredSignatureError as e:
+                    raise ApiError("token_expired", f"ID token has expired: {str(e)}", e)
+                except jwt.InvalidTokenError as e:
+                    raise ApiError("invalid_token", f"ID token verification failed: {str(e)}", e)
+
+            # Build token set and session state
+            token_set = TokenSet(
+                audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
+                access_token=token_response.access_token,
+                scope=token_response.scope or scope or "",
+                expires_at=token_response.expires_at,
+            )
+            state_data = StateData(
+                user=user_claims,
+                id_token=token_response.id_token,
+                refresh_token=token_response.refresh_token,
+                token_sets=[token_set],
+                domain=domain,
+                internal={"sid": sid, "created_at": int(time.time())},
+            )
+
+            await self._state_store.set(self._state_identifier, state_data, options=store_options)
+
+            return PasskeyLoginResult(state_data=state_data.model_dump())
+
+        except Exception as e:
+            if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError, ApiError, IssuerValidationError, MfaRequiredError, OrganizationTokenValidationError)):
+                raise
+            raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Passkey sign-in failed", e) from e

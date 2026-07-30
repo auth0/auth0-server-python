@@ -1,5 +1,19 @@
 # Change Log
 
+## [1.0.0b14](https://github.com/auth0/auth0-server-python/tree/1.0.0b14) (2026-07-29)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b13...1.0.0b14)
+
+**Added**
+- feat: add Session Transfer Token support for CTE impersonation via session transfer [\#139](https://github.com/auth0/auth0-server-python/pull/139) ([kishore7snehil](https://github.com/kishore7snehil))
+
+## [1.0.0b13](https://github.com/auth0/auth0-server-python/tree/1.0.0b13) (2026-07-21)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b12...1.0.0b13)
+
+**Added**
+- feat: passkey support in signup, signin along with MFA [\#135](https://github.com/auth0/auth0-server-python/pull/135) ([rmad17](https://github.com/rmad17))
+- feat: support for MyAccount API - Authentication Methods, Factors and Enrollment [\#136](https://github.com/auth0/auth0-server-python/pull/136) ([rmad17](https://github.com/rmad17))
+- feat: dpop sender-constrained tokens support for MyAccount API and passkey [\#137](https://github.com/auth0/auth0-server-python/pull/137) ([rmad17](https://github.com/rmad17))
+
 ## [1.0.0b12](https://github.com/auth0/auth0-server-python/tree/1.0.0b12) (2026-07-01)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b11...1.0.0b12)
 
