@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import jwt
 
+from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
 from auth0_server_python.auth_types import (
     PASSWORDLESS_ALLOWED_AUTH_PARAMS,
     PASSWORDLESS_RESERVED_AUTH_PARAMS,
@@ -38,9 +39,10 @@ from auth0_server_python.error import (
     PasswordlessVerifyError,
 )
 from auth0_server_python.utils import PKCE
-from auth0_server_python.utils.helpers import validate_org_claims
 
 if TYPE_CHECKING:  # avoid a circular import at runtime
+    from jwcrypto import jwk
+
     from auth0_server_python.auth_server.server_client import ServerClient
 
 PASSWORDLESS_OTP_GRANT_TYPE = "http://auth0.com/oauth/grant-type/passwordless/otp"
@@ -147,10 +149,15 @@ class PasswordlessClient:
 
         if response.status_code not in (200, 201):
             error_body = self._safe_json(response)
+            default_code = (
+                PasswordlessErrorCode.TOO_MANY_REQUESTS
+                if response.status_code == 429
+                else PasswordlessErrorCode.START_FAILED
+            )
             raise PasswordlessStartError(
-                error_body.get("error", PasswordlessErrorCode.START_FAILED),
+                error_body.get("error", default_code),
                 error_body.get("error_description", "Failed to start passwordless flow"),
-                error_body,
+                error_body if error_body else self._raw_text(response),
             )
 
         return PasswordlessStartResult(**self._safe_json(response))
@@ -161,6 +168,7 @@ class PasswordlessClient:
         self,
         options: VerifyPasswordlessOtpOptions,
         store_options: Optional[dict[str, Any]] = None,
+        dpop_key: Optional["jwk.JWK"] = None,
     ) -> dict[str, Any]:
         """
         Verify a passwordless OTP and establish a server-side session.
@@ -172,6 +180,12 @@ class PasswordlessClient:
             options: VerifyPasswordlessOtpOptions.
             store_options: Options passed to the state store (e.g.
                 request/response) so the session can be written.
+            dpop_key: Optional EC P-256 JWK for DPoP-bound token exchange. When
+                provided, attaches a DPoP proof header so Auth0 issues a
+                DPoP-bound token (token_type: DPoP). The passwordless-OTP
+                grant only mandates DPoP for public clients, so this is
+                optional for this (confidential, RWA) SDK unless a resource
+                server independently requires sender-constrained tokens.
 
         Returns:
             Dict containing ``state_data`` for the established session.
@@ -179,6 +193,7 @@ class PasswordlessClient:
         Raises:
             PasswordlessVerifyError: When token exchange or ID-token
                 verification fails.
+            MfaRequiredError: When Auth0 requires MFA before completing login.
         """
         client = self._client
         origin_domain = await client._resolve_current_domain(store_options)
@@ -200,6 +215,7 @@ class PasswordlessClient:
             if options.connection == "email"
             else DEFAULT_PASSWORDLESS_SMS_SCOPE
         )
+        scope = options.scope or default_scope
         body: dict[str, Any] = {
             "grant_type": PASSWORDLESS_OTP_GRANT_TYPE,
             "client_id": client._client_id,
@@ -207,7 +223,7 @@ class PasswordlessClient:
             "realm": options.connection,
             "username": options.username,
             "otp": options.verification_code,
-            "scope": options.scope or default_scope,
+            "scope": scope,
         }
         if options.audience:
             body["audience"] = options.audience
@@ -215,6 +231,8 @@ class PasswordlessClient:
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         if options.client_ip:
             headers[FORWARDED_FOR_HEADER] = options.client_ip
+        if dpop_key is not None:
+            headers["DPoP"] = make_dpop_proof_for_token_endpoint(dpop_key, "POST", token_endpoint)
 
         try:
             async with client._get_http_client() as http:
@@ -223,6 +241,23 @@ class PasswordlessClient:
                     data=body,
                     headers=headers,
                 )
+
+                # RFC 9449 §8.2: a DPoP-Nonce challenge triggers exactly one
+                # retry with the server-supplied nonce.
+                if (
+                    dpop_key is not None
+                    and response.status_code in (400, 401)
+                    and response.headers.get("DPoP-Nonce")
+                ):
+                    nonce = response.headers["DPoP-Nonce"]
+                    headers["DPoP"] = make_dpop_proof_for_token_endpoint(
+                        dpop_key, "POST", token_endpoint, nonce=nonce
+                    )
+                    response = await http.post(
+                        token_endpoint,
+                        data=body,
+                        headers=headers,
+                    )
         except Exception as e:
             raise PasswordlessVerifyError(
                 PasswordlessErrorCode.VERIFY_FAILED,
@@ -232,16 +267,46 @@ class PasswordlessClient:
 
         if response.status_code != 200:
             error_body = self._safe_json(response)
+            if error_body.get("error") == "mfa_required" and error_body.get("mfa_token"):
+                await client._mfa_client._raise_mfa_required(
+                    error_body,
+                    audience=options.audience or client.DEFAULT_AUDIENCE_STATE_KEY,
+                    scope=scope,
+                    default_description="Multifactor authentication required",
+                    store_options=store_options,
+                )
+            default_code = (
+                PasswordlessErrorCode.TOO_MANY_REQUESTS
+                if response.status_code == 429
+                else PasswordlessErrorCode.INVALID_GRANT
+            )
             raise PasswordlessVerifyError(
-                error_body.get("error", PasswordlessErrorCode.INVALID_GRANT),
+                error_body.get("error", default_code),
                 error_body.get("error_description", "Passwordless verification failed"),
-                error_body,
+                error_body if error_body else self._raw_text(response),
             )
 
         token_response = response.json()
 
+        token_is_dpop = token_response.get("token_type", "").lower() == "dpop"
+        if dpop_key is not None and not token_is_dpop:
+            raise PasswordlessVerifyError(
+                PasswordlessErrorCode.VERIFY_FAILED,
+                "DPoP token binding failed: expected token_type 'DPoP', "
+                f"got '{token_response.get('token_type')}'",
+            )
+        if dpop_key is None and token_is_dpop:
+            # Server issued a DPoP-bound token but no proof key was supplied —
+            # we cannot prove possession on later calls, so storing it as
+            # Bearer would silently fail open. Reject.
+            raise PasswordlessVerifyError(
+                PasswordlessErrorCode.VERIFY_FAILED,
+                "Server returned a DPoP-bound token but no dpop_key was "
+                "provided; pass dpop_key to verify() to bind it",
+            )
+
         user_claims, id_token_claims = await self._verify_id_token(
-            token_response, origin_domain, origin_issuer, metadata, options.organization
+            token_response, origin_domain, origin_issuer, metadata
         )
 
         state_data = await client._persist_session_from_token_response(
@@ -284,6 +349,13 @@ class PasswordlessClient:
         if store_options is None:
             raise MissingRequiredArgumentError("store_options")
 
+        # Auth0 echoes `state` back unvalidated on this flow — it does not
+        # compare it server-side, and the clicked link's query string can
+        # overwrite whatever was originally stored. This SDK's single-use,
+        # state-keyed transaction (below) plus the exact-match, SDK-owned
+        # `redirect_uri` is therefore the *only* CSRF/authorization-code-
+        # interception control on magic link; the server provides none.
+        # Never make `state`/`redirect_uri` caller-overridable.
         state = PKCE.generate_random_string(32)
         auth_params["redirect_uri"] = redirect_uri
         auth_params["response_type"] = "code"
@@ -347,7 +419,6 @@ class PasswordlessClient:
         origin_domain: str,
         origin_issuer: Optional[str],
         metadata: dict[str, Any],
-        expected_org: Optional[str],
     ) -> tuple[UserClaims, dict[str, Any]]:
         """Verify the ID token from the OTP exchange and return its claims."""
         client = self._client
@@ -380,12 +451,13 @@ class PasswordlessClient:
 
         token_issuer = claims.get("iss", "")
         if client._normalize_url(token_issuer) != client._normalize_url(origin_issuer):
-            raise IssuerValidationError(
-                "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+            raise PasswordlessVerifyError(
+                PasswordlessErrorCode.INVALID_ISSUER,
+                "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly.",
+                IssuerValidationError(
+                    "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+                ),
             )
-
-        if expected_org:
-            validate_org_claims(claims, expected_org)
 
         return UserClaims.model_validate(claims), claims
 
@@ -397,3 +469,11 @@ class PasswordlessClient:
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
+
+    @staticmethod
+    def _raw_text(response) -> Optional[str]:
+        """Return the raw response body text, for diagnosing a non-JSON error body."""
+        try:
+            return response.text
+        except Exception:
+            return None

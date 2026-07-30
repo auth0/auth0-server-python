@@ -17,7 +17,9 @@ SESSION_EXPIRY_MAX_PLAUSIBLE = 10_000_000_000
 # challenge type (e.g. a future webauthn second factor) does not fail closed.
 OobChannel = Literal["sms", "voice", "auth0", "email"]
 ChallengeType = Literal["otp", "oob"]
-EnrollmentType = Literal["passkey", "email", "phone", "totp", "push-notification", "recovery-code", "password"]
+EnrollmentType = Literal[
+    "passkey", "email", "phone", "totp", "push-notification", "recovery-code", "password"
+]
 PreferredAuthMethod = Literal["sms", "voice"]
 
 # Deprecated public aliases resolved lazily (PEP 562) so access emits a warning
@@ -411,6 +413,7 @@ class SessionTransferTokenResult(BaseModel):
         token_type: Token type as returned by the server (typically "N_A")
         scope: Granted scopes (if returned)
     """
+
     session_transfer_token: str
     issued_token_type: str
     expires_in: int
@@ -726,6 +729,7 @@ PASSWORDLESS_ALLOWED_AUTH_PARAMS = frozenset(
         "prompt",
         "max_age",
         "acr_values",
+        "scope",
     }
 )
 
@@ -806,7 +810,9 @@ class VerifyPasswordlessOtpOptions(BaseModel):
     phone_number: Optional[str] = None
     scope: Optional[str] = None
     audience: Optional[str] = None
-    organization: Optional[str] = None
+    # No `organization` field: Auth0 ignores it for the OTP grant (verified
+    # against auth0-server), so accepting it would silently never succeed.
+    # Use magic link's `organization` instead.
     # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` on the OTP
     # token exchange so brute-force protection keys on the real user, not the
     # app server. Honored only for confidential clients with "Trust Token

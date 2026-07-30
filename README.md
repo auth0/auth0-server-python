@@ -196,9 +196,13 @@ Sign users up or in with [WebAuthn](https://www.w3.org/TR/webauthn-2/) passkeys 
 
 Let a logged-in user manage their own enrolled authentication methods — enroll a new passkey (or other factor), list, rename, and delete — via the [My Account API](https://auth0.com/docs/manage-users/my-account-api). For obtaining a scoped token, the enroll/verify ceremony, listing, updating, deleting, and error handling, see [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md).
 
-### 9. DPoP — Sender-Constrained Tokens (Passkeys & MyAccount)
+### 9. DPoP — Sender-Constrained Tokens (Passkeys, MyAccount & Passwordless)
 
-Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. DPoP is supported for Passkey sign-in (`signin_with_passkey`) and the authentication-methods/factors methods on `MyAccountClient`. For key generation and usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
+Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. DPoP is supported for Passkey sign-in (`signin_with_passkey`), the authentication-methods/factors methods on `MyAccountClient`, and passwordless OTP verification (`passwordless.verify`). For key generation and usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional), [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop), and [examples/Passwordless.md](examples/Passwordless.md#7-dpop--sender-constrained-tokens-optional).
+
+### 10. Passwordless Authentication
+
+Sign users in with a one-time code sent by email or SMS, or with a magic link sent by email, via [Auth0 embedded passwordless login](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints). OTP verification and the magic-link callback each establish a server-side session like every other login path. For prerequisites, both flows, custom scopes/audiences, organizations, step-up MFA, DPoP, and error handling, see [examples/Passwordless.md](examples/Passwordless.md).
 
 ## Feedback
 

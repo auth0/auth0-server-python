@@ -17,7 +17,8 @@ Passwordless lets users sign in with a one-time code sent by email or SMS, or wi
 - [3. Email magic link](#3-email-magic-link)
 - [4. Custom scopes and audiences](#4-custom-scopes-and-audiences)
 - [5. Forwarding the end-user IP](#5-forwarding-the-end-user-ip)
-- [6. Organizations](#6-organizations)
+- [6. Organizations (magic link only)](#6-organizations-magic-link-only)
+- [7. DPoP — sender-constrained tokens (optional)](#7-dpop--sender-constrained-tokens-optional)
 - [Completing MFA during passwordless login](#completing-mfa-during-passwordless-login)
 - [Error Handling](#error-handling)
 
@@ -31,6 +32,38 @@ Passwordless has two shapes:
 OTP start does **not** create a session. The session exists only after `verify()` succeeds. Magic-link start writes a transaction so the callback can validate the returned `state`; the session exists only after the callback completes.
 
 ## Prerequisites
+
+These flows require a **Regular Web Application** — passwordless token exchange
+needs a client secret, which a public/SPA client cannot hold safely.
+
+Two tenant-level settings are also required and are easy to miss because
+neither failure mode looks like a configuration problem:
+
+1. **Authentication Profile must be "Identifier First."** The default
+   "Universal Login" profile blocks the direct `/oauth/token` call this SDK
+   uses for OTP verification — without it, OTP `verify()` fails with
+   `unauthorized_client`. Set it under your tenant's Authentication Profile
+   settings. (Skip this if you only use passwordless via Universal Login
+   redirects rather than this SDK's embedded flow.)
+2. **Enable the Passwordless OTP grant type** on your application
+   (**Applications -> Your App -> Advanced Settings -> Grant Types**). Without
+   it, OTP verification also fails with `unauthorized_client`.
+3. **Magic link only** — set the tenant flag
+   `universal_login.passwordless.allow_magiclink_verify_without_session` to
+   `true` via the Management API:
+
+   ```
+   PATCH /api/v2/tenants/settings
+   { "universal_login": { "passwordless": { "allow_magiclink_verify_without_session": true } } }
+   ```
+
+   This is required for **any** server-side SDK completing magic link (this
+   one, Express, Next.js, etc.) — the browser that opens the emailed link is
+   not guaranteed to be the same browser/session that started the flow.
+   Without it, the user sees: *"The link must be opened on the same device
+   and browser from which you submitted your email address."* This flag is
+   not documented in the public Auth0 API reference, so if you don't set it
+   here you will not discover it from a 400 error message.
 
 ```python
 from auth0_server_python.auth_server.server_client import ServerClient
@@ -152,6 +185,8 @@ user = result["state_data"]["user"]
 
 > [!WARNING]
 > Do not let callers override `redirect_uri`, `state`, `response_type`, `nonce`, or PKCE fields in magic-link `auth_params`. The SDK owns these values so the emailed authorization code and state cannot be redirected to an attacker-controlled URL.
+>
+> This matters more than it looks: Auth0 treats magic-link `state` as a pure echo and does not validate it server-side, and the clicked link's query string can overwrite whatever the browser originally stored. The SDK's single-use, `state`-keyed transaction plus the exact-match `redirect_uri` are therefore the *entire* CSRF / authorization-code-interception defense on this flow — Auth0 will not catch a bypass for you.
 
 ## 4. Custom scopes and audiences
 
@@ -218,9 +253,9 @@ result = await server_client.passwordless.verify(
 > [!WARNING]
 > Only forward a trusted, normalized end-user IP from your edge/proxy layer. Do not blindly copy arbitrary client-supplied headers into `client_ip`.
 
-## 6. Organizations
+## 6. Organizations (magic link only)
 
-Magic links can carry an organization through `authParams`; the SDK stores the expected organization in the transaction and validates the callback token claims.
+Magic links can carry an organization through `authParams`; the SDK stores the expected organization in the transaction and validates the claims returned by the callback.
 
 ```python
 await server_client.passwordless.start(
@@ -233,21 +268,41 @@ await server_client.passwordless.start(
 )
 ```
 
-For OTP verification, pass `organization` only when your Auth0 passwordless OTP configuration returns organization claims for that flow. The SDK validates the ID token's `org_id` or `org_name` claim against the supplied value.
+If the callback's ID token does not include a matching organization claim, verification fails before a session is persisted, raising `OrganizationTokenValidationError`.
+
+> [!NOTE]
+> `VerifyPasswordlessOtpOptions` (the OTP `verify()` path) has no `organization`
+> field. Auth0 does not attach an organization claim to tokens issued by the
+> passwordless-OTP grant, so there is nothing for the SDK to validate against
+> — an OTP flow that needs organization-scoped login should use magic link
+> instead.
+
+## 7. DPoP — sender-constrained tokens (optional)
+
+`verify()` accepts an optional `dpop_key` — an EC P-256 JWK — to bind the
+issued access token to that key ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)),
+so a stolen token alone cannot be replayed. The passwordless-OTP grant only
+*requires* DPoP for public clients; this SDK is a confidential RWA client, so
+DPoP here is opt-in, not required by default. Use it if a downstream resource
+server independently mandates sender-constrained tokens.
 
 ```python
+from jwcrypto import jwk
+
+dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")
+
 result = await server_client.passwordless.verify(
     VerifyPasswordlessOtpOptions(
         connection="email",
         email="user@example.com",
         verification_code=user_entered_code,
-        organization="org_abc123",
     ),
     store_options={"request": request, "response": response},
+    dpop_key=dpop_key,
 )
 ```
 
-If the ID token does not include a matching organization claim, verification fails before a session is persisted.
+Keep the same `dpop_key` around for any later step-up (`server_client.mfa.verify(..., dpop_key=dpop_key)`) to preserve the sender constraint through MFA. If a resource server requires DPoP for *all* clients (not just public ones), Auth0 rejects the request with `invalid_request` / *"Resource server requires the use of DPoP to issue sender-constrained access tokens"* — that case is not specific to this SDK and surfaces as a `PasswordlessVerifyError` with that description.
 
 ## Completing MFA during passwordless login
 
@@ -293,11 +348,11 @@ except MfaRequiredError as e:
 Passwordless methods raise typed SDK errors:
 
 - `PasswordlessStartError` - `POST /passwordless/start` failed
-- `PasswordlessVerifyError` - OTP token exchange or ID-token verification failed
+- `PasswordlessVerifyError` - OTP token exchange or ID-token verification failed, including an issuer or audience mismatch (`invalid_issuer` / `invalid_audience`)
 - `MfaRequiredError` - Auth0 requires MFA before completing login
 - `MissingRequiredArgumentError` - required SDK input is missing, such as magic-link `store_options`
 - `InvalidArgumentError` - caller input is rejected before a network call
-- `OrganizationTokenValidationError` - requested organization does not match returned token claims
+- `OrganizationTokenValidationError` - magic-link callback only: requested organization does not match the returned token claims
 
 ### Basic handling
 
@@ -351,8 +406,9 @@ except Auth0Error as e:
 - `bad.connection` - the passwordless connection is disabled or invalid
 - `bad.email` - the email address is invalid or rejected by Auth0
 - `sms_provider_error` - Auth0 could not send the SMS
-- `too_many_requests` - rate limiting or attack protection blocked the request
+- `too_many_requests` - rate limiting or attack protection blocked the request (`start()` or `verify()`)
 - `invalid_grant` - the OTP is invalid, expired, or already used
+- `invalid_issuer` - returned ID token issuer does not match your configured Auth0 domain
 - `invalid_audience` - returned ID token audience does not match the SDK client
 - `discovery_error` - the SDK could not load authorization server metadata
 - `passwordless_start_failed` - SDK-side start failure
