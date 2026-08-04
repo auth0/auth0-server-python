@@ -29,9 +29,10 @@ async def test_resolver_returning_none_raises(self):
 
 Two shapes coexist; match the file you're editing.
 
-- **Module-level functions** — `test_server_client.py` and `test_dpop_auth.py`
-- **Grouping classes** — `test_mfa_client.py`, `test_my_account_client.py` use `TestMfaClientConstructor`,
-  `TestDomainResolution`, etc., with `# ── Section ───` comment banners between groups
+- **Module-level functions** — `test_server_client.py`, `test_dpop_auth.py`, and `test_my_account_client.py`,
+  with `# === Section ===` comment banners between groups
+- **Grouping classes** — `test_mfa_client.py` uses `TestMfaClientConstructor`, `TestDomainResolution`,
+  etc., with `# ── Section ───` comment banners between groups
 
 ## Fixtures and factories
 

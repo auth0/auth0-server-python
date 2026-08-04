@@ -17,17 +17,18 @@ CI runs `ruff check .` only. `ruff format --check .` currently reports 13 files 
 reformatted, including `server_client.py`'s test file and `helpers.py`. Running `ruff format .`
 repo-wide produces a thousand-line diff unrelated to your change. Format only what you touched.
 
-## 3. Async tests silently pass if you forget `@pytest.mark.asyncio`
+## 3. Async tests are skipped (with a warning), never executed, if you forget `@pytest.mark.asyncio`
 
-`asyncio_mode` is not set to `auto` anywhere. An async test without the marker is collected, never
-awaited, and reported as passing. If a new async test passes on the first run without you making it
-pass, check for the marker first.
+`asyncio_mode` is not set to `auto` anywhere. An async test without the marker is collected but
+skipped with a `PytestUnhandledCoroutineWarning`, never awaited. If a new async test shows up as
+skipped (`s`) in the summary instead of passing, check for the marker first.
 
 ## 4. Never construct `httpx.AsyncClient` directly
 
-`ServerClient._get_http_client()` and `MyAccountClient._get_http_client()` merge
-`self._telemetry_headers` into every request. A hand-rolled client silently drops the `Auth0-Client`
-header, so the call becomes invisible to SDK telemetry. Same reasoning for auth: use
+`ServerClient._get_http_client()` merges `self._telemetry_headers`, and `MyAccountClient._get_http_client()`
+merges `self._headers`, into every request (`ServerClient` constructs its `MyAccountClient` with
+`headers=self._telemetry_headers`, so the header still reaches it). A hand-rolled client silently drops
+the `Auth0-Client` header, so the call becomes invisible to SDK telemetry. Same reasoning for auth: use
 `BearerAuth` / `DPoPAuth` from `auth_schemes/` rather than setting `Authorization` yourself.
 
 ## 5. `domain` may be a callable — resolve it, don't read it

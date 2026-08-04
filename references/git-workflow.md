@@ -8,7 +8,7 @@
 |-------|---------|---------|
 | `<feature>-support` | `passkey-support`, `dpop-support`, `myaccount-support` | a new capability |
 | `SDK-<ticket>-<slug>` | `SDK-8833-organisations-support` | ticket-tracked work |
-| `fix/<slug>` | `fix/cte-model-validators` | bug fixes |
+| `fix/<slug>` | `fix/mfa-breaking-changes` (#104) | bug fixes |
 | `feat/<slug>` | `feat/cte-delegation` | scoped features |
 | `docs/<slug>` | `docs/sync-2026-06-30` | docs-only changes |
 | `release/<version>` | `release/<the version in .version>` | release prep only — cut by the release flow, not by hand |

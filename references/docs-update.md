@@ -9,12 +9,19 @@ error classes in `error/`. Docs track that surface.
 | Doc | What it covers | Status |
 |-----|----------------|--------|
 | `README.md` | Install, `ServerClient` construction, interactive login, custom token exchange, MCD, session expiry, passkeys, My Account, DPoP — each a short section that links out to `examples/` | present |
-| `EXAMPLES.md` | — | **❌ missing.** This repo puts per-feature guides in `examples/*.md` instead. Add a sample to the matching `examples/` guide; only create `EXAMPLES.md` if the team decides to consolidate. |
+| `EXAMPLES.md` | — | **not used by design.** This repo puts per-feature guides in `examples/*.md` instead. Add a sample to the matching `examples/` guide; only create `EXAMPLES.md` if the team decides to consolidate. |
 | `examples/` | 11 per-feature Markdown guides (not runnable apps): `InteractiveLogin`, `ConfigureStore`, `RetrievingData`, `MFA`, `Passkeys`, `MyAccountAuthenticationMethods`, `ConnectedAccounts`, `CustomTokenExchange`, `ClientInitiatedBackChannelLogin`, `MultipleCustomDomains`, `UserLinking` | present |
 
 `CHANGELOG.md` exists but is **not** tracked here — it's written by the release flow, not during a
 feature change. Migration guides are likewise not tracked: the filename depends on the target major
 at the time of the breaking change.
+
+## New code snippets live in `examples/`, not `README.md`
+
+When you add or change a code sample, put it in the matching `examples/*.md` guide and link to it
+from `README.md`'s numbered section for that feature — don't add a new code block to `README.md`
+itself. `README.md` already carries some inline snippets from before this rule; don't add more, and
+feel free to move one to its guide while you're touching that section.
 
 ## When you change code, update these docs
 

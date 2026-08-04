@@ -115,6 +115,9 @@ can mistake for "no passkey" instead of "request failed", and an unvalidated `di
   the import keeps working and emits a `DeprecationWarning`. Follow this when retiring a public name.
 - **Section banners** — long modules are divided with `# ====== SECTION ======` comment blocks;
   keep new methods inside the matching section and preserve existing declaration order.
+- **Deliberate placement, even without banners** — in a file with no section banners, put a new
+  method/class/function next to the related code it belongs with, or append it at the end of the
+  file/class. Never insert one at an arbitrary position just because it compiles there.
 
 ## Comments
 

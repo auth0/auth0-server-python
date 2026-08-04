@@ -19,19 +19,9 @@ Apply these on every task in this repo — they keep changes correct, small, and
 
 ---
 
-## Project Overview
-
-**auth0-server-python** is a library for implementing user authentication in Python applications — the server-side (confidential client) SDK that framework wrappers such as `auth0-fastapi` build on.
-
-- **Language:** Python, floor `>=3.9` (CI matrix: 3.9 / 3.10 / 3.11 / 3.12)
-- **Tech Stack:** OAuth 2.0 / OIDC via Authlib, `httpx` async transport, Pydantic v2 models, JWE-encrypted store payloads (jwcrypto), DPoP (RFC 9449)
-- **Package Manager:** Poetry (CI pins `2.2.1`); published to PyPI as `auth0-server-python`
-- **Version source of truth:** `.version` (mirrored in `pyproject.toml` — keep in sync)
-- **Dependencies:** authlib `^1.2`, httpx `^0.28.1`, pydantic `^2.10.6`, jwcrypto `^1.5.7` · test: pytest + pytest-asyncio + pytest-mock. Full list in `pyproject.toml`.
-
----
-
 ## Project Structure
+
+**auth0-server-python** is the server-side (confidential client) SDK that framework wrappers such as `auth0-fastapi` build on.
 
 ```
 src/auth0_server_python/
@@ -53,19 +43,6 @@ examples/                       # 11 per-feature Markdown guides (not runnable a
 references/                     # Agent reference docs (this file's offloaded sections)
 ```
 
-### Key Files
-
-| File | Why it matters |
-|------|----------------|
-| `src/auth0_server_python/auth_server/server_client.py` | The public API surface — ~29 public methods; most changes land here |
-| `src/auth0_server_python/auth_types/__init__.py` | Every public model; changing a field is a compatibility event |
-| `src/auth0_server_python/error/__init__.py` | Typed error hierarchy integrators branch on |
-| `src/auth0_server_python/store/abstract.py` | The contract integrators implement — changes break every downstream store |
-| `.ruff.toml` | Lint config (root file, not `pyproject.toml`) — the only style gate in CI |
-| `pyproject.toml` | Deps, Python floor, pytest `addopts` (coverage flags) |
-| `.github/workflows/test.yml` | The authoritative test + lint commands and Python matrix |
-| `.version` / `.shiprc` | Release version source; `pyproject.toml` must match |
-
 ---
 
 ## Boundaries
@@ -73,7 +50,7 @@ references/                     # Agent reference docs (this file's offloaded se
 ### ✅ Always Do
 
 - Run `poetry run pytest` and `poetry run ruff check .` before committing — both gate CI.
-- Add tests for new functionality, and mark async tests `@pytest.mark.asyncio` (there is no `asyncio_mode = auto`; an unmarked async test never runs but reports as passing).
+- Add tests for new functionality, and mark async tests `@pytest.mark.asyncio` — see Common Pitfalls for why.
 - Raise a typed error from `error/` with a stable `code`, and re-raise the SDK's own errors untouched inside a catch-all — never return `None` or a bare `dict` to signal failure.
 - Return Pydantic models from `auth_types/`, validated via `model_validate` — never leak an unvalidated response `dict` through the public API.
 - Resolve the domain through `await self._resolve_current_domain(store_options)` and thread `store_options` through every new public flow method — reading `self._domain` breaks MCD deployments and cookie-backed stores.
@@ -81,8 +58,9 @@ references/                     # Agent reference docs (this file's offloaded se
 - Attach credentials with `BearerAuth` / `DPoPAuth` from `auth_schemes/`, not by setting `Authorization` inline.
 - Keep `Optional[X]` / `Union[...]` typing and `target-version = "py39"`-compatible syntax — the 3.9 CI leg fails on 3.10+ constructs.
 - Update `README.md` and the matching `examples/*.md` guide in the same PR when changing the public API, configuration options, or supported integration patterns.
+- Put new code snippets in the matching `examples/*.md` guide and link to it from `README.md` — don't add another code block to `README.md`.
 - Keep `.version` and `pyproject.toml`'s `version` in sync when either is touched.
-- Preserve existing declaration order and the `# ==== SECTION ====` banners; insert new methods into the matching section.
+- Preserve existing declaration order and the `# ==== SECTION ====` banners; insert new methods into the matching section. In a file without banners, group a new method/class/function with the related code it belongs to, or append it at the end — never insert it at an arbitrary position.
 
 ### ⚠️ Ask First
 
@@ -155,7 +133,7 @@ See [references/git-workflow.md](references/git-workflow.md) for branch naming, 
 
 ## Common Pitfalls
 
-The three that bite most often: the **Python 3.9 floor** (no `X | None`), **`ruff format` is not a CI gate** so don't reformat the tree, and a **missing `@pytest.mark.asyncio`** makes an async test silently pass.
+The three that bite most often: the **Python 3.9 floor** (no `X | None`), **`ruff format` is not a CI gate** so don't reformat the tree, and a **missing `@pytest.mark.asyncio`** skips an async test with a warning instead of running it.
 
 See [references/pitfalls.md](references/pitfalls.md) for all eight, including the MCD domain-resolver trap, the `store_options` threading requirement, and the `Literal`-vs-`str` typing rule. Read it when a change touches HTTP, domains, or type annotations.
 
