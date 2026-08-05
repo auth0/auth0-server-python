@@ -2763,6 +2763,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             CustomTokenExchangeError: If no actor can be resolved or the exchange fails
+            InvalidArgumentError: If organization is provided but blank
         """
         try:
             # Validate the subject up front - before any session read/refresh/network.

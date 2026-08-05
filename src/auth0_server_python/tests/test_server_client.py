@@ -4257,7 +4257,7 @@ async def test_request_session_transfer_token_rejects_blank_organization_before_
     """A blank organization is rejected before the expired session is refreshed or persisted."""
     client, post_mock = _stt_client(mocker)
     client._state_store.get.return_value = {"id_token": "stale", "refresh_token": "rt"}
-    usable = mocker.patch.object(client, "_is_id_token_usable", side_effect=[False, True])
+    usable = mocker.patch.object(client, "_is_id_token_usable")
     refresh = mocker.patch.object(client, "get_token_by_refresh_token")
 
     with pytest.raises(InvalidArgumentError):
