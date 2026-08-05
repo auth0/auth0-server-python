@@ -2777,6 +2777,9 @@ class ServerClient(Generic[TStoreOptions]):
                     "subject_token_type cannot be empty or whitespace-only"
                 )
 
+            if organization is not None and not organization.strip():
+                raise InvalidArgumentError("organization", "organization must not be blank")
+
             actor_token, actor_token_type = await self._resolve_actor_token(
                 actor_token, actor_token_type, store_options)
 
@@ -2805,7 +2808,7 @@ class ServerClient(Generic[TStoreOptions]):
                 token_type=response.token_type,
                 scope=response.scope,
             )
-        except (CustomTokenExchangeError, ApiError):
+        except (CustomTokenExchangeError, InvalidArgumentError, ApiError):
             raise
         except Exception as e:
             raise CustomTokenExchangeError(

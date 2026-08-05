@@ -4228,6 +4228,20 @@ def test_build_session_transfer_redirect_rejects_blank_organization():
 
 
 @pytest.mark.asyncio
+async def test_request_session_transfer_token_rejects_blank_organization(mocker):
+    """A blank organization is rejected before the actor is resolved or any request is sent."""
+    client, post_mock = _stt_client(mocker)
+
+    with pytest.raises(InvalidArgumentError):
+        await client.request_session_transfer_token(
+            subject_token="subj", subject_token_type="urn:acme:sub", actor_token="a",
+            organization="   ",
+        )
+
+    post_mock.post.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_request_session_transfer_token_surfaces_server_issued_token_type(mocker):
     """A non-STT issued_token_type is surfaced verbatim, never fabricated as the STT URN."""
     client, _ = _stt_client(mocker, exchange_response={
