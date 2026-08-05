@@ -4228,6 +4228,51 @@ def test_build_session_transfer_redirect_rejects_blank_organization():
 
 
 @pytest.mark.asyncio
+async def test_request_session_transfer_token_forwards_organization_on_mint(mocker):
+    """A provided organization is forwarded onto the mint request."""
+    client, post_mock = _stt_client(mocker)
+
+    await client.request_session_transfer_token(
+        subject_token="subj", subject_token_type="urn:acme:sub", actor_token="a",
+        organization="org_abc123",
+    )
+
+    assert post_mock.post.call_args[1]["data"]["organization"] == "org_abc123"
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_omits_organization_when_absent(mocker):
+    """No organization passed → the parameter is absent from the mint request, not empty."""
+    client, post_mock = _stt_client(mocker)
+
+    await client.request_session_transfer_token(
+        subject_token="subj", subject_token_type="urn:acme:sub", actor_token="a",
+    )
+
+    assert "organization" not in post_mock.post.call_args[1]["data"]
+
+
+@pytest.mark.asyncio
+async def test_request_session_transfer_token_rejects_blank_organization_before_refresh(mocker):
+    """A blank organization is rejected before the expired session is refreshed or persisted."""
+    client, post_mock = _stt_client(mocker)
+    client._state_store.get.return_value = {"id_token": "stale", "refresh_token": "rt"}
+    usable = mocker.patch.object(client, "_is_id_token_usable")
+    refresh = mocker.patch.object(client, "get_token_by_refresh_token")
+
+    with pytest.raises(InvalidArgumentError):
+        await client.request_session_transfer_token(
+            subject_token="subj", subject_token_type="urn:acme:sub",
+            organization="   ",
+        )
+
+    refresh.assert_not_called()
+    usable.assert_not_called()
+    client._state_store.set.assert_not_called()
+    post_mock.post.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_request_session_transfer_token_surfaces_server_issued_token_type(mocker):
     """A non-STT issued_token_type is surfaced verbatim, never fabricated as the STT URN."""
     client, _ = _stt_client(mocker, exchange_response={
