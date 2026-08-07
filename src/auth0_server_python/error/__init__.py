@@ -39,8 +39,13 @@ class ApiError(Auth0Error):
         self.code = code
         self.cause = cause
 
-        # Extract additional error details if available
-        if cause:
+        # Extract additional error details if available. A dict cause (the
+        # raw Auth0 error body) has no attributes for getattr to read, so it
+        # is handled separately rather than yielding None for every subclass.
+        if isinstance(cause, dict):
+            self.error = cause.get("error")
+            self.error_description = cause.get("error_description")
+        elif cause:
             self.error = getattr(cause, "error", None)
             self.error_description = getattr(cause, "error_description", None)
         else:
@@ -368,29 +373,27 @@ class PasswordlessError(ApiError):
     strings.
     """
 
-    def __init__(self, code: str, message: str, cause=None):
+    def __init__(self, code: str, message: str, cause=None, retry_after: Optional[int] = None):
         super().__init__(code, message, cause)
         self.name = "PasswordlessError"
-        # When cause is the raw error dict from Auth0, surface its fields even
-        # though ApiError only reads attributes off exception-like causes.
-        if isinstance(cause, dict):
-            self.error = cause.get("error")
-            self.error_description = cause.get("error_description")
+        # Seconds to wait before retrying, from the Retry-After response header
+        # on a 429. None when the response carried no usable value.
+        self.retry_after = retry_after
 
 
 class PasswordlessStartError(PasswordlessError):
     """Error raised when POST /passwordless/start fails."""
 
-    def __init__(self, code: str, message: str, cause=None):
-        super().__init__(code, message, cause)
+    def __init__(self, code: str, message: str, cause=None, retry_after: Optional[int] = None):
+        super().__init__(code, message, cause, retry_after)
         self.name = "PasswordlessStartError"
 
 
 class PasswordlessVerifyError(PasswordlessError):
     """Error raised when the passwordless OTP token exchange fails."""
 
-    def __init__(self, code: str, message: str, cause=None):
-        super().__init__(code, message, cause)
+    def __init__(self, code: str, message: str, cause=None, retry_after: Optional[int] = None):
+        super().__init__(code, message, cause, retry_after)
         self.name = "PasswordlessVerifyError"
 
 
@@ -416,10 +419,12 @@ class PasswordlessErrorCode:
 # Passkey Error Classes
 # =============================================================================
 
+
 class PasskeyError(Auth0Error):
     """
     Error raised during passkey authentication operations.
     """
+
     def __init__(self, code: str, message: str, cause=None):
         super().__init__(message)
         self.code = code
@@ -429,6 +434,7 @@ class PasskeyError(Auth0Error):
 
 class PasskeyErrorCode:
     """Error codes for passkey operations."""
+
     CHALLENGE_FAILED = "passkey_challenge_error"
     TOKEN_EXCHANGE_FAILED = "passkey_token_error"
     INVALID_RESPONSE = "invalid_response"

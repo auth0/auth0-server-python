@@ -38,7 +38,6 @@ from auth0_server_python.error import (
     PasswordlessVerifyError,
 )
 from auth0_server_python.utils import PKCE
-from auth0_server_python.utils.helpers import validate_org_claims
 
 if TYPE_CHECKING:  # avoid a circular import at runtime
     from auth0_server_python.auth_server.server_client import ServerClient
@@ -50,6 +49,8 @@ DEFAULT_PASSWORDLESS_SMS_SCOPE = "openid profile"
 # Header Auth0 reads for the real end-user IP (confidential clients with
 # "Trust Token Endpoint IP Header" enabled).
 FORWARDED_FOR_HEADER = "auth0-forwarded-for"
+# Cap on a non-JSON error body retained as an exception cause.
+_RAW_ERROR_BODY_LIMIT = 2048
 
 
 class PasswordlessClient:
@@ -147,10 +148,16 @@ class PasswordlessClient:
 
         if response.status_code not in (200, 201):
             error_body = self._safe_json(response)
+            default_code = (
+                PasswordlessErrorCode.TOO_MANY_REQUESTS
+                if response.status_code == 429
+                else PasswordlessErrorCode.START_FAILED
+            )
             raise PasswordlessStartError(
-                error_body.get("error", PasswordlessErrorCode.START_FAILED),
+                error_body.get("error", default_code),
                 error_body.get("error_description", "Failed to start passwordless flow"),
-                error_body,
+                error_body if error_body else self._raw_text(response),
+                self._retry_after(response),
             )
 
         return PasswordlessStartResult(**self._safe_json(response))
@@ -179,6 +186,7 @@ class PasswordlessClient:
         Raises:
             PasswordlessVerifyError: When token exchange or ID-token
                 verification fails.
+            MfaRequiredError: When Auth0 requires MFA before completing login.
         """
         client = self._client
         origin_domain = await client._resolve_current_domain(store_options)
@@ -200,6 +208,7 @@ class PasswordlessClient:
             if options.connection == "email"
             else DEFAULT_PASSWORDLESS_SMS_SCOPE
         )
+        scope = options.scope or default_scope
         body: dict[str, Any] = {
             "grant_type": PASSWORDLESS_OTP_GRANT_TYPE,
             "client_id": client._client_id,
@@ -207,7 +216,7 @@ class PasswordlessClient:
             "realm": options.connection,
             "username": options.username,
             "otp": options.verification_code,
-            "scope": options.scope or default_scope,
+            "scope": scope,
         }
         if options.audience:
             body["audience"] = options.audience
@@ -232,16 +241,30 @@ class PasswordlessClient:
 
         if response.status_code != 200:
             error_body = self._safe_json(response)
+            if error_body.get("error") == "mfa_required" and error_body.get("mfa_token"):
+                await client._mfa_client._raise_mfa_required(
+                    error_body,
+                    audience=options.audience or client.DEFAULT_AUDIENCE_STATE_KEY,
+                    scope=scope,
+                    default_description="Multifactor authentication required",
+                    store_options=store_options,
+                )
+            default_code = (
+                PasswordlessErrorCode.TOO_MANY_REQUESTS
+                if response.status_code == 429
+                else PasswordlessErrorCode.INVALID_GRANT
+            )
             raise PasswordlessVerifyError(
-                error_body.get("error", PasswordlessErrorCode.INVALID_GRANT),
+                error_body.get("error", default_code),
                 error_body.get("error_description", "Passwordless verification failed"),
-                error_body,
+                error_body if error_body else self._raw_text(response),
+                self._retry_after(response),
             )
 
         token_response = response.json()
 
         user_claims, id_token_claims = await self._verify_id_token(
-            token_response, origin_domain, origin_issuer, metadata, options.organization
+            token_response, origin_domain, origin_issuer, metadata
         )
 
         state_data = await client._persist_session_from_token_response(
@@ -284,12 +307,24 @@ class PasswordlessClient:
         if store_options is None:
             raise MissingRequiredArgumentError("store_options")
 
+        # Auth0 echoes `state` back unvalidated on this flow — it does not
+        # compare it server-side, and the clicked link's query string can
+        # overwrite whatever was originally stored. This SDK's single-use,
+        # state-keyed transaction (below) plus the exact-match, SDK-owned
+        # `redirect_uri` is therefore the *only* CSRF/authorization-code-
+        # interception control on magic link; the server provides none.
+        # Never make `state`/`redirect_uri` caller-overridable.
         state = PKCE.generate_random_string(32)
         auth_params["redirect_uri"] = redirect_uri
         auth_params["response_type"] = "code"
         auth_params["state"] = state
         # Magic link is email-only, so the email scope is always appropriate.
         auth_params.setdefault("scope", DEFAULT_PASSWORDLESS_EMAIL_SCOPE)
+        # A caller-supplied scope replaces the default wholesale, so `openid`
+        # is re-injected rather than trusted: without it Auth0 returns no ID
+        # token, and the callback only demands one when an organization was
+        # requested — leaving a session with no signature-verified claims.
+        auth_params["scope"] = self._ensure_openid_scope(auth_params["scope"])
         if options.organization:
             auth_params["organization"] = options.organization
 
@@ -313,6 +348,14 @@ class PasswordlessClient:
         )
 
         return auth_params
+
+    @staticmethod
+    def _ensure_openid_scope(scope: str) -> str:
+        """Prepend ``openid`` to a scope string that omits it, preserving order."""
+        scopes = scope.split()
+        if "openid" in scopes:
+            return scope
+        return " ".join(["openid", *scopes])
 
     def _sanitize_caller_auth_params(self, auth_params: Optional[dict[str, Any]]) -> dict[str, Any]:
         """
@@ -347,7 +390,6 @@ class PasswordlessClient:
         origin_domain: str,
         origin_issuer: Optional[str],
         metadata: dict[str, Any],
-        expected_org: Optional[str],
     ) -> tuple[UserClaims, dict[str, Any]]:
         """Verify the ID token from the OTP exchange and return its claims."""
         client = self._client
@@ -380,12 +422,13 @@ class PasswordlessClient:
 
         token_issuer = claims.get("iss", "")
         if client._normalize_url(token_issuer) != client._normalize_url(origin_issuer):
-            raise IssuerValidationError(
-                "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+            raise PasswordlessVerifyError(
+                PasswordlessErrorCode.INVALID_ISSUER,
+                "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly.",
+                IssuerValidationError(
+                    "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+                ),
             )
-
-        if expected_org:
-            validate_org_claims(claims, expected_org)
 
         return UserClaims.model_validate(claims), claims
 
@@ -397,3 +440,32 @@ class PasswordlessClient:
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
+
+    @staticmethod
+    def _retry_after(response) -> Optional[int]:
+        """
+        Return the ``Retry-After`` delay in seconds, or None when absent or
+        not an integer count (the HTTP-date form is not interpreted).
+        """
+        raw = response.headers.get("Retry-After")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _raw_text(response) -> Optional[str]:
+        """
+        Return the response body text, truncated, for diagnosing a non-JSON
+        error body.
+
+        Capped because the body may be an HTML error page, WAF block page, or
+        proxy dump: it is attached as the exception ``cause`` and reaches any
+        logger that serializes it, and httpx applies no response-size limit.
+        """
+        try:
+            return response.text[:_RAW_ERROR_BODY_LIMIT]
+        except Exception:
+            return None
