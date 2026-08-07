@@ -802,6 +802,10 @@ class VerifyPasswordlessOtpOptions(BaseModel):
     match ``connection`` (email -> email, sms -> phone_number).
     """
 
+    # Unknown keys raise rather than being silently ignored, so a caller
+    # passing the removed `organization` kwarg is told, not quietly dropped.
+    model_config = ConfigDict(extra="forbid")
+
     connection: PasswordlessConnection
     # Public field name mirrors nextjs-auth0's `verificationCode`; sent to
     # Auth0 as the `otp` form parameter.

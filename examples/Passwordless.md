@@ -222,6 +222,8 @@ await server_client.passwordless.start(
 )
 ```
 
+A caller-supplied magic-link `scope` **replaces** the default wholesale rather than merging with it. The SDK re-injects `openid` when your scope omits it, because the magic-link callback would otherwise complete on a token response carrying no ID token — a session built from claims nothing verified. `openid` is never duplicated and your scope order is preserved otherwise.
+
 > [!NOTE]
 > `state` is intentionally not a caller-supplied auth parameter in this SDK. If you need app-specific return data, store it server-side against your own transaction/session context instead of putting it into the Auth0 magic-link `state`.
 
@@ -275,7 +277,9 @@ If the callback's ID token does not include a matching organization claim, verif
 > field. Auth0 does not attach an organization claim to tokens issued by the
 > passwordless-OTP grant, so there is nothing for the SDK to validate against
 > — an OTP flow that needs organization-scoped login should use magic link
-> instead.
+> instead. The model rejects unknown fields, so passing `organization` to
+> `verify()` raises a pydantic `ValidationError` rather than being silently
+> dropped.
 
 ## 7. DPoP — sender-constrained tokens (optional)
 
@@ -302,7 +306,12 @@ result = await server_client.passwordless.verify(
 )
 ```
 
-Keep the same `dpop_key` around for any later step-up (`server_client.mfa.verify(..., dpop_key=dpop_key)`) to preserve the sender constraint through MFA. If a resource server requires DPoP for *all* clients (not just public ones), Auth0 rejects the request with `invalid_request` / *"Resource server requires the use of DPoP to issue sender-constrained access tokens"* — that case is not specific to this SDK and surfaces as a `PasswordlessVerifyError` with that description.
+Keep the same `dpop_key` around for any later step-up (`server_client.mfa.verify(..., dpop_key=dpop_key)`) so the stepped-up token is bound to the same key; omitting it there would return an unbound Bearer token, and `mfa.verify` rejects that mismatch rather than downgrading silently. If a resource server requires DPoP for *all* clients (not just public ones), Auth0 rejects the request with `invalid_request` / *"Resource server requires the use of DPoP to issue sender-constrained access tokens"* — that case is not specific to this SDK and surfaces as a `PasswordlessVerifyError` with that description.
+
+> [!IMPORTANT]
+> **The binding does not survive the SDK session.** `verify()` proves the token is DPoP-bound at issuance, but the session store keeps no `token_type`, and `get_access_token()` returns a bare string and refreshes without a DPoP proof. So a bound token read back out of the session would be sent as `Authorization: Bearer …` and rejected, and the first refresh past expiry replaces it with an unbound token.
+>
+> Until that is addressed, treat `dpop_key` as *"I will handle this access token myself"*: use the token returned by `verify()` / `mfa.verify()` directly with your own DPoP-aware HTTP client, request `offline_access` only if you intend to run the refresh yourself, and do not rely on `get_access_token()` for a DPoP-bound token.
 
 ## Completing MFA during passwordless login
 
@@ -394,12 +403,24 @@ try:
 except MfaRequiredError as e:
     return start_mfa(e.mfa_token)
 except PasswordlessVerifyError as e:
-    return {"error": e.code, "detail": e.message}
+    return {"error": e.code, "detail": e.message, "retry_after": e.retry_after}
 except PasswordlessStartError as e:
-    return {"error": e.code, "detail": e.message}
+    return {"error": e.code, "detail": e.message, "retry_after": e.retry_after}
 except Auth0Error as e:
     return {"error": str(e)}
 ```
+
+`PasswordlessStartError` and `PasswordlessVerifyError` both carry:
+
+- `code` / `message` - the Auth0 `error` and `error_description`, or an SDK-side code when the response had neither
+- `error` / `error_description` - the raw values from a JSON error body
+- `retry_after` - seconds from the `Retry-After` response header, typically on a 429. `None` when the header is absent or in HTTP-date form (which the SDK does not interpret)
+- `cause` - the parsed JSON error body, or the response text truncated to 2048 characters when the body was not JSON
+
+> [!WARNING]
+> `cause` may hold a raw upstream body (an HTML error page, WAF block page, or proxy dump). It is length-capped, but not redacted — do not log it at a level where untrusted upstream content is unwelcome.
+
+Because a 429 that carries an explicit Auth0 `error` reports that server code, `code == "too_many_requests"` is not a reliable rate-limit predicate. Branch on `retry_after is not None`, or on the HTTP status if you need certainty.
 
 ### Common error codes (`PasswordlessErrorCode`)
 

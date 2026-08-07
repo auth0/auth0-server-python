@@ -373,24 +373,27 @@ class PasswordlessError(ApiError):
     strings.
     """
 
-    def __init__(self, code: str, message: str, cause=None):
+    def __init__(self, code: str, message: str, cause=None, retry_after: Optional[int] = None):
         super().__init__(code, message, cause)
         self.name = "PasswordlessError"
+        # Seconds to wait before retrying, from the Retry-After response header
+        # on a 429. None when the response carried no usable value.
+        self.retry_after = retry_after
 
 
 class PasswordlessStartError(PasswordlessError):
     """Error raised when POST /passwordless/start fails."""
 
-    def __init__(self, code: str, message: str, cause=None):
-        super().__init__(code, message, cause)
+    def __init__(self, code: str, message: str, cause=None, retry_after: Optional[int] = None):
+        super().__init__(code, message, cause, retry_after)
         self.name = "PasswordlessStartError"
 
 
 class PasswordlessVerifyError(PasswordlessError):
     """Error raised when the passwordless OTP token exchange fails."""
 
-    def __init__(self, code: str, message: str, cause=None):
-        super().__init__(code, message, cause)
+    def __init__(self, code: str, message: str, cause=None, retry_after: Optional[int] = None):
+        super().__init__(code, message, cause, retry_after)
         self.name = "PasswordlessVerifyError"
 
 

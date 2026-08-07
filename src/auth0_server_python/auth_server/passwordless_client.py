@@ -52,6 +52,8 @@ DEFAULT_PASSWORDLESS_SMS_SCOPE = "openid profile"
 # Header Auth0 reads for the real end-user IP (confidential clients with
 # "Trust Token Endpoint IP Header" enabled).
 FORWARDED_FOR_HEADER = "auth0-forwarded-for"
+# Cap on a non-JSON error body retained as an exception cause.
+_RAW_ERROR_BODY_LIMIT = 2048
 
 
 class PasswordlessClient:
@@ -158,6 +160,7 @@ class PasswordlessClient:
                 error_body.get("error", default_code),
                 error_body.get("error_description", "Failed to start passwordless flow"),
                 error_body if error_body else self._raw_text(response),
+                self._retry_after(response),
             )
 
         return PasswordlessStartResult(**self._safe_json(response))
@@ -243,11 +246,16 @@ class PasswordlessClient:
                 )
 
                 # RFC 9449 §8.2: a DPoP-Nonce challenge triggers exactly one
-                # retry with the server-supplied nonce.
+                # retry with the server-supplied nonce. The challenge is
+                # identified by the `use_dpop_nonce` error code, not by the
+                # header alone — servers may attach DPoP-Nonce to unrelated
+                # responses to seed future nonces, and retrying those would
+                # re-post the single-use `otp`, burning the code.
                 if (
                     dpop_key is not None
                     and response.status_code in (400, 401)
                     and response.headers.get("DPoP-Nonce")
+                    and self._safe_json(response).get("error") == "use_dpop_nonce"
                 ):
                     nonce = response.headers["DPoP-Nonce"]
                     headers["DPoP"] = make_dpop_proof_for_token_endpoint(
@@ -284,11 +292,14 @@ class PasswordlessClient:
                 error_body.get("error", default_code),
                 error_body.get("error_description", "Passwordless verification failed"),
                 error_body if error_body else self._raw_text(response),
+                self._retry_after(response),
             )
 
         token_response = response.json()
 
-        token_is_dpop = token_response.get("token_type", "").lower() == "dpop"
+        # `or ""` rather than a .get() default: an explicit JSON null returns
+        # None, and None.lower() would raise outside the typed-error contract.
+        token_is_dpop = (token_response.get("token_type") or "").lower() == "dpop"
         if dpop_key is not None and not token_is_dpop:
             raise PasswordlessVerifyError(
                 PasswordlessErrorCode.VERIFY_FAILED,
@@ -362,6 +373,11 @@ class PasswordlessClient:
         auth_params["state"] = state
         # Magic link is email-only, so the email scope is always appropriate.
         auth_params.setdefault("scope", DEFAULT_PASSWORDLESS_EMAIL_SCOPE)
+        # A caller-supplied scope replaces the default wholesale, so `openid`
+        # is re-injected rather than trusted: without it Auth0 returns no ID
+        # token, and the callback only demands one when an organization was
+        # requested — leaving a session with no signature-verified claims.
+        auth_params["scope"] = self._ensure_openid_scope(auth_params["scope"])
         if options.organization:
             auth_params["organization"] = options.organization
 
@@ -385,6 +401,14 @@ class PasswordlessClient:
         )
 
         return auth_params
+
+    @staticmethod
+    def _ensure_openid_scope(scope: str) -> str:
+        """Prepend ``openid`` to a scope string that omits it, preserving order."""
+        scopes = scope.split()
+        if "openid" in scopes:
+            return scope
+        return " ".join(["openid", *scopes])
 
     def _sanitize_caller_auth_params(self, auth_params: Optional[dict[str, Any]]) -> dict[str, Any]:
         """
@@ -471,9 +495,30 @@ class PasswordlessClient:
             return {}
 
     @staticmethod
-    def _raw_text(response) -> Optional[str]:
-        """Return the raw response body text, for diagnosing a non-JSON error body."""
+    def _retry_after(response) -> Optional[int]:
+        """
+        Return the ``Retry-After`` delay in seconds, or None when absent or
+        not an integer count (the HTTP-date form is not interpreted).
+        """
+        raw = response.headers.get("Retry-After")
+        if raw is None:
+            return None
         try:
-            return response.text
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _raw_text(response) -> Optional[str]:
+        """
+        Return the response body text, truncated, for diagnosing a non-JSON
+        error body.
+
+        Capped because the body may be an HTML error page, WAF block page, or
+        proxy dump: it is attached as the exception ``cause`` and reaches any
+        logger that serializes it, and httpx applies no response-size limit.
+        """
+        try:
+            return response.text[:_RAW_ERROR_BODY_LIMIT]
         except Exception:
             return None
