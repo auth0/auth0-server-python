@@ -4,6 +4,7 @@ Tests for PasswordlessClient — embedded passwordless (OTP + magic link).
 
 from unittest.mock import AsyncMock, MagicMock
 
+import jwt
 import pytest
 from pydantic import ValidationError
 
@@ -232,6 +233,24 @@ class TestStartMagicLink:
         assert tx_data.redirect_uri == REDIRECT_URI
 
     @pytest.mark.asyncio
+    async def test_magic_link_failed_start_does_not_persist_transaction(self):
+        # A failed POST /passwordless/start must not leave a transaction (and
+        # its cookie) behind for a magic link Auth0 never sent.
+        client = _make_client()
+        _mock_http(
+            client,
+            400,
+            {"error": "bad.connection", "error_description": "Connection disabled"},
+        )
+
+        with pytest.raises(PasswordlessStartError):
+            await client.passwordless.start(
+                StartPasswordlessEmailOptions(email="user@example.com", send="link"),
+                store_options={},
+            )
+        client._transaction_store.set.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_magic_link_requires_store_options(self):
         # No store_options -> transaction cookie can't be persisted -> fail loudly.
         client = _make_client()
@@ -351,6 +370,25 @@ class TestStartMagicLink:
         assert ap["scope"] == "openid profile email offline_access read:orders"
 
     @pytest.mark.asyncio
+    async def test_caller_audience_forwarded_on_magic_link(self):
+        client = _make_client()
+        http = _mock_http(client, 200, {})
+
+        await client.passwordless.start(
+            StartPasswordlessEmailOptions(
+                email="user@example.com",
+                send="link",
+                auth_params={"audience": "https://api.example.com"},
+            ),
+            store_options={},
+        )
+        ap = http.post.call_args.kwargs["json"]["authParams"]
+        assert ap["audience"] == "https://api.example.com"
+
+        tx_data = client._transaction_store.set.await_args.args[1]
+        assert tx_data.audience == "https://api.example.com"
+
+    @pytest.mark.asyncio
     async def test_magic_link_default_scope_applies_when_caller_omits_it(self):
         client = _make_client()
         http = _mock_http(client, 200, {})
@@ -367,29 +405,37 @@ class TestStartMagicLink:
         assert ap["scope"] == "openid profile email"
 
     @pytest.mark.asyncio
-    async def test_magic_link_organization_reaches_auth_params_and_transaction(self):
+    async def test_magic_link_rejects_organization_auth_param(self):
+        # Organizations are not supported on passwordless; the allowlist keeps
+        # the param from reaching Auth0 as an unvalidated passthrough.
         client = _make_client()
-        http = _mock_http(client, 200, {})
+        _mock_http(client, 200, {})
 
-        await client.passwordless.start(
+        with pytest.raises(InvalidArgumentError):
+            await client.passwordless.start(
+                StartPasswordlessEmailOptions(
+                    email="user@example.com",
+                    send="link",
+                    auth_params={"organization": "org_abc123"},
+                ),
+                store_options={},
+            )
+        client._transaction_store.set.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_start_options_reject_organization_field(self):
+        with pytest.raises(ValidationError):
             StartPasswordlessEmailOptions(
                 email="user@example.com",
                 send="link",
                 organization="org_abc123",
-            ),
-            store_options={},
-        )
-        ap = http.post.call_args.kwargs["json"]["authParams"]
-        assert ap["organization"] == "org_abc123"
-
-        tx_data = client._transaction_store.set.await_args.args[1]
-        assert tx_data.organization == "org_abc123"
+            )
 
     @pytest.mark.asyncio
     async def test_magic_link_injects_openid_when_caller_scope_omits_it(self):
-        # Without `openid` Auth0 returns no ID token, and the callback only
-        # demands one when an organization was requested — so the session would
-        # be built from unverified claims. Inject rather than trust the caller.
+        # Without `openid` Auth0 returns no ID token and the callback never
+        # demands one, so the session would be built from unverified claims.
+        # Inject rather than trust the caller.
         client = _make_client()
         http = _mock_http(client, 200, {})
 
@@ -549,6 +595,53 @@ class TestVerify:
             )
         )
         assert http.post.call_args.kwargs["data"]["scope"] == "openid profile email"
+
+    @pytest.mark.asyncio
+    async def test_caller_scope_and_audience_forwarded_on_verify(self, mocker):
+        client = _make_client()
+        claims = {"iss": ISSUER, "sub": "auth0|1", "sid": "s", "iat": 1_000}
+        self._patch_verify_deps(client, mocker, claims)
+        http = _mock_http(
+            client, 200, {"access_token": "at", "id_token": "idt", "expires_in": 3600}
+        )
+
+        await client.passwordless.verify(
+            VerifyPasswordlessOtpOptions(
+                connection="email",
+                email="user@example.com",
+                verification_code="123456",
+                audience="https://api.example.com",
+                scope="openid profile email offline_access read:orders",
+            )
+        )
+        data = http.post.call_args.kwargs["data"]
+        assert data["audience"] == "https://api.example.com"
+        assert data["scope"] == "openid profile email offline_access read:orders"
+
+    @pytest.mark.asyncio
+    async def test_verify_invalid_audience_maps_to_typed_error(self, mocker):
+        client = _make_client()
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        mocker.patch.object(
+            client,
+            "_get_jwks_cached",
+            return_value={"keys": [{"kty": "RSA", "kid": "k1"}]},
+        )
+        mocker.patch.object(
+            client,
+            "_verify_and_decode_jwt",
+            side_effect=jwt.InvalidAudienceError("aud mismatch"),
+        )
+        _mock_http(client, 200, {"access_token": "at", "id_token": "idt", "expires_in": 3600})
+
+        with pytest.raises(PasswordlessVerifyError) as exc:
+            await client.passwordless.verify(
+                VerifyPasswordlessOtpOptions(
+                    connection="email", email="user@example.com", verification_code="123456"
+                )
+            )
+        assert exc.value.code == "invalid_audience"
+        client._state_store.set.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_client_ip_forwarded_on_verify(self, mocker):

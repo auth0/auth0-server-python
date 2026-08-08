@@ -202,7 +202,7 @@ Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rf
 
 ### 10. Passwordless Authentication
 
-Sign users in with a one-time code sent by email or SMS, or with a magic link sent by email, via [Auth0 embedded passwordless login](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints). OTP verification and the magic-link callback each establish a server-side session like every other login path. For prerequisites, both flows, custom scopes/audiences, organizations, step-up MFA, and error handling, see [examples/Passwordless.md](examples/Passwordless.md).
+Sign users in with a one-time code sent by email or SMS, or with a magic link sent by email, via [Auth0 embedded passwordless login](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints). OTP verification and the magic-link callback each establish a server-side session like every other login path. For prerequisites, both flows, custom scopes/audiences, step-up MFA, and error handling, see [examples/Passwordless.md](examples/Passwordless.md).
 
 ## Feedback
 

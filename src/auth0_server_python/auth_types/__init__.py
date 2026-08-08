@@ -700,7 +700,8 @@ PasswordlessConnection = Literal["email", "sms"]
 # authParams keys the SDK owns and MUST NOT let a caller override for the
 # magic-link flow. A caller-controlled redirect_uri/state would allow the
 # emailed code+state to be redirected to an attacker (authorization-code
-# interception); the PKCE/nonce/response_type keys are protocol-controlled.
+# interception); the PKCE/nonce/response_type keys are reserved (not set by
+# the SDK for magic link, but never caller-overridable either).
 # Mirrors nextjs-auth0's MAGIC_LINK_EXCLUDED_PARAMS / INTERNAL_AUTHORIZE_PARAMS.
 # Kept explicit so a rejected override gets a precise "set by the SDK" message.
 PASSWORDLESS_RESERVED_AUTH_PARAMS = frozenset(
@@ -742,14 +743,16 @@ _E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
 class _StartPasswordlessBase(BaseModel):
     """Shared options for starting a passwordless flow."""
 
+    # Unknown keys raise rather than being silently ignored, so a caller
+    # passing an unsupported kwarg is told, not quietly dropped.
+    model_config = ConfigDict(extra="forbid")
+
     # BCP 47 tag (e.g. "fr", "en-US"). Forwarded as x-request-language to
     # localise the email/SMS template.
     language: Optional[str] = None
     # Extra params forwarded to /passwordless/start. SDK-owned keys
     # (PASSWORDLESS_RESERVED_AUTH_PARAMS) are stripped in the client.
     auth_params: Optional[dict[str, Any]] = None
-    # Organization id or name; validated against ID token claims on verify.
-    organization: Optional[str] = None
     # Attempted solution to a captcha challenge, when the tenant requires one.
     captcha: Optional[str] = None
     # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` so brute-force
@@ -803,7 +806,7 @@ class VerifyPasswordlessOtpOptions(BaseModel):
     """
 
     # Unknown keys raise rather than being silently ignored, so a caller
-    # passing the removed `organization` kwarg is told, not quietly dropped.
+    # passing an unsupported kwarg is told, not quietly dropped.
     model_config = ConfigDict(extra="forbid")
 
     connection: PasswordlessConnection
@@ -814,9 +817,6 @@ class VerifyPasswordlessOtpOptions(BaseModel):
     phone_number: Optional[str] = None
     scope: Optional[str] = None
     audience: Optional[str] = None
-    # No `organization` field: Auth0 ignores it for the OTP grant (verified
-    # against auth0-server), so accepting it would silently never succeed.
-    # Use magic link's `organization` instead.
     # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` on the OTP
     # token exchange so brute-force protection keys on the real user, not the
     # app server. Honored only for confidential clients with "Trust Token
