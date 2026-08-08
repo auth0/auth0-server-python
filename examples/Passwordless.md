@@ -255,7 +255,7 @@ result = await server_client.passwordless.verify(
 
 ## Completing MFA during passwordless login
 
-Auth0 can require MFA during passwordless OTP verification. In that case, the SDK raises `MfaRequiredError` before it creates a session. Complete the MFA challenge with `server_client.mfa`, then persist the returned tokens according to your framework's session integration.
+Auth0 can require MFA during passwordless OTP verification. In that case, the SDK raises `MfaRequiredError` before it creates a session. Complete the MFA challenge with `server_client.mfa` and pass `persist=True` on verification so the SDK creates the session from the final MFA token response.
 
 ```python
 from auth0_server_python.error import MfaRequiredError
@@ -277,20 +277,19 @@ except MfaRequiredError as e:
         store_options={"request": request, "response": response},
     )
 
-    verify_response = await server_client.mfa.verify(
-        {"mfa_token": e.mfa_token, "otp": mfa_code},
+    await server_client.mfa.verify(
+        {"mfa_token": e.mfa_token, "otp": mfa_code, "persist": True},
         store_options={"request": request, "response": response},
     )
 
-    save_session_for_user(
-        access_token=verify_response.access_token,
-        id_token=verify_response.id_token,
-        refresh_token=verify_response.refresh_token,
+    session = await server_client.get_session(
+        store_options={"request": request, "response": response},
     )
+    user = session["user"]
 ```
 
 > [!NOTE]
-> Passwordless OTP MFA is like passkey-first MFA: there is no existing application session yet. Use the returned MFA tokens to create the session in your framework layer rather than trying to update a session that does not exist.
+> Passwordless OTP MFA is like passkey-first MFA: there is no existing application session until MFA verification succeeds. `persist=True` creates the initial SDK session when the MFA response includes an ID token.
 
 ## Error Handling
 
