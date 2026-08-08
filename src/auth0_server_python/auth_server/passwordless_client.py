@@ -87,10 +87,11 @@ class PasswordlessClient:
 
         Raises:
             PasswordlessStartError: When ``POST /passwordless/start`` fails.
-            InvalidArgumentError: When caller ``auth_params`` attempts to
-                override an SDK-owned parameter.
+            InvalidArgumentError: When ``options`` is not a recognized type, or
+                caller ``auth_params`` contains an SDK-owned or unrecognized key.
             MissingRequiredArgumentError: When a magic link is requested but no
-                ``redirect_uri`` is configured on the client.
+                ``redirect_uri`` is configured on the client, or ``store_options``
+                is not provided.
         """
         client = self._client
         origin_domain = await client._resolve_current_domain(store_options)
@@ -119,10 +120,12 @@ class PasswordlessClient:
             isinstance(options, StartPasswordlessEmailOptions) and options.send == "link"
         )
 
+        magic_link_transaction = None
         if is_magic_link:
-            body["authParams"] = await self._build_magic_link_auth_params(
+            auth_params, magic_link_transaction = self._prepare_magic_link_start(
                 options, origin_domain, store_options
             )
+            body["authParams"] = auth_params
         elif options.auth_params:
             # OTP flows: forward safe passthrough params only.
             body["authParams"] = self._sanitize_caller_auth_params(options.auth_params)
@@ -160,6 +163,15 @@ class PasswordlessClient:
                 self._retry_after(response),
             )
 
+        if magic_link_transaction is not None:
+            tx_key, transaction_data = magic_link_transaction
+            await client._transaction_store.set(
+                tx_key,
+                transaction_data,
+                remove_if_expires=True,
+                options=store_options,
+            )
+
         return PasswordlessStartResult(**self._safe_json(response))
 
     # ----------------------------------------------------------------- verify
@@ -187,6 +199,9 @@ class PasswordlessClient:
             PasswordlessVerifyError: When token exchange or ID-token
                 verification fails.
             MfaRequiredError: When Auth0 requires MFA before completing login.
+            ApiError: When fetching the JWKS used to verify the ID token fails.
+            SessionExpiredError: When the token's session-expiry ceiling is
+                already in the past.
         """
         client = self._client
         origin_domain = await client._resolve_current_domain(store_options)
@@ -282,17 +297,24 @@ class PasswordlessClient:
 
     # ------------------------------------------------------------- internals
 
-    async def _build_magic_link_auth_params(
+    def _prepare_magic_link_start(
         self,
         options: StartPasswordlessEmailOptions,
         origin_domain: str,
         store_options: Optional[dict[str, Any]],
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], tuple[str, TransactionData]]:
         """
-        Build the magic-link ``authParams`` and persist the transaction.
+        Build the magic-link ``authParams`` and the transaction to persist.
 
         The SDK owns ``redirect_uri`` / ``response_type`` / ``state``; caller
         ``auth_params`` may only contribute non-reserved passthrough keys.
+        Persisting the transaction is the caller's job, deferred until after
+        ``POST /passwordless/start`` succeeds — a failed start must not leave a
+        transaction (and its cookie) behind.
+
+        Raises:
+            MissingRequiredArgumentError: When no ``redirect_uri`` is configured
+                on the client, or ``store_options`` is not provided.
         """
         client = self._client
 
@@ -302,15 +324,13 @@ class PasswordlessClient:
 
         auth_params = self._sanitize_caller_auth_params(options.auth_params)
 
-        # Required to persist the transaction cookie; checked after input
-        # validation so bad auth_params / missing redirect_uri surface first.
         if store_options is None:
             raise MissingRequiredArgumentError("store_options")
 
         # Auth0 echoes `state` back unvalidated on this flow — it does not
         # compare it server-side, and the clicked link's query string can
         # overwrite whatever was originally stored. This SDK's single-use,
-        # state-keyed transaction (below) plus the exact-match, SDK-owned
+        # state-keyed transaction plus the exact-match, SDK-owned
         # `redirect_uri` is therefore the *only* CSRF/authorization-code-
         # interception control on magic link; the server provides none.
         # Never make `state`/`redirect_uri` caller-overridable.
@@ -318,36 +338,22 @@ class PasswordlessClient:
         auth_params["redirect_uri"] = redirect_uri
         auth_params["response_type"] = "code"
         auth_params["state"] = state
-        # Magic link is email-only, so the email scope is always appropriate.
         auth_params.setdefault("scope", DEFAULT_PASSWORDLESS_EMAIL_SCOPE)
         # A caller-supplied scope replaces the default wholesale, so `openid`
         # is re-injected rather than trusted: without it Auth0 returns no ID
-        # token, and the callback only demands one when an organization was
-        # requested — leaving a session with no signature-verified claims.
+        # token and the callback never demands one, leaving a session with no
+        # signature-verified claims.
         auth_params["scope"] = self._ensure_openid_scope(auth_params["scope"])
-        if options.organization:
-            auth_params["organization"] = options.organization
 
-        # Magic link uses a plain authorization-code exchange (no PKCE), so the
-        # transaction stores no code_verifier. Single-use is enforced by
-        # transaction deletion on the callback; remove_if_expires signals the
-        # store to drop the transaction once expired. Its effective lifetime is
-        # the store's configured duration, not a fixed value set here.
         transaction_data = TransactionData(
             code_verifier=None,
             audience=auth_params.get("audience"),
             redirect_uri=redirect_uri,
             domain=origin_domain,
-            organization=options.organization,
         )
-        await client._transaction_store.set(
-            f"{client._transaction_identifier}:{state}",
-            transaction_data,
-            remove_if_expires=True,
-            options=store_options,
-        )
+        tx_key = f"{client._transaction_identifier}:{state}"
 
-        return auth_params
+        return auth_params, (tx_key, transaction_data)
 
     @staticmethod
     def _ensure_openid_scope(scope: str) -> str:

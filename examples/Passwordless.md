@@ -17,7 +17,6 @@ Passwordless lets users sign in with a one-time code sent by email or SMS, or wi
 - [3. Email magic link](#3-email-magic-link)
 - [4. Custom scopes and audiences](#4-custom-scopes-and-audiences)
 - [5. Forwarding the end-user IP](#5-forwarding-the-end-user-ip)
-- [6. Organizations (magic link only)](#6-organizations-magic-link-only)
 - [Completing MFA during passwordless login](#completing-mfa-during-passwordless-login)
 - [Error Handling](#error-handling)
 
@@ -254,32 +253,6 @@ result = await server_client.passwordless.verify(
 > [!WARNING]
 > Only forward a trusted, normalized end-user IP from your edge/proxy layer. Do not blindly copy arbitrary client-supplied headers into `client_ip`.
 
-## 6. Organizations (magic link only)
-
-Magic links can carry an organization through `authParams`; the SDK stores the expected organization in the transaction and validates the claims returned by the callback.
-
-```python
-await server_client.passwordless.start(
-    StartPasswordlessEmailOptions(
-        email="user@example.com",
-        send="link",
-        organization="org_abc123",
-    ),
-    store_options={"request": request, "response": response},
-)
-```
-
-If the callback's ID token does not include a matching organization claim, verification fails before a session is persisted, raising `OrganizationTokenValidationError`.
-
-> [!NOTE]
-> `VerifyPasswordlessOtpOptions` (the OTP `verify()` path) has no `organization`
-> field. Auth0 does not attach an organization claim to tokens issued by the
-> passwordless-OTP grant, so there is nothing for the SDK to validate against
-> — an OTP flow that needs organization-scoped login should use magic link
-> instead. The model rejects unknown fields, so passing `organization` to
-> `verify()` raises a pydantic `ValidationError` rather than being silently
-> dropped.
-
 ## Completing MFA during passwordless login
 
 Auth0 can require MFA during passwordless OTP verification. In that case, the SDK raises `MfaRequiredError` before it creates a session. Complete the MFA challenge with `server_client.mfa`, then persist the returned tokens according to your framework's session integration.
@@ -328,7 +301,6 @@ Passwordless methods raise typed SDK errors:
 - `MfaRequiredError` - Auth0 requires MFA before completing login
 - `MissingRequiredArgumentError` - required SDK input is missing, such as magic-link `store_options`
 - `InvalidArgumentError` - caller input is rejected before a network call
-- `OrganizationTokenValidationError` - magic-link callback only: requested organization does not match the returned token claims
 
 ### Basic handling
 
