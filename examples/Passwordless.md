@@ -8,6 +8,9 @@ Passwordless lets users sign in with a one-time code sent by email or SMS, or wi
 > [!IMPORTANT]
 > These flows are for confidential server-side applications. Tokens stay on the server; the browser should only receive your application's session cookie or opaque session reference.
 
+> [!NOTE]
+> **This SDK currently does not support DPoP on passwordless.** Neither `start()` nor `verify()` accepts a `dpop_key`, and tokens issued by the OTP grant or the magic-link callback are always Bearer tokens, never sender-constrained.
+
 ## Table of Contents
 
 - [How the flow works](#how-the-flow-works)
