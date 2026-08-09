@@ -55,6 +55,32 @@ The `AUTH0_SECRET` is the key used to encrypt the session and transaction cookie
 openssl rand -hex 64
 ```
 
+#### Authenticating with Private Key JWT
+
+The SDK authenticates to Auth0 with either a client secret or a Private Key JWT (`private_key_jwt`). To use Private Key JWT, pass your private signing key as `client_assertion_signing_key` instead of `client_secret`:
+
+```python
+from auth0_server_python.auth_server.server_client import ServerClient
+
+with open('private_key.pem') as f:
+    private_key = f.read()
+
+auth0 = ServerClient(
+    domain='<AUTH0_DOMAIN>',
+    client_id='<AUTH0_CLIENT_ID>',
+    client_assertion_signing_key=private_key,
+    secret='<AUTH0_SECRET>',
+    authorization_params={
+        'redirect_uri': '<AUTH0_REDIRECT_URI>',
+    }
+)
+```
+
+The key must be a PKCS8 PEM private key whose public key is registered on your Auth0 application. The signing algorithm defaults to `RS256` and can be overridden with `client_assertion_signing_alg`.
+
+> [!IMPORTANT]
+> Private keys must not be committed to source control. Load them from a secure secret store or an environment-provided file.
+
 ### 3. Add login to your Application (interactive)
 
 Before using redirect-based login, ensure the `redirect_uri` is configured when initializing the SDK:
