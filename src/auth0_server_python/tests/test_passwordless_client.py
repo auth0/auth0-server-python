@@ -21,6 +21,7 @@ from auth0_server_python.auth_types import (
 from auth0_server_python.error import (
     InvalidArgumentError,
     IssuerValidationError,
+    MfaRequiredError,
     MissingRequiredArgumentError,
     PasswordlessStartError,
     PasswordlessVerifyError,
@@ -143,6 +144,60 @@ class TestStartOtp:
         # Validation happens at model construction, before any network call.
         with pytest.raises(ValidationError):
             StartPasswordlessSmsOptions(phone_number="4155550100")
+
+    @pytest.mark.asyncio
+    async def test_start_rate_limited_maps_to_too_many_requests(self):
+        client = _make_client()
+        _mock_http(client, 429, {})
+
+        with pytest.raises(PasswordlessStartError) as exc:
+            await client.passwordless.start(
+                StartPasswordlessEmailOptions(email="user@example.com", send="code")
+            )
+        assert exc.value.code == "too_many_requests"
+
+    @pytest.mark.asyncio
+    async def test_start_rate_limited_captures_retry_after(self):
+        client = _make_client()
+        http = _mock_http(client, 429, {})
+        http.post.return_value.headers = {"Retry-After": "42"}
+
+        with pytest.raises(PasswordlessStartError) as exc:
+            await client.passwordless.start(
+                StartPasswordlessEmailOptions(email="user@example.com", send="code")
+            )
+        assert exc.value.retry_after == 42
+
+    @pytest.mark.asyncio
+    async def test_start_retry_after_http_date_is_not_interpreted(self):
+        # The HTTP-date form is valid per RFC 9110 but is not parsed; callers
+        # get None rather than a bogus delay.
+        client = _make_client()
+        http = _mock_http(client, 429, {})
+        http.post.return_value.headers = {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}
+
+        with pytest.raises(PasswordlessStartError) as exc:
+            await client.passwordless.start(
+                StartPasswordlessEmailOptions(email="user@example.com", send="code")
+            )
+        assert exc.value.retry_after is None
+
+    @pytest.mark.asyncio
+    async def test_start_non_json_error_body_is_capped(self):
+        # A WAF block page / proxy dump becomes the exception cause, so it must
+        # be truncated before it reaches any logger that serializes it.
+        client = _make_client()
+        http = _mock_http(client, 502, {})
+        http.post.return_value.json = MagicMock(side_effect=ValueError("not json"))
+        http.post.return_value.text = "<html>" + ("A" * 10_000) + "</html>"
+
+        with pytest.raises(PasswordlessStartError) as exc:
+            await client.passwordless.start(
+                StartPasswordlessEmailOptions(email="user@example.com", send="code")
+            )
+        assert exc.value.code == "passwordless_start_failed"
+        assert isinstance(exc.value.cause, str)
+        assert len(exc.value.cause) == 2048
 
 
 # ── start(): Magic link ──────────────────────────────────────────────────────
@@ -278,6 +333,92 @@ class TestStartMagicLink:
         )
         headers = http.post.call_args.kwargs["headers"]
         assert headers["auth0-forwarded-for"] == "203.0.113.7"
+
+    @pytest.mark.asyncio
+    async def test_caller_scope_forwarded_on_magic_link(self):
+        client = _make_client()
+        http = _mock_http(client, 200, {})
+
+        await client.passwordless.start(
+            StartPasswordlessEmailOptions(
+                email="user@example.com",
+                send="link",
+                auth_params={"scope": "openid profile email offline_access read:orders"},
+            ),
+            store_options={},
+        )
+        ap = http.post.call_args.kwargs["json"]["authParams"]
+        assert ap["scope"] == "openid profile email offline_access read:orders"
+
+    @pytest.mark.asyncio
+    async def test_magic_link_default_scope_applies_when_caller_omits_it(self):
+        client = _make_client()
+        http = _mock_http(client, 200, {})
+
+        await client.passwordless.start(
+            StartPasswordlessEmailOptions(
+                email="user@example.com",
+                send="link",
+                auth_params={"login_hint": "user@example.com"},
+            ),
+            store_options={},
+        )
+        ap = http.post.call_args.kwargs["json"]["authParams"]
+        assert ap["scope"] == "openid profile email"
+
+    @pytest.mark.asyncio
+    async def test_magic_link_organization_reaches_auth_params_and_transaction(self):
+        client = _make_client()
+        http = _mock_http(client, 200, {})
+
+        await client.passwordless.start(
+            StartPasswordlessEmailOptions(
+                email="user@example.com",
+                send="link",
+                organization="org_abc123",
+            ),
+            store_options={},
+        )
+        ap = http.post.call_args.kwargs["json"]["authParams"]
+        assert ap["organization"] == "org_abc123"
+
+        tx_data = client._transaction_store.set.await_args.args[1]
+        assert tx_data.organization == "org_abc123"
+
+    @pytest.mark.asyncio
+    async def test_magic_link_injects_openid_when_caller_scope_omits_it(self):
+        # Without `openid` Auth0 returns no ID token, and the callback only
+        # demands one when an organization was requested — so the session would
+        # be built from unverified claims. Inject rather than trust the caller.
+        client = _make_client()
+        http = _mock_http(client, 200, {})
+
+        await client.passwordless.start(
+            StartPasswordlessEmailOptions(
+                email="user@example.com",
+                send="link",
+                auth_params={"scope": "profile email"},
+            ),
+            store_options={},
+        )
+        ap = http.post.call_args.kwargs["json"]["authParams"]
+        assert ap["scope"] == "openid profile email"
+
+    @pytest.mark.asyncio
+    async def test_magic_link_openid_not_duplicated_or_reordered(self):
+        client = _make_client()
+        http = _mock_http(client, 200, {})
+
+        await client.passwordless.start(
+            StartPasswordlessEmailOptions(
+                email="user@example.com",
+                send="link",
+                auth_params={"scope": "profile openid read:orders"},
+            ),
+            store_options={},
+        )
+        ap = http.post.call_args.kwargs["json"]["authParams"]
+        assert ap["scope"] == "profile openid read:orders"
 
 
 # ── Magic link callback completion (complete_interactive_login) ──────────────
@@ -455,12 +596,14 @@ class TestVerify:
         self._patch_verify_deps(client, mocker, claims)
         _mock_http(client, 200, {"access_token": "at", "id_token": "idt", "expires_in": 3600})
 
-        with pytest.raises(IssuerValidationError):
+        with pytest.raises(PasswordlessVerifyError) as exc:
             await client.passwordless.verify(
                 VerifyPasswordlessOtpOptions(
                     connection="email", email="user@example.com", verification_code="123456"
                 )
             )
+        assert exc.value.code == "invalid_issuer"
+        assert isinstance(exc.value.cause, IssuerValidationError)
         client._state_store.set.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -509,4 +652,114 @@ class TestVerify:
                     connection="email", email="user@example.com", verification_code="123456"
                 )
             )
+        client._state_store.set.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_verify_rate_limited_maps_to_too_many_requests(self, mocker):
+        client = _make_client()
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        _mock_http(client, 429, {})
+
+        with pytest.raises(PasswordlessVerifyError) as exc:
+            await client.passwordless.verify(
+                VerifyPasswordlessOtpOptions(
+                    connection="email", email="user@example.com", verification_code="123456"
+                )
+            )
+        assert exc.value.code == "too_many_requests"
+        client._state_store.set.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_verify_rate_limited_captures_retry_after(self, mocker):
+        client = _make_client()
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        http = _mock_http(client, 429, {})
+        http.post.return_value.headers = {"Retry-After": "17"}
+
+        with pytest.raises(PasswordlessVerifyError) as exc:
+            await client.passwordless.verify(
+                VerifyPasswordlessOtpOptions(
+                    connection="email", email="user@example.com", verification_code="123456"
+                )
+            )
+        assert exc.value.retry_after == 17
+
+    @pytest.mark.asyncio
+    async def test_verify_non_json_error_body_is_capped(self, mocker):
+        client = _make_client()
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        http = _mock_http(client, 502, {})
+        http.post.return_value.json = MagicMock(side_effect=ValueError("not json"))
+        http.post.return_value.text = "B" * 10_000
+
+        with pytest.raises(PasswordlessVerifyError) as exc:
+            await client.passwordless.verify(
+                VerifyPasswordlessOtpOptions(
+                    connection="email", email="user@example.com", verification_code="123456"
+                )
+            )
+        assert exc.value.code == "invalid_grant"
+        assert isinstance(exc.value.cause, str)
+        assert len(exc.value.cause) == 2048
+        client._state_store.set.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_verify_options_reject_unknown_field(self):
+        # `organization` is not supported on the OTP grant. Rejecting it at the
+        # model tells the caller instead of silently dropping the kwarg.
+        with pytest.raises(ValidationError):
+            VerifyPasswordlessOtpOptions(
+                connection="email",
+                email="user@example.com",
+                verification_code="123456",
+                organization="org_abc123",
+            )
+
+    @pytest.mark.asyncio
+    async def test_verify_mfa_required_raises_typed_error(self, mocker):
+        client = _make_client()
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        _mock_http(
+            client,
+            403,
+            {
+                "error": "mfa_required",
+                "error_description": "Additional factor required",
+                "mfa_token": "raw_server_mfa_token",
+            },
+        )
+
+        with pytest.raises(MfaRequiredError) as exc:
+            await client.passwordless.verify(
+                VerifyPasswordlessOtpOptions(
+                    connection="email", email="user@example.com", verification_code="123456"
+                )
+            )
+        # Token is re-encrypted by the SDK, never passed through raw.
+        assert exc.value.mfa_token is not None
+        assert exc.value.mfa_token != "raw_server_mfa_token"
+        decrypted = client._mfa_client.decrypt_mfa_token(exc.value.mfa_token)
+        assert decrypted.mfa_token == "raw_server_mfa_token"
+        client._state_store.set.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_verify_mfa_required_without_token_falls_through(self, mocker):
+        # Third-party-strict / flex-commands-with-FF-off: 403 mfa_required with
+        # no mfa_token. Must fall through to the generic typed error, not hang
+        # or raise an unrelated exception.
+        client = _make_client()
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        _mock_http(
+            client,
+            403,
+            {"error": "mfa_required", "error_description": "MFA required"},
+        )
+
+        with pytest.raises(PasswordlessVerifyError) as exc:
+            await client.passwordless.verify(
+                VerifyPasswordlessOtpOptions(
+                    connection="email", email="user@example.com", verification_code="123456"
+                )
+            )
+        assert exc.value.code == "mfa_required"
         client._state_store.set.assert_not_awaited()
