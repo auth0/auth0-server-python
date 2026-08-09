@@ -545,15 +545,16 @@ The SDK does not store your private key, so you must re-supply it on the `verify
 
 By default, `verify()` returns tokens without persisting them to the session store. However, you can automatically persist tokens by setting `persist=True`.
 
-> [!WARNING]
-> `persist=True` **updates an existing session** — it does not create one. On a passkey-first login (`signin_with_passkey` → `MfaRequiredError`) no session exists yet, so `persist=True` raises `MfaVerifyError("No existing session found to update with MFA tokens")` and discards the tokens `verify()` just obtained. On that path, use `persist=False` (the default) and store the returned tokens yourself — see [Passkeys.md → Completing MFA on a passkey login](Passkeys.md#completing-mfa-on-a-passkey-login-and-where-the-session-comes-from).
+> [!NOTE]
+> `persist=True` updates an existing session when one is present. For first-login MFA flows where the SDK has not created a session yet, `ServerClient.mfa` can create the initial session from the final MFA token response when that response includes an ID token.
 
 ### Automatic Session Update
 
 When you set `persist=True`, the SDK will:
-1. Update the session's `access_token` for the specified audience
-2. Update the session's `id_token` if present
-3. Add the token to the `token_sets` array with expiration information
+1. Update an existing session, or create the initial session when the MFA flow completed a first login
+2. Persist the `access_token` for the specified audience
+3. Persist the `id_token` if present
+4. Add the token to the `token_sets` array with expiration information
 
 ```python
 verify_response = await server_client.mfa.verify(

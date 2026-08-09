@@ -5,7 +5,8 @@ Handles Multi-Factor Authentication operations against the Auth0 MFA API.
 
 import json
 import time
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Union
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import httpx
 
