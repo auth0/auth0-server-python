@@ -20,6 +20,7 @@ from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import ValidationError
 
 from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
+from auth0_server_python.auth_server.anonymous_client import AnonymousClient
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_types import (
@@ -85,7 +86,8 @@ TStoreOptions = TypeVar('TStoreOptions')
 # redirect_uri is intentionally excluded — in MCD mode it is built
 # dynamically from the resolved domain at login time.
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
-                             "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
+                             "code_challenge", "code_challenge_method", "state", "nonce", "scope",
+                             "session_token"]
 
 # issued_token_type URN for a Session Transfer Token (STT).
 SESSION_TRANSFER_TOKEN_TYPE = "urn:auth0:params:oauth:token-type:session_transfer_token"
@@ -117,6 +119,7 @@ class ServerClient(Generic[TStoreOptions]):
         secret: str = None,
         transaction_store=None,
         state_store=None,
+        anonymous_store=None,
         transaction_identifier: str = "_a0_tx",
         state_identifier: str = "_a0_session",
         authorization_params: Optional[dict[str, Any]] = None,
@@ -134,6 +137,14 @@ class ServerClient(Generic[TStoreOptions]):
             secret: Secret used for encryption
             transaction_store: Custom transaction store (defaults to MemoryTransactionStore)
             state_store: Custom state store (defaults to MemoryStateStore)
+            anonymous_store: Store for anonymous session state (server_client.anonymous.*).
+                Must be a distinct store *instance* from state_store — not merely a
+                different identifier. On the default auth0-fastapi cookie stores, a
+                store identifier is used only as an encryption salt, not a location
+                key, so writing anonymous state through state_store would silently
+                overwrite the authenticated session cookie. When omitted, the
+                `.anonymous` sub-client fails closed on first use rather than
+                sharing state_store implicitly.
             transaction_identifier: Identifier for transaction data
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
@@ -180,6 +191,7 @@ class ServerClient(Generic[TStoreOptions]):
         # Initialize stores
         self._transaction_store = transaction_store
         self._state_store = state_store
+        self._anonymous_store = anonymous_store
         self._transaction_identifier = transaction_identifier
         self._state_identifier = state_identifier
 
@@ -211,6 +223,20 @@ class ServerClient(Generic[TStoreOptions]):
             secret=self._secret,
             state_store=self._state_store,
             state_identifier=self._state_identifier,
+            headers=self._telemetry_headers,
+        )
+
+        # Deliberately given its own store, never self._state_store.
+        self._anonymous_client = AnonymousClient(
+            domain=domain,
+            client_id=self._client_id,
+            client_secret=self._client_secret,
+            secret=self._secret,
+            anonymous_store=self._anonymous_store,
+            default_audience=self._default_authorization_params.get("audience"),
+            default_scope=self._default_authorization_params.get("scope")
+            if isinstance(self._default_authorization_params.get("scope"), str)
+            else None,
             headers=self._telemetry_headers,
         )
 
@@ -543,6 +569,20 @@ class ServerClient(Generic[TStoreOptions]):
         if options.invitation:
             auth_params["invitation"] = options.invitation
 
+        # session_token is sourced only from the SDK's own encrypted anonymous
+        # store, never from a caller. INTERNAL_AUTHORIZE_PARAMS alone isn't
+        # enough — auth_params is seeded unfiltered from the constructor
+        # defaults above, so a caller-supplied value would survive that filter.
+        # Suppressed entirely on the PAR branch below (unsupported there).
+        auth_params.pop("session_token", None)
+        anonymous_session_token = None
+        if not self._pushed_authorization_requests:
+            anonymous_session_token = await self._anonymous_client.get_session_token_for_injection(
+                store_options
+            )
+            if anonymous_session_token:
+                auth_params["session_token"] = anonymous_session_token
+
         # Build the transaction data to store with domain
         transaction_data = TransactionData(
             code_verifier=code_verifier,
@@ -551,6 +591,7 @@ class ServerClient(Generic[TStoreOptions]):
             domain=origin_domain,
             redirect_uri=auth_params.get("redirect_uri"),
             organization=resolved_org,
+            session_token=anonymous_session_token,
         )
 
         # Store the transaction data
@@ -2861,6 +2902,15 @@ class ServerClient(Generic[TStoreOptions]):
     def mfa(self) -> MfaClient:
         """Access the MFA client for multi-factor authentication operations."""
         return self._mfa_client
+
+    # ============================================================================
+    # ANONYMOUS SESSIONS
+    # ============================================================================
+
+    @property
+    def anonymous(self) -> AnonymousClient:
+        """Access the anonymous sessions client for pre-login anon@ identity operations."""
+        return self._anonymous_client
 
     # ============================================================================
     # PASSKEY AUTHENTICATION

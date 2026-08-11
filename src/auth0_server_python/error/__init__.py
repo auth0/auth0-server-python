@@ -362,3 +362,112 @@ class PasskeyErrorCode:
     CHALLENGE_FAILED = "passkey_challenge_error"
     TOKEN_EXCHANGE_FAILED = "passkey_token_error"
     INVALID_RESPONSE = "invalid_response"
+
+
+# =============================================================================
+# Anonymous Session Error Classes
+# =============================================================================
+
+class AnonymousApiError(Auth0Error):
+    """
+    Base class for anonymous session API errors.
+
+    Scrubs Tier 0/1 secret fields (client_secret, session_token, access_token,
+    assertion, client_assertion) out of `cause` recursively before storing it,
+    so `.cause` is always safe to log or surface.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        cause: Optional[dict[str, Any]] = None
+    ):
+        super().__init__(message)
+        self.code = code
+        if cause is not None:
+            # Deferred import: utils.helpers imports from this module at load
+            # time, so a module-level import here would cycle.
+            from auth0_server_python.utils.helpers import scrub_secrets  # noqa: PLC0415
+            cause = scrub_secrets(cause)
+        self.cause = cause
+
+
+class AnonymousSessionCreateError(AnonymousApiError):
+    """Error thrown when creating or re-minting an anonymous session fails."""
+
+    def __init__(self, message: str, code: str = "anonymous_session_create_error", cause: Optional[dict] = None):
+        super().__init__(code, message, cause)
+
+
+class AnonymousLogoutError(AnonymousApiError):
+    """Error thrown when anonymous logout fails."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__("anonymous_logout_error", message, cause)
+
+
+class AnonymousTokenError(AnonymousApiError):
+    """Error thrown when get_token() fails for reasons other than session expiry."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__("anonymous_token_error", message, cause)
+
+
+class AnonymousSessionIntrospectError(AnonymousApiError):
+    """
+    Error thrown when introspect() fails.
+
+    Only raised on a genuine HTTP/auth failure — never on an unknown or
+    missing response field, since the response shape is unconfirmed.
+    """
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__("anonymous_session_introspect_error", message, cause)
+
+
+class AnonymousFeatureNotEnabledError(AnonymousSessionCreateError):
+    """Error thrown when the tenant has not enabled the anonymous sessions add-on."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__(message, "anonymous_feature_not_enabled_error", cause)
+
+
+class AnonymousClientNotEnabledError(AnonymousSessionCreateError):
+    """Error thrown when the client is not enabled for anonymous sessions."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__(message, "anonymous_client_not_enabled_error", cause)
+
+
+class AnonymousClientNotSupportedError(AnonymousSessionCreateError):
+    """Error thrown when the client type does not support anonymous sessions (e.g. DPoP-mandated)."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__(message, "anonymous_client_not_supported_error", cause)
+
+
+class AnonymousResourceServerError(AnonymousSessionCreateError):
+    """Error thrown when the requested audience is not a valid resource server."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__(message, "anonymous_resource_server_error", cause)
+
+
+class AnonymousScopeError(AnonymousSessionCreateError):
+    """Error thrown when the requested scope is not granted to anonymous callers."""
+
+    def __init__(self, message: str, cause: Optional[dict] = None):
+        super().__init__(message, "anonymous_scope_error", cause)
+
+
+class _AnonymousSessionExpired(Auth0Error):
+    """
+    Internal-only signal that the stored session token is expired or invalid.
+
+    Drives the silent re-mint in the renewal ladder. Never raised to SDK callers.
+    """
+
+    def __init__(self, message: str = "The anonymous session token is expired or invalid."):
+        super().__init__(message)
+        self.name = "_AnonymousSessionExpired"

@@ -399,3 +399,33 @@ def validate_org_claims(claims: dict, expected_org: str) -> None:
             raise OrganizationTokenValidationError(
                 "Organization Name (org_name) claim value mismatch in the ID token"
             )
+
+
+# =============================================================================
+# Secret Redaction
+# =============================================================================
+
+_SECRET_FIELDS = frozenset({
+    "client_secret",
+    "session_token",
+    "access_token",
+    "assertion",
+    "client_assertion",
+})
+
+
+def scrub_secrets(data: Any) -> Any:
+    """
+    Recursively redact Tier 0/1 secret fields from a parsed error body.
+
+    Walks dicts and lists so a secret nested inside a sub-object (e.g.
+    {"details": {"session_token": "..."}}) is caught, not just top-level keys.
+    """
+    if isinstance(data, dict):
+        return {
+            key: "[REDACTED]" if key in _SECRET_FIELDS else scrub_secrets(value)
+            for key, value in data.items()
+        }
+    if isinstance(data, list):
+        return [scrub_secrets(item) for item in data]
+    return data

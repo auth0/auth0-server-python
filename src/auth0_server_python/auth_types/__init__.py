@@ -146,6 +146,7 @@ class TransactionData(BaseModel):
     redirect_uri: Optional[str] = None
     domain: Optional[str] = None
     organization: Optional[str] = None
+    session_token: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
@@ -852,3 +853,75 @@ class PasskeyTokenResponse(BaseModel):
     scope: Optional[str] = None
     id_token: Optional[str] = None
     refresh_token: Optional[str] = None
+
+
+# =============================================================================
+# Anonymous Session Types
+# =============================================================================
+
+
+class AnonymousSession(BaseModel):
+    """
+    Public result of create_session() / the renewal ladder.
+
+    Never exposes the raw session token — that stays inside the encrypted
+    AnonymousSessionContext, server-side only.
+    """
+
+    sub: str
+    session_id: str
+    access_token: str
+    expires_at: int
+    session_expires_at: Optional[int] = None
+    metadata: Optional[dict[str, Any]] = None
+    is_new: bool
+
+
+class AnonymousSessionIntrospection(BaseModel):
+    """
+    Result of introspect(). Deliberately minimal and lenient — the platform's
+    /anonymous/userinfo response shape is unconfirmed; unrecognized fields
+    are ignored rather than rejected.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    sub: str
+    session_id: Optional[str] = None
+    expires_at: Optional[int] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+class AnonymousTokenResponse(BaseModel):
+    """Raw response from POST /anonymous/token."""
+
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    session_token: Optional[str] = None
+    session_expires_in: Optional[int] = None
+    sub: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class AnonymousSessionContext(BaseModel):
+    """
+    Internal context stored inside the encrypted anonymous session record.
+
+    No `extra` config — decrypt fails closed on a tampered or malformed
+    payload rather than silently yielding a partial object.
+    """
+
+    session_token: str
+    sub: str
+    session_id: str
+    access_token: str
+    expires_at: int
+    session_expires_at: Optional[int] = None
+    metadata: Optional[dict[str, Any]] = None
+    created_at: int
+    # Resolved domain at creation time. Gated on in resolver/MCD mode so a
+    # session minted against tenant A cannot be read back for tenant B.
+    # None when the client uses a static domain.
+    domain: Optional[str] = None
+    audience: Optional[str] = None
+    scope: Optional[str] = None

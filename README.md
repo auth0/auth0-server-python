@@ -200,6 +200,10 @@ Let a logged-in user manage their own enrolled authentication methods — enroll
 
 Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. DPoP is supported for Passkey sign-in (`signin_with_passkey`) and the authentication-methods/factors methods on `MyAccountClient`. For key generation and usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
 
+### 10. Anonymous Sessions
+
+Give a visitor an Auth0 `anon@<uuid>` identity before they log in, so cart/preference metadata attached pre-login is available to Post-Login Actions once they do. Requires a separate `anonymous_store` instance — never the same instance as `state_store` — and a tenant-level paid add-on flag. For setup, the token renewal ladder, login injection, and the store-isolation requirement, see [examples/AnonymousSessions.md](examples/AnonymousSessions.md).
+
 ## Feedback
 
 ### Contributing
