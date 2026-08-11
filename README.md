@@ -23,7 +23,7 @@ pip install auth0-server-python
 If you’re using Poetry:
 
 ```shell
-poetry install auth0-server-python
+poetry add auth0-server-python
 ```
 
 ### 2. Create the Auth0 SDK client
@@ -40,7 +40,7 @@ auth0 = ServerClient(
     client_secret='<AUTH0_CLIENT_SECRET>',
     secret='<AUTH0_SECRET>',
     authorization_params= {
-      redirect_uri: '<AUTH0_REDIRECT_URI>',
+      'redirect_uri': '<AUTH0_REDIRECT_URI>',
     }
 )
 ```
@@ -146,6 +146,11 @@ response = await auth0.custom_token_exchange(
 
 print(response.access_token)
 ```
+
+Building on token exchange, the SDK also supports:
+
+- **[Delegation and Impersonation](examples/CustomTokenExchange.md#3-actor-tokens-delegation)** - exchange with an `actor_token` so the issued tokens record who is acting on whose behalf (the `act` claim).
+- **[Impersonation via Session Transfer (STT)](examples/CustomTokenExchange.md#8-impersonation-via-session-transfer-stt)** - mint a Session Transfer Token to log an agent into a target app as a customer, via `request_session_transfer_token()` and `build_session_transfer_redirect()`.
 
 For more details and examples, see [examples/CustomTokenExchange.md](examples/CustomTokenExchange.md).
 

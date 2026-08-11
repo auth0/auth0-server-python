@@ -19,7 +19,7 @@ See [Security Best Practices](#security-best-practices) for important guidance o
 For applications with a single Auth0 domain:
 
 ```python
-from auth0_server_python import ServerClient
+from auth0_server_python.auth_server import ServerClient
 
 client = ServerClient(
     domain="login.yourapp.com",  # Static string
@@ -34,7 +34,7 @@ client = ServerClient(
 For MCD support, provide a domain resolver function that receives a `DomainResolverContext`:
 
 ```python
-from auth0_server_python import ServerClient
+from auth0_server_python.auth_server import ServerClient
 from auth0_server_python.auth_types import DomainResolverContext
 
 # Map your app hostnames to Auth0 custom domains

@@ -397,6 +397,24 @@ class LoginWithCustomTokenExchangeResult(BaseModel):
     authorization_details: Optional[list[AuthorizationDetails]] = None
 
 
+class SessionTransferTokenResult(BaseModel):
+    """
+    Response from a session transfer token (STT) request.
+
+    Attributes:
+        session_transfer_token: The opaque, single-use session transfer token
+        issued_token_type: Format of issued token (the session-transfer URN)
+        expires_in: Token lifetime in seconds
+        token_type: Token type as returned by the server (typically "N_A")
+        scope: Granted scopes (if returned)
+    """
+    session_transfer_token: str
+    issued_token_type: str
+    expires_in: int
+    token_type: Optional[str] = None
+    scope: Optional[str] = None
+
+
 # =============================================================================
 # Connected Accounts Types
 # =============================================================================

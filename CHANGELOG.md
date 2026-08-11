@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.0.0b14](https://github.com/auth0/auth0-server-python/tree/1.0.0b14) (2026-07-29)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b13...1.0.0b14)
+
+**Added**
+- feat: add Session Transfer Token support for CTE impersonation via session transfer [\#139](https://github.com/auth0/auth0-server-python/pull/139) ([kishore7snehil](https://github.com/kishore7snehil))
+
 ## [1.0.0b13](https://github.com/auth0/auth0-server-python/tree/1.0.0b13) (2026-07-21)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b12...1.0.0b13)
 
