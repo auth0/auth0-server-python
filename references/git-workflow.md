@@ -40,7 +40,7 @@ of intent.
 
 From `.github/workflows/`:
 
-- **Build and Test** (`test.yml`) — `pytest` + `ruff check .` across Python 3.9 / 3.10 / 3.11 / 3.12
+- **Build and Test** (`test.yml`) — `pytest` + `ruff check .` across the Python version matrix that workflow defines
 - **CodeQL** (`codeql.yml`) — on PR, push to `main`, and a weekly schedule
 - **SCA** (`sca_scan.yml`) — Snyk against `requirements.txt`; suppressions live in `.snyk`
 

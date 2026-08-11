@@ -39,9 +39,11 @@ src/auth0_server_python/
 ├── utils/helpers.py            # PKCE, State, URL helpers; org-claim + domain-resolver validation
 ├── telemetry.py                # Auth0-Client header construction
 └── tests/                      # pytest suite, one test_<module>.py per module
-examples/                       # 11 per-feature Markdown guides (not runnable apps)
+examples/                       # per-feature Markdown guides (not runnable apps)
 references/                     # Agent reference docs (this file's offloaded sections)
 ```
+
+Before working on a specific flow — interactive login, CIBA, passkeys, CTE, MFA, My Account, user linking, connected accounts, MCD — read its row in [references/flow-map.md](references/flow-map.md) for the entry points, supporting modules, and guide.
 
 ---
 
@@ -65,6 +67,7 @@ references/                     # Agent reference docs (this file's offloaded se
 ### ⚠️ Ask First
 
 - **Any breaking change — always ask first.** Never make one on your own initiative: a renamed/removed public method, a changed signature or default, a tightened model field, a new required constructor argument, or a raised Python floor.
+- Renaming or removing an existing `*ErrorCode` constant in `error/`, or changing the `code` an existing typed error raises. Integrators branch on `code`, so this is a breaking change even though no signature moves — treat an existing code as public API. Adding a new code is not breaking.
 - Adding, removing, or bumping a dependency (`pyproject.toml` + `poetry.lock` + `requirements.txt` must move together — Snyk SCA installs from `requirements.txt`).
 - Changing security-relevant code: token handling, `encryption/encrypt.py`, DPoP proof construction, PKCE, `state`/`nonce` handling, issuer or org-claim validation, session-expiry enforcement.
 - Modifying the `StateStore` / `TransactionStore` contract in `store/abstract.py`.
@@ -78,7 +81,7 @@ references/                     # Agent reference docs (this file's offloaded se
 - Log, `print`, or include in an error message any token, `code`, `code_verifier`, `client_secret`, DPoP private key, or full response body. There is no logger in the SDK — don't introduce one that emits these.
 - Fail open. A validation, resolver, JWKS, or token-endpoint failure must raise, never fall through to a permissive default (no default domain, no "assume valid").
 - Validate `state` by comparing strings. `complete_interactive_login` looks the transaction up by `{transaction_identifier}:{state}` and raises `MissingTransactionError` on a miss — that store lookup *is* the binding. If you ever add a secret-to-secret comparison, use `hmac.compare_digest`, never `==`.
-- Run `ruff format .` repo-wide — it is not a CI gate and the tree is not format-clean (13 files would change). Format only lines you touched.
+- Run `ruff format .` repo-wide — it is not a CI gate and the tree is not format-clean, so a repo-wide run buries your change in unrelated reformatting. Format only lines you touched; `poetry run ruff format --check .` shows the current state.
 - Remove or `skip` a failing test instead of fixing it, or weaken an assertion to make it pass.
 - Hand-edit `poetry.lock`, `coverage.xml`, `CHANGELOG.md` (release flow owns it), or anything in `dist/`, `.venv/`, `__pycache__/`, `.pytest_cache/`, `.ruff_cache/`.
 - Break backward compatibility without asking first (see Ask First) and getting explicit approval.

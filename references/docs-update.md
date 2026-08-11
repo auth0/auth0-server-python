@@ -10,7 +10,7 @@ error classes in `error/`. Docs track that surface.
 |-----|----------------|--------|
 | `README.md` | Install, `ServerClient` construction, interactive login, custom token exchange, MCD, session expiry, passkeys, My Account, DPoP — each a short section that links out to `examples/` | present |
 | `EXAMPLES.md` | — | **not used by design.** This repo puts per-feature guides in `examples/*.md` instead. Add a sample to the matching `examples/` guide; only create `EXAMPLES.md` if the team decides to consolidate. |
-| `examples/` | 11 per-feature Markdown guides (not runnable apps): `InteractiveLogin`, `ConfigureStore`, `RetrievingData`, `MFA`, `Passkeys`, `MyAccountAuthenticationMethods`, `ConnectedAccounts`, `CustomTokenExchange`, `ClientInitiatedBackChannelLogin`, `MultipleCustomDomains`, `UserLinking` | present |
+| `examples/` | per-feature Markdown guides (not runnable apps), one per flow — see the Feature → guide map below | present |
 
 `CHANGELOG.md` exists but is **not** tracked here — it's written by the release flow, not during a
 feature change. Migration guides are likewise not tracked: the filename depends on the target major
@@ -39,6 +39,14 @@ feel free to move one to its guide while you're touching that section.
 
 Update the doc **in the same PR** as the code. The PR template asks for a method-level inventory of
 what changed, so the doc diff and the PR body come from the same source.
+
+## A new feature with no guide yet
+
+When a feature has no row in the Feature → guide map below, the change is not complete until you
+create one. Add `examples/<Feature>.md` modelled on the closest sibling guide — same section order,
+same prose-then-snippet rhythm, same error-handling section — then add its row to that map and link
+it from `README.md`'s section for the feature. Name the file after the flow, matching the existing
+`PascalCase` filenames. Don't put the feature's only sample in `README.md` instead.
 
 ## Feature → guide map
 

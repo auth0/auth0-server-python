@@ -9,7 +9,8 @@ poetry install                      # install runtime + dev dependencies
 poetry install --no-interaction     # CI form (test.yml)
 ```
 
-CI pins Poetry to `2.2.1` (`snok/install-poetry@v1`) with `virtualenvs-in-project: true`.
+CI installs Poetry with `snok/install-poetry@v1` and `virtualenvs-in-project: true`; the pinned
+version is in `.github/workflows/test.yml`.
 
 ## Test
 
@@ -35,7 +36,7 @@ poetry run ruff check . --fix  # auto-fix the fixable subset
 ## Format
 
 ```bash
-poetry run ruff format --check .   # reports 13 already-unformatted files — see references/pitfalls.md
+poetry run ruff format --check .   # lists the already-unformatted files — see references/pitfalls.md
 ```
 
 `ruff format` is **not** a CI gate and the tree is not format-clean. Never run `ruff format .`
@@ -63,5 +64,6 @@ find . -name __pycache__ -type d -prune -exec rm -rf {} +
 
 ## CI matrix
 
-`test.yml` runs the test + lint steps on Python 3.9, 3.10, 3.11, and 3.12. Anything that
-depends on a 3.10+ syntax or stdlib feature breaks the 3.9 leg — see `references/pitfalls.md`.
+`test.yml` runs the test + lint steps across a Python version matrix defined in that workflow, with
+`>=3.9` as the floor (`pyproject.toml`). Anything that depends on a 3.10+ syntax or stdlib feature
+breaks the lowest leg — see `references/pitfalls.md`.

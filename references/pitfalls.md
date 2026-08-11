@@ -2,8 +2,8 @@
 
 ## 1. Python 3.9 is the floor — CI proves it on every PR
 
-`pyproject.toml` declares `python = ">=3.9"`, `.ruff.toml` sets `target-version = "py39"`, and
-`test.yml` runs the matrix `[3.9, 3.10, 3.11, 3.12]`. So:
+`pyproject.toml` declares `python = ">=3.9"` and `.ruff.toml` sets `target-version = "py39"`; the
+version matrix CI actually runs lives in `.github/workflows/test.yml`. So:
 
 - `Optional[X]` / `Union[X, Y]`, **not** `X | None` (PEP 604 is 3.10+)
 - `match` statements, `ParamSpec` defaults, and `itertools.pairwise` are unavailable
@@ -13,9 +13,9 @@ A 3.10-only construct passes locally on a newer interpreter and fails only the 3
 
 ## 2. `ruff format` is not a CI gate, and the tree is not format-clean
 
-CI runs `ruff check .` only. `ruff format --check .` currently reports 13 files that would be
-reformatted, including `server_client.py`'s test file and `helpers.py`. Running `ruff format .`
-repo-wide produces a thousand-line diff unrelated to your change. Format only what you touched.
+CI runs `ruff check .` only. Part of the tree has never been `ruff format`-ed, so running
+`ruff format .` repo-wide produces a large diff unrelated to your change. Format only what you
+touched; `poetry run ruff format --check .` lists the files that are already unformatted.
 
 ## 3. Async tests are skipped (with a warning), never executed, if you forget `@pytest.mark.asyncio`
 
