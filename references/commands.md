@@ -64,6 +64,7 @@ find . -name __pycache__ -type d -prune -exec rm -rf {} +
 
 ## CI matrix
 
-`test.yml` runs the test + lint steps across a Python version matrix defined in that workflow, with
-`>=3.9` as the floor (`pyproject.toml`). Anything that depends on a 3.10+ syntax or stdlib feature
-breaks the lowest leg — see `references/pitfalls.md`.
+`test.yml` runs the test + lint steps across a Python version matrix defined in that workflow. Check
+`pyproject.toml`'s `python` constraint for the supported range before using any version-dependent
+syntax or stdlib feature — anything newer than the floor breaks the lowest leg. See
+`references/pitfalls.md`.
