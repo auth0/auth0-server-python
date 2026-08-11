@@ -619,6 +619,25 @@ class TestVerify:
         assert data["scope"] == "openid profile email offline_access read:orders"
 
     @pytest.mark.asyncio
+    async def test_verify_injects_openid_when_caller_scope_omits_it(self, mocker):
+        client = _make_client()
+        claims = {"iss": ISSUER, "sub": "auth0|1", "sid": "s", "iat": 1_000}
+        self._patch_verify_deps(client, mocker, claims)
+        http = _mock_http(
+            client, 200, {"access_token": "at", "id_token": "idt", "expires_in": 3600}
+        )
+
+        await client.passwordless.verify(
+            VerifyPasswordlessOtpOptions(
+                connection="email",
+                email="user@example.com",
+                verification_code="123456",
+                scope="profile email",
+            )
+        )
+        assert http.post.call_args.kwargs["data"]["scope"] == "openid profile email"
+
+    @pytest.mark.asyncio
     async def test_verify_invalid_audience_maps_to_typed_error(self, mocker):
         client = _make_client()
         mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)

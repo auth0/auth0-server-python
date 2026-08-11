@@ -189,6 +189,9 @@ user = result["state_data"]["user"]
 >
 > This matters more than it looks: Auth0 treats magic-link `state` as a pure echo and does not validate it server-side, and the clicked link's query string can overwrite whatever the browser originally stored. The SDK's single-use, `state`-keyed transaction plus the exact-match `redirect_uri` are therefore the *entire* CSRF / authorization-code-interception defense on this flow — Auth0 will not catch a bypass for you.
 
+> [!NOTE]
+> If the callback fails (expired link, JWKS unavailable, a rejected ID token), have the user restart the flow from `start()` rather than retrying the same link — a failed callback does not guarantee the transaction was cleaned up, so re-submitting the same callback URL can produce a confusing error instead of a clear "session expired, please try again."
+
 ## 4. Custom scopes and audiences
 
 For OTP flows, pass `scope` and `audience` to `verify()`. These become the `/oauth/token` request parameters.
@@ -205,6 +208,8 @@ result = await server_client.passwordless.verify(
     store_options={"request": request, "response": response},
 )
 ```
+
+A caller-supplied OTP `scope` **replaces** the default wholesale rather than merging with it. The SDK re-injects `openid` when your scope omits it, for the same reason as magic link below: without it, Auth0 returns no ID token and `verify()` fails.
 
 For magic links, pass allowed authorization parameters through `auth_params` at `start()` time:
 
