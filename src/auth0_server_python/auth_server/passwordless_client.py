@@ -223,7 +223,10 @@ class PasswordlessClient:
             if options.connection == "email"
             else DEFAULT_PASSWORDLESS_SMS_SCOPE
         )
-        scope = options.scope or default_scope
+        # A caller-supplied scope replaces the default wholesale, so `openid`
+        # is re-injected the same way as the magic-link path: without it Auth0
+        # returns no ID token and verification fails with no claims to persist.
+        scope = self._ensure_openid_scope(options.scope or default_scope)
         body: dict[str, Any] = {
             "grant_type": PASSWORDLESS_OTP_GRANT_TYPE,
             "client_id": client._client_id,

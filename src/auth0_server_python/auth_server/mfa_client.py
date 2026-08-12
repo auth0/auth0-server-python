@@ -5,7 +5,8 @@ Handles Multi-Factor Authentication operations against the Auth0 MFA API.
 
 import json
 import time
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import httpx
 
@@ -66,7 +67,10 @@ class MfaClient:
         secret: str,
         state_store=None,
         state_identifier: str = "_a0_session",
-        headers: Optional[dict[str, str]] = None
+        headers: Optional[dict[str, str]] = None,
+        session_establisher: Optional[
+            Callable[..., Awaitable[None]]
+        ] = None,
     ):
         if callable(domain):
             self._domain = None
@@ -80,6 +84,7 @@ class MfaClient:
         self._state_store = state_store
         self._state_identifier = state_identifier
         self._headers = headers or {}
+        self._session_establisher = session_establisher
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with default headers injected."""
@@ -626,6 +631,14 @@ class MfaClient:
             )
 
             if not state_data:
+                if self._session_establisher:
+                    await self._session_establisher(
+                        verify_response=verify_response,
+                        audience=audience,
+                        scope=scope,
+                        store_options=store_options,
+                    )
+                    return
                 raise MfaVerifyError(
                     "No existing session found to update with MFA tokens"
                 )

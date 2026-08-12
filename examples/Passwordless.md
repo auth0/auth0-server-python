@@ -189,6 +189,9 @@ user = result["state_data"]["user"]
 >
 > This matters more than it looks: Auth0 treats magic-link `state` as a pure echo and does not validate it server-side, and the clicked link's query string can overwrite whatever the browser originally stored. The SDK's single-use, `state`-keyed transaction plus the exact-match `redirect_uri` are therefore the *entire* CSRF / authorization-code-interception defense on this flow — Auth0 will not catch a bypass for you.
 
+> [!NOTE]
+> If the callback fails (expired link, JWKS unavailable, a rejected ID token), have the user restart the flow from `start()` rather than retrying the same link — a failed callback does not guarantee the transaction was cleaned up, so re-submitting the same callback URL can produce a confusing error instead of a clear "session expired, please try again."
+
 ## 4. Custom scopes and audiences
 
 For OTP flows, pass `scope` and `audience` to `verify()`. These become the `/oauth/token` request parameters.
@@ -205,6 +208,8 @@ result = await server_client.passwordless.verify(
     store_options={"request": request, "response": response},
 )
 ```
+
+A caller-supplied OTP `scope` **replaces** the default wholesale rather than merging with it. The SDK re-injects `openid` when your scope omits it, for the same reason as magic link below: without it, Auth0 returns no ID token and `verify()` fails.
 
 For magic links, pass allowed authorization parameters through `auth_params` at `start()` time:
 
@@ -258,7 +263,7 @@ result = await server_client.passwordless.verify(
 
 ## Completing MFA during passwordless login
 
-Auth0 can require MFA during passwordless OTP verification. In that case, the SDK raises `MfaRequiredError` before it creates a session. Complete the MFA challenge with `server_client.mfa`, then persist the returned tokens according to your framework's session integration.
+Auth0 can require MFA during passwordless OTP verification. In that case, the SDK raises `MfaRequiredError` before it creates a session. Complete the MFA challenge with `server_client.mfa` and pass `persist=True` on verification so the SDK creates the session from the final MFA token response.
 
 ```python
 from auth0_server_python.error import MfaRequiredError
@@ -280,20 +285,19 @@ except MfaRequiredError as e:
         store_options={"request": request, "response": response},
     )
 
-    verify_response = await server_client.mfa.verify(
-        {"mfa_token": e.mfa_token, "otp": mfa_code},
+    await server_client.mfa.verify(
+        {"mfa_token": e.mfa_token, "otp": mfa_code, "persist": True},
         store_options={"request": request, "response": response},
     )
 
-    save_session_for_user(
-        access_token=verify_response.access_token,
-        id_token=verify_response.id_token,
-        refresh_token=verify_response.refresh_token,
+    session = await server_client.get_session(
+        store_options={"request": request, "response": response},
     )
+    user = session["user"]
 ```
 
 > [!NOTE]
-> Passwordless OTP MFA is like passkey-first MFA: there is no existing application session yet. Use the returned MFA tokens to create the session in your framework layer rather than trying to update a session that does not exist.
+> Passwordless OTP MFA is like passkey-first MFA: there is no existing application session until MFA verification succeeds. `persist=True` creates the initial SDK session when the MFA response includes an ID token.
 
 ## Error Handling
 

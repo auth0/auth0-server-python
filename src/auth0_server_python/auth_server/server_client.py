@@ -36,6 +36,7 @@ from auth0_server_python.auth_types import (
     LogoutOptions,
     LogoutTokenClaims,
     MfaRequirements,
+    MfaVerifyResponse,
     PasskeyAuthResponse,
     PasskeyLoginChallengeResponse,
     PasskeyLoginResult,
@@ -64,6 +65,7 @@ from auth0_server_python.error import (
     InvalidArgumentError,
     IssuerValidationError,
     MfaRequiredError,
+    MfaVerifyError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     OrganizationTokenValidationError,
@@ -213,6 +215,7 @@ class ServerClient(Generic[TStoreOptions]):
             state_store=self._state_store,
             state_identifier=self._state_identifier,
             headers=self._telemetry_headers,
+            session_establisher=self._establish_session_from_mfa_verify_response,
         )
 
         # Initialize Passwordless client (composes this client)
@@ -679,6 +682,65 @@ class ServerClient(Generic[TStoreOptions]):
             self._state_identifier, state_data, options=store_options
         )
         return state_data
+
+    async def _establish_session_from_mfa_verify_response(
+        self,
+        *,
+        verify_response: MfaVerifyResponse,
+        audience: str,
+        scope: Optional[str],
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """
+        Create the initial SDK session after first-login MFA completes.
+
+        Step-up MFA updates an existing session. First-login MFA flows such as
+        passwordless OTP and passkey can reach MFA before any SDK session exists,
+        so the final MFA token response must be validated and persisted as the
+        initial session.
+        """
+        token_response = verify_response.model_dump(exclude_none=True)
+        id_token = token_response.get("id_token")
+        if not id_token:
+            raise MfaVerifyError(
+                "MFA verification response did not include an ID token; cannot create a session"
+            )
+
+        origin_domain = await self._resolve_current_domain(store_options)
+        metadata = await self._get_oidc_metadata_cached(origin_domain)
+        origin_issuer = metadata.get("issuer")
+        jwks = await self._get_jwks_cached(origin_domain, metadata)
+
+        try:
+            claims = await self._verify_and_decode_jwt(
+                id_token, jwks, audience=self._client_id
+            )
+        except ValueError as e:
+            raise MfaVerifyError(str(e)) from e
+        except jwt.InvalidAudienceError as e:
+            raise MfaVerifyError(
+                "ID token audience mismatch. Ensure your client_id is configured correctly."
+            ) from e
+        except jwt.InvalidTokenError as e:
+            raise MfaVerifyError(f"ID token verification failed: {str(e)}") from e
+
+        token_issuer = claims.get("iss", "")
+        if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
+            raise MfaVerifyError(
+                "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+            )
+
+        user_claims = UserClaims.model_validate(claims)
+        await self._persist_session_from_token_response(
+            token_response=token_response,
+            user_claims=user_claims,
+            origin_domain=origin_domain,
+            audience=audience,
+            session_expires_at=user_claims.session_expiry,
+            issued_at=claims.get("iat"),
+            id_token_claims=claims,
+            store_options=store_options,
+        )
 
     async def complete_interactive_login(
         self,
