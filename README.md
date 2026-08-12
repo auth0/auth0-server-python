@@ -23,7 +23,7 @@ pip install auth0-server-python
 If you’re using Poetry:
 
 ```shell
-poetry install auth0-server-python
+poetry add auth0-server-python
 ```
 
 ### 2. Create the Auth0 SDK client
@@ -40,7 +40,7 @@ auth0 = ServerClient(
     client_secret='<AUTH0_CLIENT_SECRET>',
     secret='<AUTH0_SECRET>',
     authorization_params= {
-      redirect_uri: '<AUTH0_REDIRECT_URI>',
+      'redirect_uri': '<AUTH0_REDIRECT_URI>',
     }
 )
 ```

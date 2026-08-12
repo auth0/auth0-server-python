@@ -201,7 +201,7 @@ from auth0_server_python.error import CustomTokenExchangeError
 result = await auth0.request_session_transfer_token(
     subject_token=subject_token,            # your proof of which customer to impersonate
     subject_token_type="urn:acme:customer-subject",
-    organization=None,                      # optional; forwarded to the redirect
+    organization=None,                      # optional, sent on the mint request (separate from the redirect)
     store_options={"request": request, "response": None},
 )
 
@@ -216,7 +216,14 @@ return RedirectResponse(redirect_url)       # your framework performs the redire
 
 > **NOTE**: An actor is mandatory - an STT is only issued when the Action set one. By default the SDK sources the actor from the logged-in agent's session ID token, refreshing it when expired. If the agent is not logged in (no usable session ID token and none can be refreshed), the call fails client-side with `ACTOR_UNAVAILABLE` before any network request.
 
-> **NOTE**: To use your own actor token instead of the session, pass `actor_token` (and optionally `actor_token_type`, which defaults to the ID token URN). An explicit `actor_token` takes precedence and the session is not read at all. It must be an **unexpired, asymmetrically-signed JWT** (RS256 or PS256) - an Auth0 session ID token satisfies this; an HS256 or expired token is rejected by the server.
+> **NOTE**: To use your own actor token instead of the session, pass `actor_token` (and optionally `actor_token_type`, which defaults to the ID token URN). An explicit `actor_token` takes precedence and the session is not read at all. When `actor_token_type` is the ID token URN (the default), Auth0 validates the token, so it must be:
+>
+> - Signed with RS256 or PS256 (HS256 is rejected, it uses a shared secret).
+> - Unexpired, and carrying `sub`, `iss`, `exp`, and `iat`.
+> - Issued to the same client making the exchange (its `aud` must be that client's ID).
+> - Belonging to a user who still exists and is not blocked.
+>
+> An Auth0 ID token from the agent's own session on this client satisfies all of these. A token that fails any of them is rejected by the server.
 >
 > ```python
 > result = await auth0.request_session_transfer_token(
@@ -229,7 +236,7 @@ return RedirectResponse(redirect_url)       # your framework performs the redire
 
 ### Target: forward the STT to `/authorize`
 
-On the target, the STT rides through your normal login. `start_interactive_login` forwards arbitrary authorization parameters to `/authorize`, so your login route just passes `session_transfer_token` (and `organization`, when the STT was issued in an org context) straight through:
+On the target, the STT rides through your normal login. `start_interactive_login` forwards arbitrary authorization parameters to `/authorize`, so your login route just passes `session_transfer_token` (and `organization`, when you want the target login org-scoped) straight through:
 
 ```python
 from auth0_server_python.auth_types import StartInteractiveLoginOptions
@@ -237,7 +244,7 @@ from auth0_server_python.auth_types import StartInteractiveLoginOptions
 url = await auth0.start_interactive_login(
     StartInteractiveLoginOptions(authorization_params={
         "session_transfer_token": request.query_params["session_transfer_token"],
-        # "organization": org,   # when the STT was issued in an org context
+        # "organization": org,   # when you want the target login org-scoped
     }),
     store_options={"request": request, "response": None},
 )

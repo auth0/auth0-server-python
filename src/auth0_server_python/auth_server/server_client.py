@@ -2882,6 +2882,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             CustomTokenExchangeError: If no actor can be resolved or the exchange fails
+            InvalidArgumentError: If organization is provided but blank
         """
         try:
             # Validate the subject up front - before any session read/refresh/network.
@@ -2895,6 +2896,9 @@ class ServerClient(Generic[TStoreOptions]):
                     CustomTokenExchangeErrorCode.INVALID_TOKEN_FORMAT,
                     "subject_token_type cannot be empty or whitespace-only"
                 )
+
+            if organization is not None and not organization.strip():
+                raise InvalidArgumentError("organization", "organization must not be blank")
 
             actor_token, actor_token_type = await self._resolve_actor_token(
                 actor_token, actor_token_type, store_options)
@@ -2924,7 +2928,7 @@ class ServerClient(Generic[TStoreOptions]):
                 token_type=response.token_type,
                 scope=response.scope,
             )
-        except (CustomTokenExchangeError, ApiError):
+        except (CustomTokenExchangeError, InvalidArgumentError, ApiError):
             raise
         except Exception as e:
             raise CustomTokenExchangeError(

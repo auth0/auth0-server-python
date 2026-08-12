@@ -15,7 +15,7 @@ Before using backchannel authentication:
 ### Initiating Backchannel Authentication
 
 ```python
-from auth0_server_python import ServerClient
+from auth0_server_python.auth_server import ServerClient
 
 # Initialize the Auth0 client
 auth0 = ServerClient(
@@ -101,7 +101,7 @@ Read more above in [Configuring the Store](./ConfigureStore.md).
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from auth0_server_python import ServerClient
+from auth0_server_python.auth_server import ServerClient
 
 app = FastAPI()
 
