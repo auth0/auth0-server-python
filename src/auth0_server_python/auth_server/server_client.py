@@ -20,7 +20,7 @@ from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import ValidationError
 
 from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
-from auth0_server_python.auth_server.mfa_client import MfaClient
+from auth0_server_python.auth_server.mfa_client import DEFAULT_MFA_TOKEN_TTL, MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.passwordless_client import PasswordlessClient
 from auth0_server_python.auth_types import (
@@ -125,6 +125,7 @@ class ServerClient(Generic[TStoreOptions]):
         authorization_params: Optional[dict[str, Any]] = None,
         pushed_authorization_requests: bool = False,
         organization: Optional[str] = None,
+        mfa_token_ttl: int = DEFAULT_MFA_TOKEN_TTL,
     ):
         """
         Initialize the Auth0 server client.
@@ -144,6 +145,13 @@ class ServerClient(Generic[TStoreOptions]):
             organization: Default organization for all login flows from this client.
                 Can be an org ID (e.g. 'org_abc123') or an org name (e.g. 'acme-corp').
                 Per-login values passed in StartInteractiveLoginOptions always override this.
+            mfa_token_ttl: Seconds an encrypted MFA token remains valid before
+                `mfa.verify()`/`mfa.challenge_authenticator()` reject it as expired.
+                Defaults to 300 (5 minutes). Increase for authenticator flows that
+                need more time (e.g. OOB push approval on a slow connection).
+
+        Raises:
+            ConfigurationError: If `mfa_token_ttl` is not a positive number of seconds.
         """
         if not secret:
             raise MissingRequiredArgumentError("secret")
@@ -216,6 +224,7 @@ class ServerClient(Generic[TStoreOptions]):
             state_identifier=self._state_identifier,
             headers=self._telemetry_headers,
             session_establisher=self._establish_session_from_mfa_verify_response,
+            mfa_token_ttl=mfa_token_ttl,
         )
 
         # Initialize Passwordless client (composes this client)
@@ -721,6 +730,8 @@ class ServerClient(Generic[TStoreOptions]):
             raise MfaVerifyError(
                 "ID token audience mismatch. Ensure your client_id is configured correctly."
             ) from e
+        except jwt.ExpiredSignatureError as e:
+            raise MfaVerifyError(f"ID token has expired: {str(e)}") from e
         except jwt.InvalidTokenError as e:
             raise MfaVerifyError(f"ID token verification failed: {str(e)}") from e
 

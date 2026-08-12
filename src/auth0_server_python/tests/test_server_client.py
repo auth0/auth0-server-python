@@ -80,6 +80,31 @@ async def test_init_no_secret_raises():
 
 
 @pytest.mark.asyncio
+async def test_mfa_token_ttl_propagates_to_mfa_client():
+    """A custom mfa_token_ttl reaches the internal MfaClient, overriding the default."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="some-secret",
+        mfa_token_ttl=900,
+    )
+    assert client._mfa_client._mfa_token_ttl == 900
+
+
+@pytest.mark.asyncio
+async def test_mfa_token_ttl_non_positive_rejected():
+    with pytest.raises(ConfigurationError):
+        ServerClient(
+            domain="auth0.local",
+            client_id="<client_id>",
+            client_secret="<client_secret>",
+            secret="some-secret",
+            mfa_token_ttl=-1,
+        )
+
+
+@pytest.mark.asyncio
 async def test_start_interactive_login_no_redirect_uri(mocker):
     client = ServerClient(
         domain="auth0.local",

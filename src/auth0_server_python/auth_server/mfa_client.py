@@ -29,6 +29,7 @@ from auth0_server_python.auth_types import (
 )
 from auth0_server_python.encryption.encrypt import decrypt, encrypt
 from auth0_server_python.error import (
+    ConfigurationError,
     DomainResolverError,
     MfaChallengeError,
     MfaEnrollmentError,
@@ -71,6 +72,7 @@ class MfaClient:
         session_establisher: Optional[
             Callable[..., Awaitable[None]]
         ] = None,
+        mfa_token_ttl: int = DEFAULT_MFA_TOKEN_TTL,
     ):
         if callable(domain):
             self._domain = None
@@ -85,6 +87,9 @@ class MfaClient:
         self._state_identifier = state_identifier
         self._headers = headers or {}
         self._session_establisher = session_establisher
+        if mfa_token_ttl <= 0:
+            raise ConfigurationError("mfa_token_ttl must be a positive number of seconds")
+        self._mfa_token_ttl = mfa_token_ttl
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with default headers injected."""
@@ -142,7 +147,7 @@ class MfaClient:
             raise MfaTokenInvalidError()
 
         elapsed = int(time.time()) - context.created_at
-        if elapsed > DEFAULT_MFA_TOKEN_TTL:
+        if elapsed > self._mfa_token_ttl:
             raise MfaTokenExpiredError()
 
         return context

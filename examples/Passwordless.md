@@ -377,6 +377,7 @@ Because a 429 that carries an explicit Auth0 `error` reports that server code, `
 - `invalid_grant` - the OTP is invalid, expired, or already used
 - `invalid_issuer` - returned ID token issuer does not match your configured Auth0 domain
 - `invalid_audience` - returned ID token audience does not match the SDK client
+- `token_expired` - the returned ID token's signature has already expired
 - `discovery_error` - the SDK could not load authorization server metadata
 - `passwordless_start_failed` - SDK-side start failure
 - `passwordless_verify_failed` - SDK-side verify failure

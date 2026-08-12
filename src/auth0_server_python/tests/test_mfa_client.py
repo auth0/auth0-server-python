@@ -18,6 +18,7 @@ from auth0_server_python.auth_types import (
     OtpEnrollmentResponse,
 )
 from auth0_server_python.error import (
+    ConfigurationError,
     DomainResolverError,
     MfaChallengeError,
     MfaEnrollmentError,
@@ -194,6 +195,34 @@ class TestMfaTokenEncryption:
                      return_value=1000 + DEFAULT_MFA_TOKEN_TTL + 1)
         with pytest.raises(MfaTokenExpiredError):
             client.decrypt_mfa_token(encrypted)
+
+    def test_custom_mfa_token_ttl_is_honored(self, mocker):
+        client = MfaClient(
+            domain=DOMAIN,
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            secret=SECRET,
+            mfa_token_ttl=10,
+        )
+        mocker.patch("auth0_server_python.auth_server.mfa_client.time.time", return_value=1000)
+        encrypted = client._encrypt_mfa_token(raw_mfa_token="raw", audience="aud", scope="scope")
+
+        mocker.patch("auth0_server_python.auth_server.mfa_client.time.time", return_value=1005)
+        assert client.decrypt_mfa_token(encrypted).mfa_token == "raw"
+
+        mocker.patch("auth0_server_python.auth_server.mfa_client.time.time", return_value=1011)
+        with pytest.raises(MfaTokenExpiredError):
+            client.decrypt_mfa_token(encrypted)
+
+    def test_non_positive_mfa_token_ttl_rejected(self):
+        with pytest.raises(ConfigurationError):
+            MfaClient(
+                domain=DOMAIN,
+                client_id=CLIENT_ID,
+                client_secret=CLIENT_SECRET,
+                secret=SECRET,
+                mfa_token_ttl=0,
+            )
 
     def test_decrypt_invalid_token_raises(self):
         client = _make_client()

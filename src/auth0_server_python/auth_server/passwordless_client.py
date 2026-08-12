@@ -421,8 +421,14 @@ class PasswordlessClient:
                 "ID token audience mismatch. Ensure your client_id is configured correctly.",
                 e,
             )
+        except jwt.ExpiredSignatureError as e:
+            raise PasswordlessVerifyError(
+                PasswordlessErrorCode.TOKEN_EXPIRED,
+                f"ID token has expired: {str(e)}",
+                e,
+            )
         except jwt.InvalidTokenError as e:
-            # Covers expired signature, bad signature, and other token defects.
+            # Covers bad signature and other token defects.
             raise PasswordlessVerifyError(
                 PasswordlessErrorCode.VERIFY_FAILED,
                 f"ID token verification failed: {str(e)}",

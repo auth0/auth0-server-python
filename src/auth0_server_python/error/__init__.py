@@ -409,6 +409,7 @@ class PasswordlessErrorCode:
     INVALID_GRANT = "invalid_grant"
     INVALID_ISSUER = "invalid_issuer"
     INVALID_AUDIENCE = "invalid_audience"
+    TOKEN_EXPIRED = "token_expired"
     DISCOVERY_ERROR = "discovery_error"
     # SDK-side
     START_FAILED = "passwordless_start_failed"

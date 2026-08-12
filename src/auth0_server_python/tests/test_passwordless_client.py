@@ -23,6 +23,7 @@ from auth0_server_python.error import (
     InvalidArgumentError,
     IssuerValidationError,
     MfaRequiredError,
+    MfaVerifyError,
     MissingRequiredArgumentError,
     PasswordlessStartError,
     PasswordlessVerifyError,
@@ -663,6 +664,31 @@ class TestVerify:
         client._state_store.set.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_verify_expired_id_token_maps_to_typed_error(self, mocker):
+        client = _make_client()
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        mocker.patch.object(
+            client,
+            "_get_jwks_cached",
+            return_value={"keys": [{"kty": "RSA", "kid": "k1"}]},
+        )
+        mocker.patch.object(
+            client,
+            "_verify_and_decode_jwt",
+            side_effect=jwt.ExpiredSignatureError("signature has expired"),
+        )
+        _mock_http(client, 200, {"access_token": "at", "id_token": "idt", "expires_in": 3600})
+
+        with pytest.raises(PasswordlessVerifyError) as exc:
+            await client.passwordless.verify(
+                VerifyPasswordlessOtpOptions(
+                    connection="email", email="user@example.com", verification_code="123456"
+                )
+            )
+        assert exc.value.code == "token_expired"
+        client._state_store.set.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_client_ip_forwarded_on_verify(self, mocker):
         client = _make_client()
         claims = {"iss": ISSUER, "sub": "auth0|1", "sid": "s", "iat": 1_000}
@@ -918,6 +944,60 @@ class TestVerify:
         assert saved_state.id_token == "mfa_idt"
         assert saved_state.internal.sid == "SID-MFA"
         assert saved_state.token_sets[0].access_token == "mfa_at"
+
+    @pytest.mark.asyncio
+    async def test_mfa_verify_persist_expired_id_token_maps_to_typed_error(self, mocker):
+        client = _make_client()
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        mocker.patch.object(
+            client,
+            "_get_jwks_cached",
+            return_value={"keys": [{"kty": "RSA", "kid": "k1"}]},
+        )
+        mocker.patch.object(
+            client,
+            "_verify_and_decode_jwt",
+            side_effect=jwt.ExpiredSignatureError("signature has expired"),
+        )
+        _mock_http(
+            client,
+            403,
+            {
+                "error": "mfa_required",
+                "error_description": "Additional factor required",
+                "mfa_token": "raw_server_mfa_token",
+            },
+        )
+
+        with pytest.raises(MfaRequiredError) as exc:
+            await client.passwordless.verify(
+                VerifyPasswordlessOtpOptions(
+                    connection="email", email="user@example.com", verification_code="123456"
+                ),
+                store_options={},
+            )
+
+        client._state_store.get = AsyncMock(return_value=None)
+        mfa_response = AsyncMock()
+        mfa_response.status_code = 200
+        mfa_response.headers = {}
+        mfa_response.json = MagicMock(
+            return_value={
+                "access_token": "mfa_at",
+                "id_token": "mfa_idt",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "scope": "openid profile email",
+            }
+        )
+        mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mfa_response)
+
+        with pytest.raises(MfaVerifyError, match="expired"):
+            await client.mfa.verify(
+                {"mfa_token": exc.value.mfa_token, "otp": "654321", "persist": True},
+                store_options={},
+            )
+        client._state_store.set.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_verify_mfa_required_without_token_falls_through(self, mocker):
