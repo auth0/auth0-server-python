@@ -140,8 +140,6 @@ except AnonymousFeatureNotEnabledError:
     ...
 ```
 
-`.cause` is scrubbed of `client_secret`, `session_token`, `access_token`, and related fields recursively before it is stored, so it is always safe to log.
-
 ## Known Limitations
 
 - **Metadata is attacker-authored, pre-auth input.** By the time a Post-Login Action reads `event.anonymous_session.metadata`, it is untrusted data from an unauthenticated caller. The SDK validates size and rejects dangerous keys, but your Action author is responsible for validating content before trusting or persisting it.

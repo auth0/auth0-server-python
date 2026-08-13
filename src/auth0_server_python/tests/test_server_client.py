@@ -8953,17 +8953,16 @@ async def test_complete_interactive_login_milliseconds_ceiling_fails_open(mocker
 
 
 # =============================================================================
-# ANONYMOUS SESSIONS — WIRING AND LOGIN-INJECTION TESTS
+# ANONYMOUS SESSIONS - WIRING AND LOGIN-INJECTION TESTS
 # =============================================================================
 
 
 class _OneSlotStore:
     """
-    Models StatelessStateStore: a store identifier is used only as an
-    encryption salt, not a location key — one physical slot per instance.
-    AsyncMock cannot exercise this collision because it treats every
-    identifier as a distinct key (see reviews/auth0-server-python/
-    store-identifier-location-contract-collision.md).
+    Models a store where a store identifier is used only as an encryption
+    salt, not a location key. One physical slot per instance. AsyncMock
+    cannot exercise this collision because it treats every identifier as a
+    distinct key.
     """
 
     def __init__(self):
@@ -9011,7 +9010,7 @@ async def test_server_client_anonymous_property():
 
 @pytest.mark.asyncio
 async def test_anonymous_client_receives_own_store_not_state_store():
-    """D3a: the anonymous client must never share the authenticated state store instance."""
+    """The anonymous client must never share the authenticated state store instance."""
     state_store = AsyncMock()
     anon_store = _OneSlotStore()
     client = ServerClient(
@@ -9151,7 +9150,7 @@ async def test_start_interactive_login_absent_session_no_param(mocker):
 
 @pytest.mark.asyncio
 async def test_start_interactive_login_malformed_anonymous_token_denies_link_allows_login(mocker):
-    """Undecryptable stored token: deny the link, never abort the login (D1 §5 step 5)."""
+    """Undecryptable stored token: deny the link, never abort the login."""
     anon_store = _OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": "not-a-valid-jwe"})
     client = ServerClient(
@@ -9180,7 +9179,7 @@ async def test_start_interactive_login_malformed_anonymous_token_denies_link_all
 
 @pytest.mark.asyncio
 async def test_start_interactive_login_suppresses_injection_on_par_branch(mocker):
-    """PAR is not supported for anonymous sessions — the whole auth_params dict is POSTed there."""
+    """PAR is not supported for anonymous sessions."""
     secret = "a-test-secret-with-enough-length"
     anon_store = _OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
@@ -9233,10 +9232,10 @@ async def test_start_interactive_login_suppresses_injection_on_par_branch(mocker
 @pytest.mark.asyncio
 async def test_start_interactive_login_constructor_fixation_blocked_no_active_session():
     """
-    D1 — the exact vector: a caller supplies session_token via constructor
-    authorization_params, with NO active anonymous session. INTERNAL_AUTHORIZE_PARAMS
-    alone cannot block this (it only filters per-call options.authorization_params);
-    the unconditional pop() at the injection site must.
+    The exact vector where a caller supplies session_token via constructor
+    authorization_params, with no active anonymous session. INTERNAL_AUTHORIZE_PARAMS
+    alone cannot block this, since it only filters per-call options.authorization_params.
+    The unconditional pop() at the injection site must.
     """
     assert "session_token" in INTERNAL_AUTHORIZE_PARAMS  # belt-and-braces still present
 
@@ -9337,15 +9336,15 @@ async def test_start_interactive_login_does_not_clobber_organization_or_invitati
     assert captured.get("session_token") == "ANON_TOKEN_1"
 
 
-# ── Store-collision regression (D3a / B7 / tracker §7.6) ────────────────────
+# ── Store-collision regression ─────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_anonymous_write_cannot_destroy_authenticated_session_on_shared_store():
     """
-    D3a proof: when the anonymous client is configured with its OWN store
-    instance (as constructed), the authenticated session on a separate store
-    instance is provably untouched — the separate-instance contract holds.
+    When the anonymous client is configured with its own store instance,
+    the authenticated session on a separate store instance is provably
+    untouched. The separate-instance contract holds.
     """
     shared_store = _OneSlotStore()
     shared_store.slot = ("_a0_session", {"user": {"sub": "real_user"}})
@@ -9375,8 +9374,7 @@ async def test_anonymous_write_cannot_destroy_authenticated_session_on_shared_st
 async def test_missing_anonymous_store_fails_closed_never_falls_back_to_state_store():
     """
     If an integrator forgets anonymous_store, the client must raise before any
-    write — never silently write anonymous state into ServerClient's state_store
-    (which is exactly the collision D3a prevents).
+    write, never silently write anonymous state into ServerClient's state_store.
     """
     shared_store = _OneSlotStore()
     shared_store.slot = ("_a0_session", {"user": {"sub": "real_user"}})
@@ -9397,7 +9395,7 @@ async def test_missing_anonymous_store_fails_closed_never_falls_back_to_state_st
 
 @pytest.mark.asyncio
 async def test_get_session_and_get_user_unaffected_by_active_anonymous_session():
-    """Anonymous state never touches _a0_session — get_session()/get_user() see no new keys."""
+    """Anonymous state never touches _a0_session. get_session()/get_user() see no new keys."""
     secret = "a-test-secret-with-enough-length"
     anon_store = _OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})

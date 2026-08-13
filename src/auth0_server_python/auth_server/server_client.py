@@ -138,13 +138,12 @@ class ServerClient(Generic[TStoreOptions]):
             transaction_store: Custom transaction store (defaults to MemoryTransactionStore)
             state_store: Custom state store (defaults to MemoryStateStore)
             anonymous_store: Store for anonymous session state (server_client.anonymous.*).
-                Must be a distinct store *instance* from state_store — not merely a
-                different identifier. On the default auth0-fastapi cookie stores, a
-                store identifier is used only as an encryption salt, not a location
-                key, so writing anonymous state through state_store would silently
-                overwrite the authenticated session cookie. When omitted, the
-                `.anonymous` sub-client fails closed on first use rather than
-                sharing state_store implicitly.
+                Must be a distinct store *instance* from state_store, not merely a
+                different identifier. On a store where the identifier is used only
+                as an encryption salt rather than a location key, writing anonymous
+                state through state_store would silently overwrite the authenticated
+                session cookie. When omitted, the `.anonymous` sub-client fails
+                closed on first use rather than sharing state_store implicitly.
             transaction_identifier: Identifier for transaction data
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
@@ -571,7 +570,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # session_token is sourced only from the SDK's own encrypted anonymous
         # store, never from a caller. INTERNAL_AUTHORIZE_PARAMS alone isn't
-        # enough — auth_params is seeded unfiltered from the constructor
+        # enough, since auth_params is seeded unfiltered from the constructor
         # defaults above, so a caller-supplied value would survive that filter.
         # Suppressed entirely on the PAR branch below (unsupported there).
         auth_params.pop("session_token", None)

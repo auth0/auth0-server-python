@@ -864,12 +864,13 @@ class AnonymousSession(BaseModel):
     """
     Public result of create_session() / the renewal ladder.
 
-    Never exposes the raw session token — that stays inside the encrypted
+    Never exposes the raw session token, which stays inside the encrypted
     AnonymousSessionContext, server-side only.
     """
 
-    sub: str
-    session_id: str
+    # Optional: the platform's /anonymous/token response doesn't always include these.
+    sub: Optional[str] = None
+    session_id: Optional[str] = None
     access_token: str
     expires_at: int
     session_expires_at: Optional[int] = None
@@ -879,9 +880,9 @@ class AnonymousSession(BaseModel):
 
 class AnonymousSessionIntrospection(BaseModel):
     """
-    Result of introspect(). Deliberately minimal and lenient — the platform's
-    /anonymous/userinfo response shape is unconfirmed; unrecognized fields
-    are ignored rather than rejected.
+    Result of introspect(). Deliberately minimal and lenient, since the
+    platform's /anonymous/userinfo response shape is unconfirmed.
+    Unrecognized fields are ignored rather than rejected.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -907,13 +908,14 @@ class AnonymousSessionContext(BaseModel):
     """
     Internal context stored inside the encrypted anonymous session record.
 
-    No `extra` config — decrypt fails closed on a tampered or malformed
+    No `extra` config, so decrypt fails closed on a tampered or malformed
     payload rather than silently yielding a partial object.
     """
 
     session_token: str
-    sub: str
-    session_id: str
+    # sub/session_id: optional for the same reason as AnonymousSession above.
+    sub: Optional[str] = None
+    session_id: Optional[str] = None
     access_token: str
     expires_at: int
     session_expires_at: Optional[int] = None

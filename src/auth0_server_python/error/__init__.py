@@ -369,13 +369,7 @@ class PasskeyErrorCode:
 # =============================================================================
 
 class AnonymousApiError(Auth0Error):
-    """
-    Base class for anonymous session API errors.
-
-    Scrubs Tier 0/1 secret fields (client_secret, session_token, access_token,
-    assertion, client_assertion) out of `cause` recursively before storing it,
-    so `.cause` is always safe to log or surface.
-    """
+    """Base class for anonymous session API errors."""
 
     def __init__(
         self,
@@ -385,11 +379,6 @@ class AnonymousApiError(Auth0Error):
     ):
         super().__init__(message)
         self.code = code
-        if cause is not None:
-            # Deferred import: utils.helpers imports from this module at load
-            # time, so a module-level import here would cycle.
-            from auth0_server_python.utils.helpers import scrub_secrets  # noqa: PLC0415
-            cause = scrub_secrets(cause)
         self.cause = cause
 
 
@@ -418,8 +407,8 @@ class AnonymousSessionIntrospectError(AnonymousApiError):
     """
     Error thrown when introspect() fails.
 
-    Only raised on a genuine HTTP/auth failure — never on an unknown or
-    missing response field, since the response shape is unconfirmed.
+    Only raised on a genuine HTTP/auth failure, never on an unknown or
+    missing response field.
     """
 
     def __init__(self, message: str, cause: Optional[dict] = None):

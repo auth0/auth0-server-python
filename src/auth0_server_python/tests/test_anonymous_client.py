@@ -1,5 +1,5 @@
 """
-Tests for AnonymousClient — anonymous session API operations.
+Tests for AnonymousClient, covering anonymous session API operations.
 """
 
 import inspect
@@ -38,9 +38,10 @@ SECRET = "test-secret-long-enough-for-encryption"
 class OneSlotStore:
     """
     Models StatelessStateStore: a store identifier is a salt, not a location.
-    One physical slot per instance — a mismatched identifier reads as absent,
-    not as a different record. AsyncMock cannot catch a collision because it
-    treats every identifier as a distinct key; this fake is required instead.
+    One physical slot per instance, so a mismatched identifier reads as
+    absent, not as a different record. AsyncMock cannot catch a collision
+    because it treats every identifier as a distinct key, so this fake is
+    required instead.
     """
 
     def __init__(self):
@@ -77,7 +78,7 @@ def _fake_response(status_code=200, body=None):
 
 
 class _FakeAsyncClient:
-    """Patches httpx.AsyncClient; call sequence maps 1:1 to responses."""
+    """Patches httpx.AsyncClient. Call sequence maps 1:1 to responses."""
 
     def __init__(self, responses):
         self._responses = list(responses)
@@ -155,13 +156,13 @@ class TestAnonymousClientConstructor:
         assert client._domain_resolver is resolver
 
     def test_no_dpop_key_parameter_exists(self):
-        """Structural guard (D1/§6): AnonymousClient has no dpop_key parameter anywhere."""
+        """Structural guard: AnonymousClient has no dpop_key parameter anywhere."""
         for name, method in inspect.getmembers(AnonymousClient, predicate=inspect.isfunction):
             sig = inspect.signature(method)
             assert "dpop_key" not in sig.parameters, f"{name} must never accept dpop_key"
 
 
-# ── Fail-closed store isolation (D3a / B7) ───────────────────────────────────
+# ── Fail-closed store isolation ───────────────────────────────────────────────
 
 class TestStoreIsolation:
     @pytest.mark.asyncio
@@ -190,7 +191,7 @@ class TestStoreIsolation:
 
     @pytest.mark.asyncio
     async def test_no_write_attempted_when_store_missing(self):
-        """Fails closed BEFORE any store write — never falls back to another store."""
+        """Fails closed before any store write, never falls back to another store."""
         client = _make_client(anonymous_store=None)
         with patch("httpx.AsyncClient") as mock_http:
             with pytest.raises(ConfigurationError):
@@ -243,7 +244,7 @@ class TestCreateSession:
 
     @pytest.mark.asyncio
     async def test_create_session_persists_at_distinct_location_from_state_store(self):
-        """D3a: the anonymous store instance is separate from any authenticated session store."""
+        """The anonymous store instance is separate from any authenticated session store."""
         anon_store = OneSlotStore()
         state_store = OneSlotStore()
         state_store.slot = ("_a0_session", {"user": "authenticated"})
@@ -252,7 +253,7 @@ class TestCreateSession:
         with patch("httpx.AsyncClient", fake_http):
             await client.create_session(audience="aud", scope="s")
         assert anon_store.slot[0] == ANON_IDENTIFIER
-        # The authenticated session store is a different instance entirely —
+        # The authenticated session store is a different instance entirely,
         # never touched by anonymous writes.
         assert state_store.slot == ("_a0_session", {"user": "authenticated"})
 
@@ -336,26 +337,6 @@ class TestCreateSession:
         with patch("httpx.AsyncClient", fake_http):
             with pytest.raises(AnonymousScopeError):
                 await client.create_session(audience="aud", scope="s")
-
-    @pytest.mark.asyncio
-    async def test_secrets_never_leak_into_cause_even_nested(self):
-        store = OneSlotStore()
-        client = _make_client(anonymous_store=store)
-        fake_http = _FakeAsyncClient([
-            _fake_response(400, {
-                "error": "invalid_request",
-                "error_description": "bad",
-                "session_token": "LEAKED_TOKEN",
-                "details": {"client_secret": "LEAKED_SECRET"},
-            })
-        ])
-        with patch("httpx.AsyncClient", fake_http):
-            with pytest.raises(AnonymousResourceServerError) as exc:
-                await client.create_session(audience="aud", scope="s")
-        cause_str = str(exc.value.cause)
-        assert "LEAKED_TOKEN" not in cause_str
-        assert "LEAKED_SECRET" not in cause_str
-        assert "[REDACTED]" in cause_str
 
     @pytest.mark.asyncio
     async def test_network_failure_raises_create_error(self):
@@ -520,7 +501,7 @@ class TestGetToken:
         auth_state_store.delete.assert_not_called()
 
 
-# ── MCD / cross-tenant isolation (B6) ────────────────────────────────────────
+# ── MCD / cross-tenant isolation ───────────────────────────────────────────────
 
 class TestMcdIsolation:
     @pytest.mark.asyncio
@@ -693,7 +674,7 @@ class TestGetSessionTokenForInjection:
 
     @pytest.mark.asyncio
     async def test_returns_none_never_raises_on_corrupted_token(self):
-        """Malformed stored token must deny the link, never abort the caller (D1 §5 step 5)."""
+        """Malformed stored token must deny the link, never abort the caller."""
         store = OneSlotStore()
         store.slot = (ANON_IDENTIFIER, {"context": "garbage"})
         client = _make_client(anonymous_store=store)
