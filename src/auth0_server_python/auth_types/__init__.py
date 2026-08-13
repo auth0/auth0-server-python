@@ -222,6 +222,16 @@ class LogoutOptions(BaseModel):
     return_to: Optional[str] = None
 
 
+class CreateAnonymousSessionOptions(BaseModel):
+    """Options bundle for create_session(): audience, scope, and metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    audience: Optional[str] = None
+    scope: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
 class AuthorizationParameters(BaseModel):
     """
     Parameters used in authorization requests.

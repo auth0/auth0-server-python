@@ -122,14 +122,14 @@ All anonymous session errors subclass `AnonymousApiError`, carrying a `.code` yo
 
 ```python
 from auth0_server_python.error import (
-    AnonymousFeatureNotEnabledError,   # tenant flag is off
-    AnonymousClientNotEnabledError,    # client not enabled for anonymous sessions
-    AnonymousClientNotSupportedError,  # e.g. a DPoP-mandated client — see Known Limitations
-    AnonymousResourceServerError,      # audience not a valid/enabled resource server
-    AnonymousScopeError,               # scope not granted to anonymous callers
-    AnonymousSessionCreateError,       # base class for create/re-mint failures
-    AnonymousTokenError,               # get_token() failure with no active session
-    AnonymousSessionIntrospectError,
+    AnonymousFeatureNotEnabledError,
+    AnonymousClientNotEnabledError,
+    AnonymousClientNotSupportedError,
+    AnonymousResourceServerError,
+    AnonymousScopeError,
+    AnonymousCreateError,
+    AnonymousTokenError,
+    AnonymousIntrospectError,
     AnonymousLogoutError,
 )
 

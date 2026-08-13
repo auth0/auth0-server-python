@@ -13,16 +13,19 @@ from auth0_server_python.auth_server.anonymous_client import (
     ANON_IDENTIFIER,
     AnonymousClient,
 )
-from auth0_server_python.auth_types import AnonymousSessionContext
+from auth0_server_python.auth_types import (
+    AnonymousSessionContext,
+    CreateAnonymousSessionOptions,
+)
 from auth0_server_python.encryption.encrypt import encrypt
 from auth0_server_python.error import (
     AnonymousClientNotEnabledError,
     AnonymousClientNotSupportedError,
+    AnonymousCreateError,
     AnonymousFeatureNotEnabledError,
+    AnonymousIntrospectError,
     AnonymousResourceServerError,
     AnonymousScopeError,
-    AnonymousSessionCreateError,
-    AnonymousSessionIntrospectError,
     AnonymousTokenError,
     ConfigurationError,
     DomainResolverError,
@@ -263,7 +266,7 @@ class TestCreateSession:
         client = _make_client(anonymous_store=store)
         oversized = {"blob": "x" * 2000}
         with patch("httpx.AsyncClient") as mock_http:
-            with pytest.raises(AnonymousSessionCreateError, match="1KB"):
+            with pytest.raises(AnonymousCreateError, match="1KB"):
                 await client.create_session(audience="aud", scope="s", metadata=oversized)
             mock_http.assert_not_called()
 
@@ -271,15 +274,63 @@ class TestCreateSession:
     async def test_dangerous_metadata_key_rejected(self):
         store = OneSlotStore()
         client = _make_client(anonymous_store=store)
-        with pytest.raises(AnonymousSessionCreateError, match="not allowed"):
+        with pytest.raises(AnonymousCreateError, match="not allowed"):
             await client.create_session(audience="aud", scope="s", metadata={"__proto__": "x"})
 
     @pytest.mark.asyncio
     async def test_non_string_metadata_value_rejected(self):
         store = OneSlotStore()
         client = _make_client(anonymous_store=store)
-        with pytest.raises(AnonymousSessionCreateError, match="must be a string"):
+        with pytest.raises(AnonymousCreateError, match="must be a string"):
             await client.create_session(audience="aud", scope="s", metadata={"count": 5})
+
+    @pytest.mark.asyncio
+    async def test_create_session_accepts_options_model(self):
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
+        options = CreateAnonymousSessionOptions(
+            audience="aud", scope="s", metadata={"cart_id": "c1"}
+        )
+        with patch("httpx.AsyncClient", fake_http):
+            await client.create_session(options=options)
+        _, _, kwargs = fake_http.calls[0]
+        assert kwargs["json"]["audience"] == "aud"
+        assert kwargs["json"]["scope"] == "s"
+        assert kwargs["json"]["metadata"] == {"cart_id": "c1"}
+
+    @pytest.mark.asyncio
+    async def test_create_session_accepts_options_dict(self):
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
+        with patch("httpx.AsyncClient", fake_http):
+            await client.create_session(options={"audience": "aud", "scope": "s"})
+        _, _, kwargs = fake_http.calls[0]
+        assert kwargs["json"]["audience"] == "aud"
+        assert kwargs["json"]["scope"] == "s"
+
+    @pytest.mark.asyncio
+    async def test_explicit_kwargs_override_options(self):
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
+        with patch("httpx.AsyncClient", fake_http):
+            await client.create_session(
+                options={"audience": "from_options"}, audience="from_kwarg"
+            )
+        _, _, kwargs = fake_http.calls[0]
+        assert kwargs["json"]["audience"] == "from_kwarg"
+
+    @pytest.mark.asyncio
+    async def test_invalid_options_dict_raises_typed_error_no_network_call(self):
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        with patch("httpx.AsyncClient") as mock_http:
+            with pytest.raises(AnonymousCreateError) as exc:
+                await client.create_session(options={"unknown_field": "x"})
+            assert exc.value.code == "invalid_options"
+            mock_http.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_feature_not_enabled_maps_to_typed_error(self):
@@ -357,7 +408,7 @@ class TestCreateSession:
                 raise httpx.ConnectError("boom")
 
         with patch("httpx.AsyncClient", _RaisingClient()):
-            with pytest.raises(AnonymousSessionCreateError):
+            with pytest.raises(AnonymousCreateError):
                 await client.create_session(audience="aud", scope="s")
 
 
@@ -437,7 +488,7 @@ class TestGetToken:
             _fake_response(400, {"error": "session_expired", "error_description": "expired again"}),
         ])
         with patch("httpx.AsyncClient", fake_http):
-            with pytest.raises(AnonymousSessionCreateError):
+            with pytest.raises(AnonymousCreateError):
                 await client.get_token()
         assert len(fake_http.calls) == 2
 
@@ -584,7 +635,7 @@ class TestIntrospect:
     async def test_introspect_no_active_session_raises(self):
         store = OneSlotStore()
         client = _make_client(anonymous_store=store)
-        with pytest.raises(AnonymousSessionIntrospectError):
+        with pytest.raises(AnonymousIntrospectError):
             await client.introspect()
 
 
