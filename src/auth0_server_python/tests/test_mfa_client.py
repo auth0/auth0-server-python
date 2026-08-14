@@ -6,9 +6,12 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from jwcrypto import jwk
 
 from auth0_server_python.auth_server.mfa_client import DEFAULT_MFA_TOKEN_TTL, MfaClient
+from auth0_server_python.auth_server.server_client import ServerClient
 from auth0_server_python.auth_types import (
     AuthenticatorResponse,
     ChallengeResponse,
@@ -33,6 +36,18 @@ DOMAIN = "auth0.local"
 CLIENT_ID = "<client_id>"
 CLIENT_SECRET = "<client_secret>"
 SECRET = "test-secret-long-enough-for-encryption"
+
+
+def _make_pkjwt_key() -> str:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+
+
+_PKJWT_KEY = _make_pkjwt_key()
 
 
 def _make_client() -> MfaClient:
@@ -535,6 +550,32 @@ class TestChallengeAuthenticator:
         assert result.challenge_type == "oob"
         assert result.oob_code == "oob_sms_challenge_456"
 
+    @pytest.mark.asyncio
+    async def test_challenge_uses_private_key_jwt_assertion(self, mocker):
+        """The ServerClient-wired MFA client carries a client assertion, not a secret, on challenge."""
+        server = ServerClient(
+            domain=DOMAIN, client_id=CLIENT_ID,
+            client_assertion_signing_key=_PKJWT_KEY, secret=SECRET,
+        )
+        client = server._mfa_client
+        response = AsyncMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={"challenge_type": "oob", "oob_code": "x"})
+        captured = {}
+
+        async def mock_post(self_client, url, **kwargs):
+            captured["kwargs"] = kwargs
+            return response
+
+        mocker.patch("httpx.AsyncClient.post", new=mock_post)
+
+        await client.challenge_authenticator({"mfa_token": _enc(), "factor_type": "otp"})
+
+        body = captured["kwargs"]["json"]
+        assert body["client_assertion_type"] == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        assert len(body["client_assertion"].split(".")) == 3
+        assert "client_secret" not in body
+
 
 # ── verify ───────────────────────────────────────────────────────────────────
 
@@ -594,6 +635,33 @@ class TestVerify:
             "recovery_code": "ABCD-1234-EFGH"
         })
         assert isinstance(result, MfaVerifyResponse)
+
+    @pytest.mark.asyncio
+    async def test_verify_uses_private_key_jwt_assertion(self, mocker):
+        """The ServerClient-wired MFA client carries a client assertion, not a secret, on verify."""
+        server = ServerClient(
+            domain=DOMAIN, client_id=CLIENT_ID,
+            client_assertion_signing_key=_PKJWT_KEY, secret=SECRET,
+        )
+        client = server._mfa_client
+        response = AsyncMock()
+        response.status_code = 200
+        response.headers = {}
+        response.json = MagicMock(return_value={"access_token": "at", "token_type": "Bearer", "expires_in": 3600})
+        captured = {}
+
+        async def mock_post(self_client, url, **kwargs):
+            captured["kwargs"] = kwargs
+            return response
+
+        mocker.patch("httpx.AsyncClient.post", new=mock_post)
+
+        await client.verify({"mfa_token": _enc(), "otp": "123456"})
+
+        body = captured["kwargs"]["data"]
+        assert body["client_assertion_type"] == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        assert len(body["client_assertion"].split(".")) == 3
+        assert "client_secret" not in body
 
     @pytest.mark.asyncio
     async def test_verify_no_credential_raises(self):

@@ -19,6 +19,11 @@ from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import ValidationError
 
+from auth0_server_python.auth_schemes.client_assertion import (
+    CLIENT_ASSERTION_TYPE,
+    build_client_assertion,
+    validate_client_assertion_key,
+)
 from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
@@ -113,6 +118,8 @@ class ServerClient(Generic[TStoreOptions]):
         domain: Union[str, Callable[[Optional[dict[str, Any]]], str]] = None,
         client_id: str = None,
         client_secret: str = None,
+        client_assertion_signing_key: Optional[str] = None,
+        client_assertion_signing_alg: Optional[str] = None,
         redirect_uri: Optional[str] = None,
         secret: str = None,
         transaction_store=None,
@@ -130,6 +137,8 @@ class ServerClient(Generic[TStoreOptions]):
             domain: Auth0 domain - either a static string (e.g., 'tenant.auth0.com') or a callable that resolves domain dynamically.
             client_id: Auth0 client ID
             client_secret: Auth0 client secret
+            client_assertion_signing_key: Private key (PKCS8 PEM) for private_key_jwt client authentication. When set, token requests authenticate with a signed client assertion instead of the client secret.
+            client_assertion_signing_alg: Signing algorithm for the client assertion (defaults to "RS256").
             redirect_uri: Default redirect URI for authentication
             secret: Secret used for encryption
             transaction_store: Custom transaction store (defaults to MemoryTransactionStore)
@@ -171,6 +180,12 @@ class ServerClient(Generic[TStoreOptions]):
 
         self._client_id = client_id
         self._client_secret = client_secret
+        self._client_assertion_signing_key = client_assertion_signing_key
+        self._client_assertion_signing_alg = client_assertion_signing_alg or "RS256"
+        if client_assertion_signing_key:
+            validate_client_assertion_key(
+                client_assertion_signing_key, self._client_assertion_signing_alg
+            )
         self._redirect_uri = redirect_uri
         self._secret = secret
         self._default_authorization_params = authorization_params or {}
@@ -187,10 +202,10 @@ class ServerClient(Generic[TStoreOptions]):
         self._telemetry = Telemetry.default()
         self._telemetry_headers = self._telemetry.headers
 
-        # Initialize OAuth client
+        # A signing key takes precedence, so the secret is withheld to keep client auth single.
         self._oauth = AsyncOAuth2Client(
             client_id=client_id,
-            client_secret=client_secret,
+            client_secret=None if client_assertion_signing_key else client_secret,
             headers=self._telemetry_headers,
         )
 
@@ -212,12 +227,53 @@ class ServerClient(Generic[TStoreOptions]):
             state_store=self._state_store,
             state_identifier=self._state_identifier,
             headers=self._telemetry_headers,
+            apply_client_authentication=self._apply_client_authentication,
         )
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with telemetry headers injected."""
         headers = {**kwargs.pop("headers", {}), **self._telemetry_headers}
         return httpx.AsyncClient(headers=headers, **kwargs)
+
+    def _apply_client_authentication(
+        self, params: dict, issuer: str, in_body: bool = False
+    ) -> Optional[tuple[str, str]]:
+        """
+        Apply client authentication to an outgoing token request.
+
+        Args:
+            params: The outgoing token request body. Any caller-supplied client-auth keys are removed, then the client assertion is added (or the client secret when in_body is True).
+            issuer: The authorization server issuer identifier, used as the assertion audience.
+            in_body: When True, place the client secret in params instead of returning it for HTTP basic auth (for endpoints that authenticate the client in the request body).
+
+        Returns:
+            The (client_id, client_secret) tuple for HTTP basic auth, or None when the client was authenticated in params.
+
+        Raises:
+            ConfigurationError: If neither client_secret nor client_assertion_signing_key is configured.
+        """
+        for reserved in ("client_secret", "client_assertion", "client_assertion_type"):
+            params.pop(reserved, None)
+
+        if self._client_assertion_signing_key:
+            params["client_assertion"] = build_client_assertion(
+                self._client_assertion_signing_key,
+                self._client_id,
+                issuer,
+                self._client_assertion_signing_alg,
+            )
+            params["client_assertion_type"] = CLIENT_ASSERTION_TYPE
+            return None
+
+        if self._client_secret:
+            if in_body:
+                params["client_secret"] = self._client_secret
+                return None
+            return (self._client_id, self._client_secret)
+
+        raise ConfigurationError(
+            "Client authentication is not configured. Provide either client_secret or client_assertion_signing_key."
+        )
 
     def _normalize_url(self, value: str) -> str:
         """
@@ -486,6 +542,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             Authorization URL to redirect the user to
+
+        Raises:
+            ConfigurationError: If no client authentication is configured.
         """
         options = options or StartInteractiveLoginOptions()
 
@@ -571,12 +630,16 @@ class ServerClient(Generic[TStoreOptions]):
                     "configuration_error", "PAR is enabled but pushed_authorization_request_endpoint is missing in metadata")
 
             auth_params["client_id"] = self._client_id
+            # authlib supplies response_type on the non-PAR path, but the PAR post is built by hand.
+            auth_params["response_type"] = "code"
+            issuer = metadata.get("issuer") or f"https://{origin_domain}/"
+            client_auth = self._apply_client_authentication(auth_params, issuer)
             # Post the auth_params to the PAR endpoint
             async with self._get_http_client() as client:
                 par_response = await client.post(
                     par_endpoint,
                     data=auth_params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
                 if par_response.status_code not in (200, 201):
                     error_data = par_response.json()
@@ -624,6 +687,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             Dictionary containing session data and app state
+
+        Raises:
+            ConfigurationError: If no client authentication is configured.
         """
         # Parse the URL to get query parameters
         parsed_url = urlparse(url)
@@ -663,6 +729,13 @@ class ServerClient(Generic[TStoreOptions]):
         # Exchange the code for tokens
         # Use redirect_uri from transaction if available, otherwise fall back to default
         token_redirect_uri = transaction_data.redirect_uri or self._redirect_uri
+
+        # client_secret is applied by self._oauth. private_key_jwt is passed to fetch_token as params.
+        client_auth_params: dict = {}
+        self._apply_client_authentication(
+            client_auth_params, origin_issuer or f"https://{origin_domain}/"
+        )
+
         try:
             token_endpoint = self._oauth.metadata["token_endpoint"]
             token_response = await self._oauth.fetch_token(
@@ -670,6 +743,7 @@ class ServerClient(Generic[TStoreOptions]):
                 code=code,
                 code_verifier=transaction_data.code_verifier,
                 redirect_uri=token_redirect_uri,
+                **client_auth_params,
             )
         except OAuthError as e:
             # Raise a custom error (or handle it as appropriate)
@@ -1158,6 +1232,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             AccessTokenError: If there was an issue requesting the access token.
+            ConfigurationError: If no client authentication is configured.
 
         Returns:
             A dictionary containing the token response from Auth0.
@@ -1198,12 +1273,15 @@ class ServerClient(Generic[TStoreOptions]):
             if merged_scope:
                 token_params["scope"] = merged_scope
 
+            issuer = metadata.get("issuer") or f"https://{domain}/"
+            client_auth = self._apply_client_authentication(token_params, issuer)
+
             # Exchange the refresh token for an access token
             async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=token_params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
 
                 if response.status_code != 200:
@@ -1239,7 +1317,7 @@ class ServerClient(Generic[TStoreOptions]):
                 return token_response
 
         except Exception as e:
-            if isinstance(e, ApiError):
+            if isinstance(e, (ApiError, ConfigurationError)):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
@@ -1515,12 +1593,14 @@ class ServerClient(Generic[TStoreOptions]):
             if authorization_params:
                 params.update(authorization_params)
 
+            client_auth = self._apply_client_authentication(params, issuer)
+
             # Make the backchannel authentication request
             async with self._get_http_client() as client:
                 backchannel_response = await client.post(
                     backchannel_endpoint,
                     data=params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
 
                 if backchannel_response.status_code != 200:
@@ -1543,7 +1623,7 @@ class ServerClient(Generic[TStoreOptions]):
                 return backchannel_data
 
         except Exception as e:
-            if isinstance(e, ApiError):
+            if isinstance(e, (ApiError, ConfigurationError)):
                 raise
             raise ApiError(
                 "backchannel_error",
@@ -1565,6 +1645,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             AccessTokenError: If there was an issue requesting the access token.
+            ConfigurationError: If no client authentication is configured.
 
         Returns:
             A dictionary containing the token response from Auth0.
@@ -1587,15 +1668,17 @@ class ServerClient(Generic[TStoreOptions]):
                 "grant_type": "urn:openid:params:grant-type:ciba",
                 "auth_req_id": auth_req_id,
                 "client_id": self._client_id,
-                "client_secret": self._client_secret
             }
+
+            issuer = metadata.get("issuer") or f"https://{domain}/"
+            client_auth = self._apply_client_authentication(token_params, issuer)
 
             # Exchange the auth_req_id for an access token
             async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=token_params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
 
                 if response.status_code != 200:
@@ -1625,7 +1708,7 @@ class ServerClient(Generic[TStoreOptions]):
                 return token_response
 
         except Exception as e:
-            if isinstance(e, (ApiError, PollingApiError)):
+            if isinstance(e, (ApiError, PollingApiError, ConfigurationError)):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.AUTH_REQ_ID_ERROR,
@@ -2008,6 +2091,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             AccessTokenForConnectionError: If there was an issue requesting the access token.
+            ConfigurationError: If no client authentication is configured.
 
         Returns:
             Dictionary containing the token response with accessToken, expiresAt, and scope.
@@ -2042,12 +2126,15 @@ class ServerClient(Generic[TStoreOptions]):
             if "login_hint" in options and options["login_hint"]:
                 params["login_hint"] = options["login_hint"]
 
+            issuer = metadata.get("issuer") or f"https://{domain}/"
+            client_auth = self._apply_client_authentication(params, issuer)
+
             # Make the request
             async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
 
                 if response.status_code != 200:
@@ -2068,6 +2155,8 @@ class ServerClient(Generic[TStoreOptions]):
                 }
 
         except Exception as e:
+            if isinstance(e, ConfigurationError):
+                raise
             if isinstance(e, ApiError):
                 raise AccessTokenForConnectionError(
                     AccessTokenForConnectionErrorCode.API_ERROR,
@@ -2336,6 +2425,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             CustomTokenExchangeError: If token exchange fails
             MissingRequiredArgumentError: If required parameters are missing
+            ConfigurationError: If no client authentication is configured
 
         Example:
             ```python
@@ -2426,17 +2516,23 @@ class ServerClient(Generic[TStoreOptions]):
             # Merge additional authorization params
             if options.authorization_params:
                 # Prevent override of critical parameters
-                forbidden_params = {"grant_type", "client_id", "subject_token", "subject_token_type"}
+                forbidden_params = {
+                    "grant_type", "client_id", "subject_token", "subject_token_type",
+                    "client_assertion", "client_assertion_type",
+                }
                 for key, value in options.authorization_params.items():
                     if key not in forbidden_params:
                         params[key] = value
+
+            issuer = metadata.get("issuer") or f"https://{domain}/"
+            client_auth = self._apply_client_authentication(params, issuer)
 
             # Make the token exchange request
             async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
 
                 if response.status_code != 200:
@@ -2482,7 +2578,7 @@ class ServerClient(Generic[TStoreOptions]):
                 f"Token validation failed: {str(e)}"
             )
         except Exception as e:
-            if isinstance(e, (CustomTokenExchangeError, ApiError)):
+            if isinstance(e, (CustomTokenExchangeError, ApiError, ConfigurationError)):
                 raise
             raise CustomTokenExchangeError(
                 CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
@@ -3076,8 +3172,10 @@ class ServerClient(Generic[TStoreOptions]):
                 "auth_session": auth_session,
                 "authn_response": authn_response.model_dump(by_alias=True, exclude_none=True),
             }
-            if self._client_secret:
-                body["client_secret"] = self._client_secret
+            # Passkey signin allows public clients, so only authenticate when configured.
+            if self._client_secret or self._client_assertion_signing_key:
+                issuer = metadata.get("issuer") or f"https://{domain}/"
+                self._apply_client_authentication(body, issuer, in_body=True)
             if connection:
                 body["realm"] = connection
             if resolved_org:
