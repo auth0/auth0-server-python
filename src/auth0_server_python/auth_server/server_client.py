@@ -225,7 +225,7 @@ class ServerClient(Generic[TStoreOptions]):
             headers=self._telemetry_headers,
         )
 
-        # Deliberately given its own store, never self._state_store.
+        # Its own store, never self._state_store, so anonymous state stays isolated.
         self._anonymous_client = AnonymousClient(
             domain=domain,
             client_id=self._client_id,
@@ -568,11 +568,9 @@ class ServerClient(Generic[TStoreOptions]):
         if options.invitation:
             auth_params["invitation"] = options.invitation
 
-        # session_token is sourced only from the SDK's own encrypted anonymous
-        # store, never from a caller. INTERNAL_AUTHORIZE_PARAMS alone isn't
-        # enough, since auth_params is seeded unfiltered from the constructor
-        # defaults above, so a caller-supplied value would survive that filter.
-        # Suppressed entirely on the PAR branch below (unsupported there).
+        # session_token comes only from the SDK's own encrypted anonymous
+        # store, never a caller. The pop strips any value seeded from the
+        # constructor defaults, closing a session-fixation vector.
         auth_params.pop("session_token", None)
         anonymous_session_token = None
         if not self._pushed_authorization_requests:

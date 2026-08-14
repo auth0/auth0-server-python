@@ -199,7 +199,6 @@ class AnonymousClient:
 
         if code in ("session_expired", "invalid_session_token"):
             return _AnonymousSessionExpired(description)
-        # Distinguishes DPoP-mandated clients from a plain client-not-enabled block.
         if status_code == 400 and "Proof-of-Possession" in description:
             return AnonymousClientNotSupportedError(description, error_data)
         if code == "feature_not_enabled":
@@ -273,10 +272,6 @@ class AnonymousClient:
     def _decrypt_context(self, stored: Any) -> AnonymousSessionContext:
         """Decrypt and validate a stored anonymous session record.
 
-        A crypto-library failure and a validation failure both mean the
-        record is unusable, and both must convert to the same internal
-        signal instead of an untyped exception reaching the caller.
-
         Args:
             stored: The raw record read from the anonymous store.
 
@@ -313,8 +308,6 @@ class AnonymousClient:
     ) -> AnonymousSession:
         """Create a fresh anonymous session against a resolved domain.
 
-        Shared by create_session() and every renewal-ladder fallback.
-
         Args:
             domain: The resolved tenant domain.
             audience: Audience for the new session, or None.
@@ -344,9 +337,7 @@ class AnonymousClient:
             try:
                 response = await client.post(f"{base_url}/anonymous/token", json=body)
             except httpx.HTTPError as e:
-                raise AnonymousCreateError(
-                    "Failed to reach the anonymous token endpoint"
-                ) from e
+                raise AnonymousCreateError("Failed to reach the anonymous token endpoint") from e
 
             if response.status_code != 200:
                 error_data = self._parse_anonymous_error_body(response)
@@ -359,9 +350,7 @@ class AnonymousClient:
             try:
                 token_response = AnonymousTokenResponse.model_validate(response.json())
             except (json.JSONDecodeError, ValueError, ValidationError) as e:
-                raise AnonymousCreateError(
-                    "Failed to parse anonymous token response"
-                ) from e
+                raise AnonymousCreateError("Failed to parse anonymous token response") from e
 
         if not token_response.session_token:
             raise AnonymousCreateError("Anonymous token response missing required fields")
@@ -408,9 +397,6 @@ class AnonymousClient:
     ) -> AnonymousSession:
         """Re-mint an access token using the stored session token.
 
-        Retries once by minting a brand-new session if the stored session
-        token is itself rejected as expired or invalid.
-
         Args:
             context: The current decrypted session context.
             store_options: Options passed to the anonymous store.
@@ -425,7 +411,10 @@ class AnonymousClient:
         """
         domain = context.domain or await self._resolve_domain(store_options)
         base_url = f"https://{domain}"
-        body: dict[str, Any] = {"client_id": self._client_id, "session_token": context.session_token}
+        body: dict[str, Any] = {
+            "client_id": self._client_id,
+            "session_token": context.session_token,
+        }
         if self._client_secret:
             body["client_secret"] = self._client_secret
 
@@ -456,7 +445,6 @@ class AnonymousClient:
 
         now = int(time.time())
         new_context = AnonymousSessionContext(
-            # Rewrite when a fresh session_token is present, else keep the old one.
             session_token=token_response.session_token or context.session_token,
             sub=token_response.sub or context.sub,
             session_id=token_response.session_id or context.session_id,
@@ -495,18 +483,14 @@ class AnonymousClient:
     async def get_session_token_for_injection(
         self, store_options: Optional[dict[str, Any]] = None
     ) -> Optional[str]:
-        """Read the active session token for login injection.
-
-        Does not trigger the renewal ladder. Never raises: no configured
-        store, no active session, and an undecryptable record all return
-        None, so malformed linking state denies the link instead of
-        aborting the login.
+        """Read the active session token for login injection without renewing.
 
         Args:
             store_options: Options passed to the anonymous store.
 
         Returns:
-            The raw session token, or None.
+            The raw session token, or None when there is no store, no active
+            session, or the stored record cannot be decrypted.
         """
         if self._anonymous_store is None:
             return None
@@ -577,15 +561,8 @@ class AnonymousClient:
             domain, audience=audience, scope=scope, metadata=metadata, store_options=store_options
         )
 
-    async def get_token(
-        self, store_options: Optional[dict[str, Any]] = None
-    ) -> AnonymousSession:
+    async def get_token(self, store_options: Optional[dict[str, Any]] = None) -> AnonymousSession:
         """Return a valid anonymous access token, renewing or re-minting as needed.
-
-        The renewal ladder: a fresh cached token is returned as-is. An
-        expired one is re-minted from the stored session token. A session
-        token that is itself expired or invalid silently mints a brand-new
-        session, once. Any other error is raised, never swallowed or retried.
 
         Args:
             store_options: Options passed to the anonymous store.
@@ -606,7 +583,6 @@ class AnonymousClient:
         try:
             context = self._decrypt_context(stored)
         except _AnonymousSessionExpired:
-            # No audience/scope to recover, fall back to configured defaults.
             domain = await self._resolve_domain(store_options)
             return await self._create_session_at(
                 domain,
@@ -648,11 +624,7 @@ class AnonymousClient:
     async def introspect(
         self, store_options: Optional[dict[str, Any]] = None
     ) -> AnonymousSessionIntrospection:
-        """Return the current anonymous session status without mutating it.
-
-        Never triggers the renewal ladder and never writes to the store. An
-        unreadable stored context is a hard failure here, not a silent
-        re-mint. Uses the cached access token as a Bearer credential.
+        """Return the current anonymous session status without mutating the store.
 
         Args:
             store_options: Options passed to the anonymous store.
@@ -706,12 +678,7 @@ class AnonymousClient:
                 ) from e
 
     async def logout(self, store_options: Optional[dict[str, Any]] = None) -> None:
-        """Clear the locally-held anonymous session.
-
-        No server-side revocation exists: access tokens already issued
-        remain valid until natural expiry. The remote POST is best-effort
-        only. The local store clear is what actually ends the session from
-        this SDK's perspective.
+        """Clear the locally-held anonymous session without revoking issued tokens.
 
         Args:
             store_options: Options passed to the anonymous store.

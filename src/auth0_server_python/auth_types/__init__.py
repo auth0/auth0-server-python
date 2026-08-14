@@ -871,14 +871,8 @@ class PasskeyTokenResponse(BaseModel):
 
 
 class AnonymousSession(BaseModel):
-    """
-    Public result of create_session() / the renewal ladder.
+    """Public result of create_session() and the renewal ladder."""
 
-    Never exposes the raw session token, which stays inside the encrypted
-    AnonymousSessionContext, server-side only.
-    """
-
-    # Optional: the platform's /anonymous/token response doesn't always include these.
     sub: Optional[str] = None
     session_id: Optional[str] = None
     access_token: str
@@ -889,11 +883,7 @@ class AnonymousSession(BaseModel):
 
 
 class AnonymousSessionIntrospection(BaseModel):
-    """
-    Result of introspect(). Deliberately minimal and lenient, since the
-    platform's /anonymous/userinfo response shape is unconfirmed.
-    Unrecognized fields are ignored rather than rejected.
-    """
+    """Result of introspect(), lenient to unrecognized response fields."""
 
     model_config = ConfigDict(extra="ignore")
     sub: str
@@ -915,15 +905,12 @@ class AnonymousTokenResponse(BaseModel):
 
 
 class AnonymousSessionContext(BaseModel):
-    """
-    Internal context stored inside the encrypted anonymous session record.
+    """Internal context stored inside the encrypted anonymous session record.
 
-    No `extra` config, so decrypt fails closed on a tampered or malformed
-    payload rather than silently yielding a partial object.
+    Rejects extra fields so a tampered payload fails closed on decrypt.
     """
 
     session_token: str
-    # sub/session_id: optional for the same reason as AnonymousSession above.
     sub: Optional[str] = None
     session_id: Optional[str] = None
     access_token: str
@@ -931,9 +918,8 @@ class AnonymousSessionContext(BaseModel):
     session_expires_at: Optional[int] = None
     metadata: Optional[dict[str, Any]] = None
     created_at: int
-    # Resolved domain at creation time. Gated on in resolver/MCD mode so a
-    # session minted against tenant A cannot be read back for tenant B.
-    # None when the client uses a static domain.
+    # Resolved domain at creation, gated on in resolver/MCD mode so a session
+    # minted for one tenant cannot be read back for another.
     domain: Optional[str] = None
     audience: Optional[str] = None
     scope: Optional[str] = None

@@ -404,12 +404,7 @@ class AnonymousTokenError(AnonymousApiError):
 
 
 class AnonymousIntrospectError(AnonymousApiError):
-    """
-    Error thrown when introspect() fails.
-
-    Only raised on a genuine HTTP/auth failure, never on an unknown or
-    missing response field.
-    """
+    """Error thrown when introspect() fails on an HTTP or auth failure."""
 
     def __init__(self, message: str, cause: Optional[dict] = None):
         super().__init__("anonymous_introspect_error", message, cause)
@@ -451,10 +446,9 @@ class AnonymousScopeError(AnonymousCreateError):
 
 
 class _AnonymousSessionExpired(Auth0Error):
-    """
-    Internal-only signal that the stored session token is expired or invalid.
+    """Internal-only signal that the stored session token is expired or invalid.
 
-    Drives the silent re-mint in the renewal ladder. Never raised to SDK callers.
+    Never raised to SDK callers.
     """
 
     def __init__(self, message: str = "The anonymous session token is expired or invalid."):
