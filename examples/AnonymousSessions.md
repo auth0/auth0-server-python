@@ -125,6 +125,6 @@ except AnonymousFeatureNotEnabledError:
 
 ## Known Limitations
 
-- **DPoP is not supported.** `AnonymousClient` has no `dpop_key` parameter anywhere in its public API. A tenant/client configured with `require_proof_of_possession: true` cannot use anonymous sessions; you will see `AnonymousClientNotSupportedError`.
+- **DPoP is not supported.** `AnonymousClient` has no `dpop_key` parameter anywhere in its public API. A tenant/client configured with `require_proof_of_possession: true` cannot use anonymous sessions, you will see `AnonymousClientNotSupportedError`.
 - **PAR, CIBA, Device Flow, RAR, and mTLS clients are not supported** for anonymous sessions.
 - **No server-side revocation.** See [Logging Out](#logging-out) above.
