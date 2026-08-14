@@ -41,6 +41,9 @@ server_client = ServerClient(
 
 The **Passkey** grant (`urn:okta:params:oauth:grant-type:webauthn`) must be enabled for your application under **Applications → Your App → Grant Types**.
 
+> [!NOTE]
+> The passkey challenge endpoints accept a client secret only, not a client assertion. A client configured with just a `client_assertion_signing_key` (Private Key JWT) cannot use the passkey flows, so configure a `client_secret` to use them.
+
 ## 1. Passkey Signup
 
 ### Step 1 — Request a signup challenge

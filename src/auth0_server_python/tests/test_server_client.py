@@ -2780,16 +2780,22 @@ def test_unknown_signing_algorithm_raises_at_construction():
 
 
 @pytest.mark.asyncio
-async def test_login_with_both_secret_and_key_sends_only_assertion():
-    """With both a secret and a signing key, the code exchange sends the assertion and no basic auth header."""
+async def test_login_with_both_secret_and_key_sends_only_assertion(mocker):
+    """complete_interactive_login sends the assertion and no basic-auth header when both a secret and a signing key are set."""
     private_key = _generate_rsa_private_key_pem()
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="v",
+        redirect_uri="https://app/cb",
+        domain="auth0.local",
+    )
     client = ServerClient(
         domain="auth0.local",
         client_id="my_client",
         client_secret="<client_secret>",
         client_assertion_signing_key=private_key,
         state_store=AsyncMock(),
-        transaction_store=AsyncMock(),
+        transaction_store=mock_tx_store,
         secret="some-secret",
     )
 
@@ -2801,25 +2807,24 @@ async def test_login_with_both_secret_and_key_sends_only_assertion():
     def handler(request):
         captured["authorization"] = request.headers.get("authorization")
         captured["body"] = request.content.decode()
-        return httpx.Response(200, json={"access_token": "at", "token_type": "Bearer", "expires_in": 3600})
+        return httpx.Response(200, json={
+            "access_token": "at", "token_type": "Bearer", "expires_in": 3600,
+            "userinfo": {"sub": "user123"},
+        })
 
-    # Mirror the real OAuth client's auth config onto a transport-backed one to inspect the wire.
-    wire_oauth = AsyncOAuth2Client(
+    # Back the real OAuth client with a mock transport, mirroring its auth config, to inspect the wire.
+    client._oauth = AsyncOAuth2Client(
         client_id=client._oauth.client_id,
         client_secret=client._oauth.client_secret,
         transport=httpx.MockTransport(handler),
     )
-    params = {}
-    client._apply_client_authentication(params, "https://auth0.local/")
-
-    await wire_oauth.fetch_token(
-        "https://auth0.local/oauth/token",
-        grant_type="authorization_code",
-        code="abc",
-        code_verifier="v",
-        redirect_uri="https://app/cb",
-        **params,
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://auth0.local/", "token_endpoint": "https://auth0.local/oauth/token"},
     )
+
+    await client.complete_interactive_login("https://app/cb?code=abc&state=xyz")
 
     assert captured["authorization"] is None
     assert "client_assertion=" in captured["body"]

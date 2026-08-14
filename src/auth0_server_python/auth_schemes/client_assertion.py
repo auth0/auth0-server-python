@@ -29,7 +29,7 @@ def validate_client_assertion_key(private_key: Union[str, bytes], alg: str = "RS
     except Exception as e:
         raise ConfigurationError(
             f"Invalid client_assertion_signing_key for algorithm {alg}: {e}"
-        )
+        ) from e
 
 
 def build_client_assertion(

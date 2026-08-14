@@ -402,6 +402,7 @@ class MfaClient:
 
         Raises:
             MfaChallengeError: When the challenge fails.
+            ConfigurationError: If neither client_secret nor client_assertion_signing_key is configured.
         """
         mfa_token = options.get("mfa_token")
         if not mfa_token:
@@ -491,6 +492,7 @@ class MfaClient:
             MfaVerifyError: When verification fails, or when dpop_key was supplied
                 but the server returned an unbound (Bearer) token.
             MfaRequiredError: When chained MFA is required.
+            ConfigurationError: If neither client_secret nor client_assertion_signing_key is configured.
         """
         mfa_token = options.get("mfa_token")
         if not mfa_token:

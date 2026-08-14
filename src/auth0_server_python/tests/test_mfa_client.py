@@ -552,15 +552,12 @@ class TestChallengeAuthenticator:
 
     @pytest.mark.asyncio
     async def test_challenge_uses_private_key_jwt_assertion(self, mocker):
-        """With a signing-key resolver, the challenge body carries a client assertion, not a secret."""
+        """The ServerClient-wired MFA client carries a client assertion, not a secret, on challenge."""
         server = ServerClient(
             domain=DOMAIN, client_id=CLIENT_ID,
             client_assertion_signing_key=_PKJWT_KEY, secret=SECRET,
         )
-        client = MfaClient(
-            domain=DOMAIN, client_id=CLIENT_ID, client_secret=None, secret=SECRET,
-            apply_client_authentication=server._apply_client_authentication,
-        )
+        client = server._mfa_client
         response = AsyncMock()
         response.status_code = 200
         response.json = MagicMock(return_value={"challenge_type": "oob", "oob_code": "x"})
@@ -641,15 +638,12 @@ class TestVerify:
 
     @pytest.mark.asyncio
     async def test_verify_uses_private_key_jwt_assertion(self, mocker):
-        """With a signing-key resolver, the verify body carries a client assertion, not a secret."""
+        """The ServerClient-wired MFA client carries a client assertion, not a secret, on verify."""
         server = ServerClient(
             domain=DOMAIN, client_id=CLIENT_ID,
             client_assertion_signing_key=_PKJWT_KEY, secret=SECRET,
         )
-        client = MfaClient(
-            domain=DOMAIN, client_id=CLIENT_ID, client_secret=None, secret=SECRET,
-            apply_client_authentication=server._apply_client_authentication,
-        )
+        client = server._mfa_client
         response = AsyncMock()
         response.status_code = 200
         response.headers = {}

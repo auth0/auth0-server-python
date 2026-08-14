@@ -76,7 +76,7 @@ auth0 = ServerClient(
 )
 ```
 
-The key must be a PKCS8 PEM private key. Register its public key on your Auth0 application under **Settings → Credentials**, and set the application's authentication method to Private Key JWT. The signing algorithm defaults to `RS256` and can be overridden with `client_assertion_signing_alg`. The algorithm must match the key type and the algorithm chosen when the public key credential was created.
+The key must be a PKCS8 PEM private key. Register its public key on your Auth0 application under **Settings → Credentials**, and set the application's authentication method to Private Key JWT. The signing algorithm defaults to `RS256` and can be overridden with `client_assertion_signing_alg`. Auth0 accepts `RS256`, `RS384`, and `PS256`, all of which use an RSA key. The algorithm must match the key type and the algorithm chosen when the public key credential was created.
 
 > [!NOTE]
 > The passkey challenge endpoints (`register` and `challenge`) accept only a client secret, so a client configured with just a signing key cannot use them.
