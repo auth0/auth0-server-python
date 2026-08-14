@@ -4799,21 +4799,18 @@ async def test_complete_login_sid_sourced_from_id_token_claim(mocker):
         secret="test_secret_key_32_chars_long!!",
     )
 
-    # Mock OIDC metadata
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
         return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
     )
 
-    # Mock JWKS fetch
     mocker.patch.object(
         client,
         "_get_jwks_cached",
         return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
     )
 
-    # Mock OAuth fetch_token (ID-token-only response, no userinfo)
     async_fetch_token = AsyncMock()
     async_fetch_token.return_value = {
         "access_token": "token123",
@@ -4821,7 +4818,6 @@ async def test_complete_login_sid_sourced_from_id_token_claim(mocker):
     }
     mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
 
-    # Verified claims carry a `sid`
     mocker.patch.object(
         client,
         "_verify_and_decode_jwt",
@@ -4856,21 +4852,18 @@ async def test_complete_login_sid_falls_back_to_random_without_claim(mocker):
         secret="test_secret_key_32_chars_long!!",
     )
 
-    # Mock OIDC metadata
     mocker.patch.object(
         client,
         "_get_oidc_metadata_cached",
         return_value={"issuer": "https://tenant.auth0.com/", "token_endpoint": "https://tenant.auth0.com/token"}
     )
 
-    # Mock JWKS fetch
     mocker.patch.object(
         client,
         "_get_jwks_cached",
         return_value={"keys": [{"kty": "RSA", "kid": "test-key"}]}
     )
 
-    # Mock OAuth fetch_token (ID-token-only response, no userinfo)
     async_fetch_token = AsyncMock()
     async_fetch_token.return_value = {
         "access_token": "token123",
@@ -4878,7 +4871,6 @@ async def test_complete_login_sid_falls_back_to_random_without_claim(mocker):
     }
     mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
 
-    # Verified claims carry NO `sid`
     mocker.patch.object(
         client,
         "_verify_and_decode_jwt",

@@ -1,5 +1,5 @@
 """
-Tests for PasswordlessClient — embedded passwordless (OTP + magic link).
+Tests for PasswordlessClient - embedded passwordless (OTP + magic link).
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -97,7 +97,7 @@ class TestStartOtp:
         assert body["client_secret"] == CLIENT_SECRET
         # OTP flow does not create a transaction.
         client._transaction_store.set.assert_not_awaited()
-        # Auth0 returns the request id as `_id`; the model aliases it to `.id`.
+        # Auth0 returns the request id as `_id`. The model aliases it to `.id`.
         assert result.id == "req_123"
 
     @pytest.mark.asyncio
@@ -172,7 +172,7 @@ class TestStartOtp:
 
     @pytest.mark.asyncio
     async def test_start_retry_after_http_date_is_not_interpreted(self):
-        # The HTTP-date form is valid per RFC 9110 but is not parsed; callers
+        # The HTTP-date form is valid per RFC 9110 but is not parsed. Callers
         # get None rather than a bogus delay.
         client = _make_client()
         http = _mock_http(client, 429, {})
@@ -327,7 +327,7 @@ class TestStartMagicLink:
     @pytest.mark.asyncio
     async def test_connection_scope_not_allowed(self):
         # connection_scope is a federated-connection param with no meaning for
-        # email/SMS passwordless; it is not in the allowlist and is rejected.
+        # email/SMS passwordless. It is not in the allowlist and is rejected.
         client = _make_client()
         _mock_http(client, 200, {})
 
@@ -407,7 +407,7 @@ class TestStartMagicLink:
 
     @pytest.mark.asyncio
     async def test_magic_link_rejects_organization_auth_param(self):
-        # Organizations are not supported on passwordless; the allowlist keeps
+        # Organizations are not supported on passwordless. The allowlist keeps
         # the param from reaching Auth0 as an unvalidated passthrough.
         client = _make_client()
         _mock_http(client, 200, {})
@@ -475,8 +475,8 @@ class TestMagicLinkCallback:
     @pytest.mark.asyncio
     async def test_magic_link_callback_exchanges_code_without_pkce(self, mocker):
         # Magic link is a plain auth-code exchange: lock that code_verifier=None
-        # reaches fetch_token (authlib drops the falsy field) so a forced verifier
-        # — which Auth0 would reject — is caught.
+        # reaches fetch_token (authlib drops the falsy field) so a forced verifier,
+        # which Auth0 would reject, is caught.
         client = _make_client()
         client._transaction_store.get.return_value = TransactionData(
             code_verifier=None,
@@ -513,7 +513,7 @@ class TestMagicLinkCallback:
         assert fetch_token.await_args.kwargs["code_verifier"] is None
         assert fetch_token.await_args.kwargs["code"] == "AUTHCODE"
 
-        # Session established; transaction consumed (single-use).
+        # Session established. Transaction consumed (single-use).
         client._state_store.set.assert_awaited_once()
         client._transaction_store.delete.assert_awaited_once()
         assert result["state_data"]["internal"]["sid"] == "SID-1"
@@ -1001,9 +1001,9 @@ class TestVerify:
 
     @pytest.mark.asyncio
     async def test_verify_mfa_required_without_token_falls_through(self, mocker):
-        # Third-party-strict / flex-commands-with-FF-off: 403 mfa_required with
-        # no mfa_token. Must fall through to the generic typed error, not hang
-        # or raise an unrelated exception.
+        # Some tenant configurations return 403 mfa_required with no mfa_token.
+        # Must fall through to the generic typed error, not hang or raise an
+        # unrelated exception.
         client = _make_client()
         mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
         _mock_http(

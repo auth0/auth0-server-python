@@ -4,13 +4,13 @@ Passwordless Client for auth0-server-python SDK.
 Implements embedded passwordless login (Legacy Passwordless connections) for a
 confidential (Regular Web App) client:
 
-* Email OTP / SMS OTP — ``start()`` sends a code, ``verify()`` exchanges it for
+* Email OTP / SMS OTP - ``start()`` sends a code, ``verify()`` exchanges it for
   tokens via the passwordless-OTP grant and establishes a server-side session.
-* Magic link — ``start(send="link")`` emails a one-click link; completion is
+* Magic link - ``start(send="link")`` emails a one-click link. Completion is
   handled by the standard callback (``ServerClient.complete_interactive_login``),
   not by ``verify()``.
 
-Tokens never leave the server; the browser holds only the opaque session
+Tokens never leave the server. The browser holds only the opaque session
 reference (RWA / BFF posture).
 """
 
@@ -39,11 +39,10 @@ from auth0_server_python.error import (
 )
 from auth0_server_python.utils import PKCE
 
-if TYPE_CHECKING:  # avoid a circular import at runtime
+if TYPE_CHECKING:
     from auth0_server_python.auth_server.server_client import ServerClient
 
 PASSWORDLESS_OTP_GRANT_TYPE = "http://auth0.com/oauth/grant-type/passwordless/otp"
-# Email flows request the `email` scope; SMS has no email claim to satisfy.
 DEFAULT_PASSWORDLESS_EMAIL_SCOPE = "openid profile email"
 DEFAULT_PASSWORDLESS_SMS_SCOPE = "openid profile"
 # Header Auth0 reads for the real end-user IP (confidential clients with
@@ -79,7 +78,7 @@ class PasswordlessClient:
             options: ``StartPasswordlessEmailOptions`` or
                 ``StartPasswordlessSmsOptions``.
             store_options: Options passed to the transaction store (e.g.
-                request/response) — required for the magic-link flow so the
+                request/response). Required for the magic-link flow so the
                 transaction cookie can be written.
 
         Returns:
@@ -127,7 +126,6 @@ class PasswordlessClient:
             )
             body["authParams"] = auth_params
         elif options.auth_params:
-            # OTP flows: forward safe passthrough params only.
             body["authParams"] = self._sanitize_caller_auth_params(options.auth_params)
 
         headers = {"Content-Type": "application/json"}
@@ -309,11 +307,14 @@ class PasswordlessClient:
         """
         Build the magic-link ``authParams`` and the transaction to persist.
 
-        The SDK owns ``redirect_uri`` / ``response_type`` / ``state``; caller
-        ``auth_params`` may only contribute non-reserved passthrough keys.
-        Persisting the transaction is the caller's job, deferred until after
-        ``POST /passwordless/start`` succeeds — a failed start must not leave a
-        transaction (and its cookie) behind.
+        Args:
+            options: Email options for the magic-link flow.
+            origin_domain: Resolved Auth0 domain, recorded on the transaction.
+            store_options: Options passed to the transaction store.
+
+        Returns:
+            The ``authParams`` dict and the ``(key, TransactionData)`` pair for
+            the caller to persist after start succeeds.
 
         Raises:
             MissingRequiredArgumentError: When no ``redirect_uri`` is configured
@@ -330,12 +331,12 @@ class PasswordlessClient:
         if store_options is None:
             raise MissingRequiredArgumentError("store_options")
 
-        # Auth0 echoes `state` back unvalidated on this flow — it does not
+        # Auth0 echoes `state` back unvalidated on this flow. It does not
         # compare it server-side, and the clicked link's query string can
         # overwrite whatever was originally stored. This SDK's single-use,
         # state-keyed transaction plus the exact-match, SDK-owned
-        # `redirect_uri` is therefore the *only* CSRF/authorization-code-
-        # interception control on magic link; the server provides none.
+        # `redirect_uri` is therefore the only CSRF and authorization-code-
+        # interception control on magic link. The server provides none.
         # Never make `state`/`redirect_uri` caller-overridable.
         state = PKCE.generate_random_string(32)
         auth_params["redirect_uri"] = redirect_uri
@@ -370,13 +371,14 @@ class PasswordlessClient:
         """
         Copy caller-supplied auth params, forwarding only allowlisted keys.
 
-        Enforced as an allowlist (Global §3): a key outside
-        ``PASSWORDLESS_ALLOWED_AUTH_PARAMS`` is rejected. SDK-owned keys get a
-        precise "set by the SDK" message; anything else is reported as
-        unsupported so a new authorize param cannot pass through silently.
+        Args:
+            auth_params: Caller-supplied authorize parameters, or None.
+
+        Returns:
+            A new dict containing only allowlisted keys.
 
         Raises:
-            InvalidArgumentError: When a reserved or unrecognized param is present.
+            InvalidArgumentError: When a reserved or unrecognized key is present.
         """
         if not auth_params:
             return {}

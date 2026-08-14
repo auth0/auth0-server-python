@@ -143,7 +143,7 @@ class TransactionData(BaseModel):
     """
 
     audience: Optional[str] = None
-    # Optional: interactive login sets this for PKCE; the passwordless magic-link
+    # Interactive login sets this for PKCE. The passwordless magic-link
     # transaction has no verifier (plain auth-code exchange), so it stays None.
     code_verifier: Optional[str] = None
     app_state: Optional[Any] = None
@@ -691,179 +691,6 @@ class MfaTokenContext(BaseModel):
 
 
 # =============================================================================
-# Passwordless Types
-# =============================================================================
-
-# Passwordless connection strategies (Legacy Passwordless connections).
-PasswordlessConnection = Literal["email", "sms"]
-
-# authParams keys the SDK owns and MUST NOT let a caller override for the
-# magic-link flow. A caller-controlled redirect_uri/state would allow the
-# emailed code+state to be redirected to an attacker (authorization-code
-# interception); the PKCE/nonce/response_type keys are reserved (not set by
-# the SDK for magic link, but never caller-overridable either).
-# Mirrors nextjs-auth0's MAGIC_LINK_EXCLUDED_PARAMS / INTERNAL_AUTHORIZE_PARAMS.
-# Kept explicit so a rejected override gets a precise "set by the SDK" message.
-PASSWORDLESS_RESERVED_AUTH_PARAMS = frozenset(
-    {
-        "client_id",
-        "client_secret",
-        "redirect_uri",
-        "response_type",
-        "state",
-        "nonce",
-        "code_challenge",
-        "code_challenge_method",
-    }
-)
-
-# Caller-supplied authParams keys the SDK will forward. This is an allowlist
-# (Global §3: allowlists, not denylists) — any key outside it is rejected, so a
-# future security-relevant authorize parameter cannot pass through silently on
-# an SDK upgrade. Extend deliberately as new safe passthrough params are needed.
-PASSWORDLESS_ALLOWED_AUTH_PARAMS = frozenset(
-    {
-        "audience",
-        "login_hint",
-        "ui_locales",
-        "screen_hint",
-        "prompt",
-        "max_age",
-        "acr_values",
-        "scope",
-    }
-)
-
-# Minimal BCP 47 language tag: primary subtag plus optional subtags.
-_BCP47_LANGUAGE_RE = r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
-# E.164 phone number: '+' followed by up to 15 digits, first digit non-zero.
-_E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
-
-
-class _StartPasswordlessBase(BaseModel):
-    """Shared options for starting a passwordless flow."""
-
-    # Unknown keys raise rather than being silently ignored, so a caller
-    # passing an unsupported kwarg is told, not quietly dropped.
-    model_config = ConfigDict(extra="forbid")
-
-    # BCP 47 tag (e.g. "fr", "en-US"). Forwarded as x-request-language to
-    # localise the email/SMS template.
-    language: Optional[str] = None
-    # Extra params forwarded to /passwordless/start. SDK-owned keys
-    # (PASSWORDLESS_RESERVED_AUTH_PARAMS) are stripped in the client.
-    auth_params: Optional[dict[str, Any]] = None
-    # Attempted solution to a captcha challenge, when the tenant requires one.
-    captcha: Optional[str] = None
-    # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` so brute-force
-    # and suspicious-IP protection key on the real user, not the app server. Only
-    # honored for confidential clients with "Trust Token Endpoint IP Header" on.
-    client_ip: Optional[str] = None
-
-    @field_validator("language")
-    @classmethod
-    def _validate_language(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        if not re.match(_BCP47_LANGUAGE_RE, value):
-            raise ValueError("language must be a valid BCP 47 tag (e.g. 'fr', 'en-US')")
-        return value
-
-
-class StartPasswordlessEmailOptions(_StartPasswordlessBase):
-    """Options for starting an email passwordless flow (OTP code or magic link)."""
-
-    connection: Literal["email"] = "email"
-    email: str
-    # "code" -> email OTP; "link" -> magic link.
-    send: Literal["code", "link"] = "code"
-
-
-class StartPasswordlessSmsOptions(_StartPasswordlessBase):
-    """Options for starting an SMS passwordless (OTP) flow."""
-
-    connection: Literal["sms"] = "sms"
-    # E.164 format, e.g. "+14155550100".
-    phone_number: str
-
-    @field_validator("phone_number")
-    @classmethod
-    def _validate_phone_number(cls, value: str) -> str:
-        if not _E164_RE.match(value):
-            raise ValueError("phone_number must be in E.164 format (e.g. '+14155550100')")
-        return value
-
-
-StartPasswordlessOptions = Union[StartPasswordlessEmailOptions, StartPasswordlessSmsOptions]
-
-
-class VerifyPasswordlessOtpOptions(BaseModel):
-    """
-    Options for verifying a passwordless OTP and establishing a session.
-
-    Exactly one of ``email`` / ``phone_number`` must be provided and must
-    match ``connection`` (email -> email, sms -> phone_number).
-    """
-
-    # Unknown keys raise rather than being silently ignored, so a caller
-    # passing an unsupported kwarg is told, not quietly dropped.
-    model_config = ConfigDict(extra="forbid")
-
-    connection: PasswordlessConnection
-    # Public field name mirrors nextjs-auth0's `verificationCode`; sent to
-    # Auth0 as the `otp` form parameter.
-    verification_code: str
-    email: Optional[str] = None
-    phone_number: Optional[str] = None
-    scope: Optional[str] = None
-    audience: Optional[str] = None
-    # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` on the OTP
-    # token exchange so brute-force protection keys on the real user, not the
-    # app server. Honored only for confidential clients with "Trust Token
-    # Endpoint IP Header" enabled.
-    client_ip: Optional[str] = None
-
-    @field_validator("phone_number")
-    @classmethod
-    def _validate_phone_number(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        if not _E164_RE.match(value):
-            raise ValueError("phone_number must be in E.164 format (e.g. '+14155550100')")
-        return value
-
-    @model_validator(mode="after")
-    def _validate_identifier(self) -> "VerifyPasswordlessOtpOptions":
-        if self.connection == "email":
-            if not self.email:
-                raise ValueError("email is required when connection='email'")
-            if self.phone_number:
-                raise ValueError("phone_number must not be set when connection='email'")
-        else:  # sms
-            if not self.phone_number:
-                raise ValueError("phone_number is required when connection='sms'")
-            if self.email:
-                raise ValueError("email must not be set when connection='sms'")
-        return self
-
-    @property
-    def username(self) -> str:
-        """The Auth0 `username` value for the OTP grant (email or phone)."""
-        return self.email if self.connection == "email" else self.phone_number
-
-
-class PasswordlessStartResult(BaseModel):
-    """Success payload from POST /passwordless/start."""
-
-    # Auth0 returns the request id as `_id`; alias so `.id` is populated.
-    id: Optional[str] = Field(default=None, alias="_id")
-
-    class Config:
-        extra = "allow"  # Allow additional fields returned by Auth0
-        populate_by_name = True  # accept both `_id` (alias) and `id`
-
-
-# =============================================================================
 # Passkey & MyAccount Authentication Methods Types
 # =============================================================================
 
@@ -1031,3 +858,170 @@ class PasskeyTokenResponse(BaseModel):
     scope: Optional[str] = None
     id_token: Optional[str] = None
     refresh_token: Optional[str] = None
+
+
+
+# =============================================================================
+# Passwordless Types
+# =============================================================================
+
+# Passwordless connection strategies (Legacy Passwordless connections).
+PasswordlessConnection = Literal["email", "sms"]
+
+# authParams keys the SDK owns and MUST NOT let a caller override for the
+# magic-link flow. A caller-controlled redirect_uri/state would allow the
+# emailed code+state to be redirected to an attacker (authorization-code
+# interception). The PKCE/nonce/response_type keys are reserved (not set by
+# the SDK for magic link, but never caller-overridable either).
+PASSWORDLESS_RESERVED_AUTH_PARAMS = frozenset(
+    {
+        "client_id",
+        "client_secret",
+        "redirect_uri",
+        "response_type",
+        "state",
+        "nonce",
+        "code_challenge",
+        "code_challenge_method",
+    }
+)
+
+# Caller-supplied authParams keys the SDK will forward. This is an allowlist, so
+# a key outside it is rejected and a future security-relevant authorize
+# parameter cannot pass through silently on an SDK upgrade. Extend deliberately
+# as new safe passthrough params are needed.
+PASSWORDLESS_ALLOWED_AUTH_PARAMS = frozenset(
+    {
+        "audience",
+        "login_hint",
+        "ui_locales",
+        "screen_hint",
+        "prompt",
+        "max_age",
+        "acr_values",
+        "scope",
+    }
+)
+
+# Minimal BCP 47 language tag: primary subtag plus optional subtags.
+_BCP47_LANGUAGE_RE = r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
+# E.164 phone number: '+' followed by up to 15 digits, first digit non-zero.
+_E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
+
+
+class _StartPasswordlessBase(BaseModel):
+    """Shared options for starting a passwordless flow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # BCP 47 tag (e.g. "fr", "en-US"). Forwarded as x-request-language to
+    # localise the email/SMS template.
+    language: Optional[str] = None
+    # Extra params forwarded to /passwordless/start. SDK-owned keys
+    # (PASSWORDLESS_RESERVED_AUTH_PARAMS) are stripped in the client.
+    auth_params: Optional[dict[str, Any]] = None
+    # Attempted solution to a captcha challenge, when the tenant requires one.
+    captcha: Optional[str] = None
+    # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` so brute-force
+    # and suspicious-IP protection key on the real user, not the app server. Only
+    # honored for confidential clients with "Trust Token Endpoint IP Header" on.
+    client_ip: Optional[str] = None
+
+    @field_validator("language")
+    @classmethod
+    def _validate_language(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not re.match(_BCP47_LANGUAGE_RE, value):
+            raise ValueError("language must be a valid BCP 47 tag (e.g. 'fr', 'en-US')")
+        return value
+
+
+class StartPasswordlessEmailOptions(_StartPasswordlessBase):
+    """Options for starting an email passwordless flow (OTP code or magic link)."""
+
+    connection: Literal["email"] = "email"
+    email: str
+    # "code" sends an email OTP. "link" sends a magic link.
+    send: Literal["code", "link"] = "code"
+
+
+class StartPasswordlessSmsOptions(_StartPasswordlessBase):
+    """Options for starting an SMS passwordless (OTP) flow."""
+
+    connection: Literal["sms"] = "sms"
+    # E.164 format, e.g. "+14155550100".
+    phone_number: str
+
+    @field_validator("phone_number")
+    @classmethod
+    def _validate_phone_number(cls, value: str) -> str:
+        if not _E164_RE.match(value):
+            raise ValueError("phone_number must be in E.164 format (e.g. '+14155550100')")
+        return value
+
+
+StartPasswordlessOptions = Union[StartPasswordlessEmailOptions, StartPasswordlessSmsOptions]
+
+
+class VerifyPasswordlessOtpOptions(BaseModel):
+    """
+    Options for verifying a passwordless OTP and establishing a session.
+
+    Exactly one of ``email`` / ``phone_number`` must be provided and must
+    match ``connection`` (email -> email, sms -> phone_number).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    connection: PasswordlessConnection
+    # Sent to Auth0 as the `otp` form parameter.
+    verification_code: str
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    scope: Optional[str] = None
+    audience: Optional[str] = None
+    # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` on the OTP
+    # token exchange so brute-force protection keys on the real user, not the
+    # app server. Honored only for confidential clients with "Trust Token
+    # Endpoint IP Header" enabled.
+    client_ip: Optional[str] = None
+
+    @field_validator("phone_number")
+    @classmethod
+    def _validate_phone_number(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not _E164_RE.match(value):
+            raise ValueError("phone_number must be in E.164 format (e.g. '+14155550100')")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_identifier(self) -> "VerifyPasswordlessOtpOptions":
+        if self.connection == "email":
+            if not self.email:
+                raise ValueError("email is required when connection='email'")
+            if self.phone_number:
+                raise ValueError("phone_number must not be set when connection='email'")
+        else:  # sms
+            if not self.phone_number:
+                raise ValueError("phone_number is required when connection='sms'")
+            if self.email:
+                raise ValueError("email must not be set when connection='sms'")
+        return self
+
+    @property
+    def username(self) -> str:
+        """The Auth0 `username` value for the OTP grant (email or phone)."""
+        return self.email if self.connection == "email" else self.phone_number
+
+
+class PasswordlessStartResult(BaseModel):
+    """Success payload from POST /passwordless/start."""
+
+    # Auth0 returns the request id as `_id`. Aliased so `.id` is populated.
+    id: Optional[str] = Field(default=None, alias="_id")
+
+    class Config:
+        extra = "allow"
+        populate_by_name = True

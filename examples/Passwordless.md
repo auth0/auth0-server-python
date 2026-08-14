@@ -6,7 +6,7 @@ Passwordless lets users sign in with a one-time code sent by email or SMS, or wi
 > Passwordless API flows use Auth0 Legacy Passwordless connections (`email` and `sms`). Enable the **Passwordless OTP** grant for your application under **Applications -> Your App -> Advanced Settings -> Grant Types**. See the [Auth0 Passwordless API documentation](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints).
 
 > [!IMPORTANT]
-> These flows are for confidential server-side applications. Tokens stay on the server; the browser should only receive your application's session cookie or opaque session reference.
+> These flows are for confidential server-side applications. Tokens stay on the server. The browser should only receive your application's session cookie or opaque session reference.
 
 > [!NOTE]
 > **This SDK currently does not support DPoP on passwordless.** Neither `start()` nor `verify()` accepts a `dpop_key`, and tokens issued by the OTP grant or the magic-link callback are always Bearer tokens, never sender-constrained.
@@ -30,11 +30,11 @@ Passwordless has two shapes:
 1. **OTP code** - `start()` sends a code by email or SMS. Your app collects that code, then `verify()` exchanges it at `/oauth/token` with the passwordless OTP grant and **creates a server-side session**.
 2. **Magic link** - `start(send="link")` sends a one-click email link. Auth0 redirects the user back to your callback URL, and your app completes the flow with `complete_interactive_login()`. The callback creates the server-side session.
 
-OTP start does **not** create a session. The session exists only after `verify()` succeeds. Magic-link start writes a transaction so the callback can validate the returned `state`; the session exists only after the callback completes.
+OTP start does **not** create a session. The session exists only after `verify()` succeeds. Magic-link start writes a transaction so the callback can validate the returned `state`. The session exists only after the callback completes.
 
 ## Prerequisites
 
-These flows require a **Regular Web Application** — passwordless token exchange
+These flows require a **Regular Web Application**. Passwordless token exchange
 needs a client secret, which a public/SPA client cannot hold safely.
 
 Two tenant-level settings are also required and are easy to miss because
@@ -42,14 +42,14 @@ neither failure mode looks like a configuration problem:
 
 1. **Authentication Profile must be "Identifier First."** The default
    "Universal Login" profile blocks the direct `/oauth/token` call this SDK
-   uses for OTP verification — without it, OTP `verify()` fails with
+   uses for OTP verification. Without it, OTP `verify()` fails with
    `unauthorized_client`. Set it under your tenant's Authentication Profile
    settings. (Skip this if you only use passwordless via Universal Login
    redirects rather than this SDK's embedded flow.)
 2. **Enable the Passwordless OTP grant type** on your application
    (**Applications -> Your App -> Advanced Settings -> Grant Types**). Without
    it, OTP verification also fails with `unauthorized_client`.
-3. **Magic link only** — set the tenant flag
+3. **Magic link only.** Set the tenant flag
    `universal_login.passwordless.allow_magiclink_verify_without_session` to
    `true` via the Management API:
 
@@ -59,7 +59,7 @@ neither failure mode looks like a configuration problem:
    ```
 
    This is required for **any** server-side SDK completing magic link (this
-   one, Express, Next.js, etc.) — the browser that opens the emailed link is
+   one, Express, Next.js, etc.). The browser that opens the emailed link is
    not guaranteed to be the same browser/session that started the flow.
    Without it, the user sees: *"The link must be opened on the same device
    and browser from which you submitted your email address."* This flag is
@@ -146,7 +146,7 @@ result = await server_client.passwordless.verify(
 )
 ```
 
-By default, email OTP requests `openid profile email`; SMS OTP requests `openid profile` because SMS identities do not have an email claim to satisfy.
+By default, email OTP requests `openid profile email`. SMS OTP requests `openid profile` because SMS identities do not have an email claim to satisfy.
 
 ## 3. Email magic link
 
@@ -187,10 +187,10 @@ user = result["state_data"]["user"]
 > [!WARNING]
 > Do not let callers override `redirect_uri`, `state`, `response_type`, `nonce`, or PKCE fields in magic-link `auth_params`. The SDK owns these values so the emailed authorization code and state cannot be redirected to an attacker-controlled URL.
 >
-> This matters more than it looks: Auth0 treats magic-link `state` as a pure echo and does not validate it server-side, and the clicked link's query string can overwrite whatever the browser originally stored. The SDK's single-use, `state`-keyed transaction plus the exact-match `redirect_uri` are therefore the *entire* CSRF / authorization-code-interception defense on this flow — Auth0 will not catch a bypass for you.
+> This matters more than it looks: Auth0 treats magic-link `state` as a pure echo and does not validate it server-side, and the clicked link's query string can overwrite whatever the browser originally stored. The SDK's single-use, `state`-keyed transaction plus the exact-match `redirect_uri` are therefore the *entire* CSRF / authorization-code-interception defense on this flow. Auth0 will not catch a bypass for you.
 
 > [!NOTE]
-> If the callback fails (expired link, JWKS unavailable, a rejected ID token), have the user restart the flow from `start()` rather than retrying the same link — a failed callback does not guarantee the transaction was cleaned up, so re-submitting the same callback URL can produce a confusing error instead of a clear "session expired, please try again."
+> If the callback fails (expired link, JWKS unavailable, a rejected ID token), have the user restart the flow from `start()` rather than retrying the same link. A failed callback does not guarantee the transaction was cleaned up, so re-submitting the same callback URL can produce a confusing error instead of a clear "session expired, please try again."
 
 ## 4. Custom scopes and audiences
 
@@ -228,7 +228,7 @@ await server_client.passwordless.start(
 )
 ```
 
-A caller-supplied magic-link `scope` **replaces** the default wholesale rather than merging with it. The SDK re-injects `openid` when your scope omits it, because the magic-link callback would otherwise complete on a token response carrying no ID token — a session built from claims nothing verified. `openid` is never duplicated and your scope order is preserved otherwise.
+A caller-supplied magic-link `scope` **replaces** the default wholesale rather than merging with it. The SDK re-injects `openid` when your scope omits it, because the magic-link callback would otherwise complete on a token response carrying no ID token, a session built from claims nothing verified. `openid` is never duplicated and your scope order is preserved otherwise.
 
 > [!NOTE]
 > `state` is intentionally not a caller-supplied auth parameter in this SDK. If you need app-specific return data, store it server-side against your own transaction/session context instead of putting it into the Auth0 magic-link `state`.
@@ -364,7 +364,7 @@ except Auth0Error as e:
 - `cause` - the parsed JSON error body, or the response text truncated to 2048 characters when the body was not JSON
 
 > [!WARNING]
-> `cause` may hold a raw upstream body (an HTML error page, WAF block page, or proxy dump). It is length-capped, but not redacted — do not log it at a level where untrusted upstream content is unwelcome.
+> `cause` may hold a raw upstream body (an HTML error page, WAF block page, or proxy dump). It is length-capped, but not redacted. Do not log it at a level where untrusted upstream content is unwelcome.
 
 Because a 429 that carries an explicit Auth0 `error` reports that server code, `code == "too_many_requests"` is not a reliable rate-limit predicate. Branch on `retry_after is not None`, or on the HTTP status if you need certainty.
 
