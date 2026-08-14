@@ -279,7 +279,7 @@ class TestStartMagicLink:
         client = _make_client()
         _mock_http(client, 200, {})
 
-        with pytest.raises(InvalidArgumentError):
+        with pytest.raises(InvalidArgumentError, match="is set by the SDK and cannot be overridden"):
             await client.passwordless.start(
                 StartPasswordlessEmailOptions(
                     email="user@example.com",
@@ -944,6 +944,20 @@ class TestVerify:
         assert saved_state.id_token == "mfa_idt"
         assert saved_state.internal.sid == "SID-MFA"
         assert saved_state.token_sets[0].access_token == "mfa_at"
+
+    def test_verify_options_reject_organization(self):
+        """
+        Passwordless has no organization concept: VerifyPasswordlessOtpOptions
+        rejects the field outright, so the MFA-into-session path can never be
+        reached with an organization in scope.
+        """
+        with pytest.raises(ValidationError):
+            VerifyPasswordlessOtpOptions(
+                connection="email",
+                email="user@example.com",
+                verification_code="123456",
+                organization="org_abc123",
+            )
 
     @pytest.mark.asyncio
     async def test_mfa_verify_persist_expired_id_token_maps_to_typed_error(self, mocker):

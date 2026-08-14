@@ -2998,15 +2998,6 @@ class ServerClient(Generic[TStoreOptions]):
         return self._mfa_client
 
     # ============================================================================
-    # Passwordless (embedded login)
-    # ============================================================================
-
-    @property
-    def passwordless(self) -> PasswordlessClient:
-        """Access the passwordless client for embedded passwordless operations."""
-        return self._passwordless_client
-
-    # ============================================================================
     # PASSKEY AUTHENTICATION
     # ============================================================================
 
@@ -3374,3 +3365,12 @@ class ServerClient(Generic[TStoreOptions]):
             if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError, ApiError, IssuerValidationError, MfaRequiredError, OrganizationTokenValidationError)):
                 raise
             raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Passkey sign-in failed", e) from e
+
+    # ============================================================================
+    # Passwordless (embedded login)
+    # ============================================================================
+
+    @property
+    def passwordless(self) -> PasswordlessClient:
+        """Access the passwordless client for embedded passwordless operations."""
+        return self._passwordless_client
