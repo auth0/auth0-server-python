@@ -1,5 +1,5 @@
 """
-Tests for PasswordlessClient - embedded passwordless (OTP + magic link).
+Tests for PasswordlessClient embedded passwordless (OTP + magic link).
 """
 
 from unittest.mock import AsyncMock, MagicMock
