@@ -4,11 +4,32 @@ from typing import Union
 
 import jwt
 
+from auth0_server_python.error import ConfigurationError
+
 # RFC 7523 client-assertion type for private_key_jwt authentication.
 CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 
 # Assertion lifetime in seconds.
 _ASSERTION_LIFETIME = 60
+
+
+def validate_client_assertion_key(private_key: Union[str, bytes], alg: str = "RS256") -> None:
+    """
+    Verify the signing key and algorithm can produce a client assertion.
+
+    Args:
+        private_key: The client's private signing key (PKCS8 PEM string or bytes).
+        alg: The signing algorithm (defaults to "RS256").
+
+    Raises:
+        ConfigurationError: If the key is malformed or does not match the algorithm.
+    """
+    try:
+        jwt.encode({"probe": True}, private_key, algorithm=alg)
+    except Exception as e:
+        raise ConfigurationError(
+            f"Invalid client_assertion_signing_key for algorithm {alg}: {e}"
+        )
 
 
 def build_client_assertion(

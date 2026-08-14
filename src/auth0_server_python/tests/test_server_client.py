@@ -8,8 +8,9 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import jwt
 import pytest
+from authlib.integrations.httpx_client import AsyncOAuth2Client
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from jwcrypto import jwk
 
 from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
@@ -210,6 +211,45 @@ async def test_par_request_includes_response_type(mocker):
     _, kwargs = mock_post.call_args
     assert kwargs["data"]["response_type"] == "code"
     assert "response_type=code" in final_url
+
+
+@pytest.mark.asyncio
+async def test_par_request_caller_cannot_inject_client_assertion(mocker):
+    """A caller-supplied client_assertion in authorization_params never reaches the PAR body."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="my_client",
+        client_secret="my_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        pushed_authorization_requests=True,
+        authorization_params={"redirect_uri": "/test_redirect_uri", "response_type": "code"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "authorization_endpoint": "https://auth0.local/authorize",
+            "pushed_authorization_request_endpoint": "https://auth0.local/oauth/par",
+        },
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    par_response = AsyncMock()
+    par_response.status_code = 201
+    par_response.json = MagicMock(return_value={"request_uri": "urn:req:abc", "expires_in": 60})
+    mock_post.return_value = par_response
+
+    await client.start_interactive_login(
+        options=StartInteractiveLoginOptions(
+            authorization_params={"client_assertion": "attacker", "client_assertion_type": "attacker-type"}
+        )
+    )
+
+    posted = mock_post.call_args[1]["data"]
+    assert "client_assertion" not in posted
+    assert "client_assertion_type" not in posted
 
 
 @pytest.mark.asyncio
@@ -2070,6 +2110,43 @@ async def test_backchannel_auth_uses_private_key_jwt_assertion(mocker):
 
 
 @pytest.mark.asyncio
+async def test_backchannel_auth_caller_cannot_inject_client_assertion(mocker):
+    """A caller-supplied client_assertion in authorization_params never reaches the bc-authorize body."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="my_client",
+        client_secret="my_secret",
+        secret="some-secret",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "backchannel_authentication_endpoint": "https://auth0.local/bc-authorize",
+            "token_endpoint": "https://auth0.local/token",
+        },
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    init_response = AsyncMock()
+    init_response.status_code = 200
+    init_response.json = MagicMock(return_value={"auth_req_id": "req_123", "interval": 0.1, "expires_in": 60})
+    grant_response = AsyncMock()
+    grant_response.status_code = 200
+    grant_response.json = MagicMock(return_value={"access_token": "ciba_at", "expires_in": 60})
+    mock_post.side_effect = [init_response, grant_response]
+
+    await client.backchannel_authentication({
+        "login_hint": {"sub": "<sub>"},
+        "authorization_params": {"client_assertion": "attacker", "client_assertion_type": "attacker-type"},
+    })
+
+    bc_authorize_body = mock_post.call_args_list[0].kwargs["data"]
+    assert "client_assertion" not in bc_authorize_body
+    assert "client_assertion_type" not in bc_authorize_body
+
+
+@pytest.mark.asyncio
 async def test_backchannel_auth_token_exchange_failed(mocker):
     client = ServerClient(
         domain="auth0.local",
@@ -2658,6 +2735,95 @@ async def test_refresh_token_no_client_auth_raises_configuration_error(mocker):
         await client.get_token_by_refresh_token({"refresh_token": "abc"})
 
     mock_post.assert_not_awaited()
+
+
+def test_malformed_signing_key_raises_at_construction():
+    """A malformed PEM fails at construction, not on the first token request."""
+    with pytest.raises(ConfigurationError):
+        ServerClient(
+            domain="auth0.local",
+            client_id="my_client",
+            client_assertion_signing_key="-----BEGIN PRIVATE KEY-----\nnope\n-----END PRIVATE KEY-----",
+            secret="some-secret",
+        )
+
+
+def test_signing_key_algorithm_mismatch_raises_at_construction():
+    """A key that does not match the configured algorithm fails at construction."""
+    ec_key = ec.generate_private_key(ec.SECP256R1())
+    ec_pem = ec_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+
+    with pytest.raises(ConfigurationError):
+        ServerClient(
+            domain="auth0.local",
+            client_id="my_client",
+            client_assertion_signing_key=ec_pem,
+            client_assertion_signing_alg="RS256",
+            secret="some-secret",
+        )
+
+
+def test_unknown_signing_algorithm_raises_at_construction():
+    """An unsupported algorithm fails at construction."""
+    with pytest.raises(ConfigurationError):
+        ServerClient(
+            domain="auth0.local",
+            client_id="my_client",
+            client_assertion_signing_key=_generate_rsa_private_key_pem(),
+            client_assertion_signing_alg="NOPE999",
+            secret="some-secret",
+        )
+
+
+@pytest.mark.asyncio
+async def test_login_with_both_secret_and_key_sends_only_assertion():
+    """With both a secret and a signing key, the code exchange sends the assertion and no basic auth header."""
+    private_key = _generate_rsa_private_key_pem()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="my_client",
+        client_secret="<client_secret>",
+        client_assertion_signing_key=private_key,
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+    )
+
+    # The signing key must win, so the OAuth client holds no secret to add a basic-auth header.
+    assert client._oauth.client_secret is None
+
+    captured = {}
+
+    def handler(request):
+        captured["authorization"] = request.headers.get("authorization")
+        captured["body"] = request.content.decode()
+        return httpx.Response(200, json={"access_token": "at", "token_type": "Bearer", "expires_in": 3600})
+
+    # Mirror the real OAuth client's auth config onto a transport-backed one to inspect the wire.
+    wire_oauth = AsyncOAuth2Client(
+        client_id=client._oauth.client_id,
+        client_secret=client._oauth.client_secret,
+        transport=httpx.MockTransport(handler),
+    )
+    params = {}
+    client._apply_client_authentication(params, "https://auth0.local/")
+
+    await wire_oauth.fetch_token(
+        "https://auth0.local/oauth/token",
+        grant_type="authorization_code",
+        code="abc",
+        code_verifier="v",
+        redirect_uri="https://app/cb",
+        **params,
+    )
+
+    assert captured["authorization"] is None
+    assert "client_assertion=" in captured["body"]
+    assert "client_secret=" not in captured["body"]
 
 
 # =============================================================================

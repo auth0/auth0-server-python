@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from auth0_server_python.auth_schemes.client_assertion import (
     CLIENT_ASSERTION_TYPE,
     build_client_assertion,
+    validate_client_assertion_key,
 )
 from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
 from auth0_server_python.auth_server.mfa_client import MfaClient
@@ -181,6 +182,10 @@ class ServerClient(Generic[TStoreOptions]):
         self._client_secret = client_secret
         self._client_assertion_signing_key = client_assertion_signing_key
         self._client_assertion_signing_alg = client_assertion_signing_alg or "RS256"
+        if client_assertion_signing_key:
+            validate_client_assertion_key(
+                client_assertion_signing_key, self._client_assertion_signing_alg
+            )
         self._redirect_uri = redirect_uri
         self._secret = secret
         self._default_authorization_params = authorization_params or {}
@@ -197,10 +202,10 @@ class ServerClient(Generic[TStoreOptions]):
         self._telemetry = Telemetry.default()
         self._telemetry_headers = self._telemetry.headers
 
-        # Initialize OAuth client
+        # A signing key takes precedence, so the secret is withheld to keep client auth single.
         self._oauth = AsyncOAuth2Client(
             client_id=client_id,
-            client_secret=client_secret,
+            client_secret=None if client_assertion_signing_key else client_secret,
             headers=self._telemetry_headers,
         )
 
@@ -222,6 +227,7 @@ class ServerClient(Generic[TStoreOptions]):
             state_store=self._state_store,
             state_identifier=self._state_identifier,
             headers=self._telemetry_headers,
+            apply_client_authentication=self._apply_client_authentication,
         )
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
@@ -236,7 +242,7 @@ class ServerClient(Generic[TStoreOptions]):
         Apply client authentication to an outgoing token request.
 
         Args:
-            params: The outgoing token request body, mutated in place when a client assertion is injected.
+            params: The outgoing token request body. Any caller-supplied client-auth keys are removed, then the client assertion is added (or the client secret when in_body is True).
             issuer: The authorization server issuer identifier, used as the assertion audience.
             in_body: When True, place the client secret in params instead of returning it for HTTP basic auth (for endpoints that authenticate the client in the request body).
 
@@ -246,6 +252,9 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             ConfigurationError: If neither client_secret nor client_assertion_signing_key is configured.
         """
+        for reserved in ("client_secret", "client_assertion", "client_assertion_type"):
+            params.pop(reserved, None)
+
         if self._client_assertion_signing_key:
             params["client_assertion"] = build_client_assertion(
                 self._client_assertion_signing_key,
@@ -533,6 +542,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             Authorization URL to redirect the user to
+
+        Raises:
+            ConfigurationError: If no client authentication is configured.
         """
         options = options or StartInteractiveLoginOptions()
 
@@ -675,6 +687,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             Dictionary containing session data and app state
+
+        Raises:
+            ConfigurationError: If no client authentication is configured.
         """
         # Parse the URL to get query parameters
         parsed_url = urlparse(url)
