@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import ValidationError
 
 from auth0_server_python.auth_server.passwordless_client import (
@@ -20,6 +22,7 @@ from auth0_server_python.auth_types import (
     VerifyPasswordlessOtpOptions,
 )
 from auth0_server_python.error import (
+    ConfigurationError,
     InvalidArgumentError,
     IssuerValidationError,
     MfaRequiredError,
@@ -1034,3 +1037,96 @@ class TestVerify:
             )
         assert exc.value.code == "mfa_required"
         client._state_store.set.assert_not_awaited()
+
+
+# ── Private Key JWT (client assertion) client authentication ────────────────
+
+
+def _generate_rsa_private_key_pem() -> str:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+
+
+def _public_key_pem(private_key_pem: str) -> str:
+    private_key = serialization.load_pem_private_key(
+        private_key_pem.encode("ascii"), password=None
+    )
+    return private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+
+
+class TestPrivateKeyJwt:
+    @pytest.mark.asyncio
+    async def test_start_uses_private_key_jwt_assertion(self):
+        private_key = _generate_rsa_private_key_pem()
+        client = _make_client(client_secret=None, client_assertion_signing_key=private_key)
+        http = _mock_http(client, 200, {})
+
+        await client.passwordless.start(
+            StartPasswordlessEmailOptions(email="user@example.com", send="code")
+        )
+
+        body = http.post.call_args.kwargs["json"]
+        assert "client_secret" not in body
+        assert body["client_assertion_type"] == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        assert len(body["client_assertion"].split(".")) == 3
+        claims = jwt.decode(
+            body["client_assertion"],
+            _public_key_pem(private_key),
+            algorithms=["RS256"],
+            audience=f"https://{DOMAIN}/",
+        )
+        assert claims["iss"] == CLIENT_ID
+        assert claims["sub"] == CLIENT_ID
+
+    @pytest.mark.asyncio
+    async def test_verify_uses_private_key_jwt_assertion(self, mocker):
+        private_key = _generate_rsa_private_key_pem()
+        client = _make_client(client_secret=None, client_assertion_signing_key=private_key)
+        claims_from_id_token = {"iss": ISSUER, "sub": "auth0|1", "sid": "SID-123", "iat": 1_000}
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        mocker.patch.object(
+            client,
+            "_get_jwks_cached",
+            return_value={"keys": [{"kty": "RSA", "kid": "k1"}]},
+        )
+        mocker.patch.object(client, "_verify_and_decode_jwt", return_value=claims_from_id_token)
+        http = _mock_http(
+            client,
+            200,
+            {"access_token": "at", "id_token": "idt", "expires_in": 3600, "scope": "openid"},
+        )
+
+        await client.passwordless.verify(
+            VerifyPasswordlessOtpOptions(
+                connection="email", email="user@example.com", verification_code="123456"
+            )
+        )
+
+        data = http.post.call_args.kwargs["data"]
+        assert "client_secret" not in data
+        assert data["client_assertion_type"] == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        assert len(data["client_assertion"].split(".")) == 3
+        claims = jwt.decode(
+            data["client_assertion"],
+            _public_key_pem(private_key),
+            algorithms=["RS256"],
+            audience=ISSUER,
+        )
+        assert claims["iss"] == CLIENT_ID
+        assert claims["sub"] == CLIENT_ID
+
+    @pytest.mark.asyncio
+    async def test_start_no_client_auth_configured_raises_configuration_error(self):
+        client = _make_client(client_secret=None)
+
+        with pytest.raises(ConfigurationError):
+            await client.passwordless.start(
+                StartPasswordlessEmailOptions(email="user@example.com", send="code")
+            )
