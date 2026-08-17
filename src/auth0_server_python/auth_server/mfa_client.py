@@ -73,6 +73,7 @@ class MfaClient:
             Callable[..., Awaitable[None]]
         ] = None,
         mfa_token_ttl: int = DEFAULT_MFA_TOKEN_TTL,
+        apply_client_authentication: Optional[Callable] = None,
     ):
         if callable(domain):
             self._domain = None
@@ -90,11 +91,19 @@ class MfaClient:
         if mfa_token_ttl <= 0:
             raise ConfigurationError("mfa_token_ttl must be a positive number of seconds")
         self._mfa_token_ttl = mfa_token_ttl
+        self._apply_client_authentication = apply_client_authentication
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with default headers injected."""
         headers = {**kwargs.pop("headers", {}), **self._headers}
         return httpx.AsyncClient(headers=headers, **kwargs)
+
+    def _apply_mfa_client_authentication(self, body: dict, base_url: str) -> None:
+        """Add client authentication to an MFA request body (client_secret or client assertion)."""
+        if self._apply_client_authentication:
+            self._apply_client_authentication(body, f"{base_url}/", in_body=True)
+        elif self._client_secret:
+            body["client_secret"] = self._client_secret
 
     async def _resolve_base_url(
         self,
@@ -403,6 +412,7 @@ class MfaClient:
 
         Raises:
             MfaChallengeError: When the challenge fails.
+            ConfigurationError: If neither client_secret nor client_assertion_signing_key is configured.
         """
         mfa_token = options.get("mfa_token")
         if not mfa_token:
@@ -425,9 +435,9 @@ class MfaClient:
         body: dict[str, Any] = {
             "mfa_token": context.mfa_token,
             "client_id": self._client_id,
-            "client_secret": self._client_secret,
             "challenge_type": challenge_type
         }
+        self._apply_mfa_client_authentication(body, base_url)
 
         if "authenticator_id" in options and options["authenticator_id"]:
             body["authenticator_id"] = options["authenticator_id"]
@@ -492,17 +502,20 @@ class MfaClient:
             MfaVerifyError: When verification fails, or when dpop_key was supplied
                 but the server returned an unbound (Bearer) token.
             MfaRequiredError: When chained MFA is required.
+            ConfigurationError: If neither client_secret nor client_assertion_signing_key is configured.
         """
         mfa_token = options.get("mfa_token")
         if not mfa_token:
             raise MfaTokenInvalidError()
         context = self.decrypt_mfa_token(mfa_token)
 
+        base_url = await self._resolve_base_url(store_options)
+
         body: dict[str, Any] = {
             "client_id": self._client_id,
-            "client_secret": self._client_secret,
             "mfa_token": context.mfa_token
         }
+        self._apply_mfa_client_authentication(body, base_url)
 
         if "otp" in options:
             body["grant_type"] = "http://auth0.com/oauth/grant-type/mfa-otp"
@@ -521,7 +534,6 @@ class MfaClient:
             )
 
         try:
-            base_url = await self._resolve_base_url(store_options)
             token_endpoint = f"{base_url}/oauth/token"
 
             async with self._get_http_client() as client:
