@@ -3,7 +3,7 @@
 Passwordless lets users sign in with a one-time code sent by email or SMS, or with a magic link sent by email. This guide covers the **embedded login** flow on `ServerClient.passwordless` and how each path establishes a server-side session.
 
 > [!NOTE]
-> Passwordless API flows use Auth0 Legacy Passwordless connections (`email` and `sms`). Enable the **Passwordless OTP** grant for your application under **Applications -> Your App -> Advanced Settings -> Grant Types**. See the [Auth0 Passwordless API documentation](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints).
+> Passwordless API flows use Auth0 Legacy Passwordless connections (`email` and `sms`). Enable the **Passwordless OTP** grant for your application. See the [Auth0 Passwordless API documentation](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints).
 
 > [!IMPORTANT]
 > These flows are for confidential server-side applications. Tokens stay on the server. The browser should only receive your application's session cookie or opaque session reference.

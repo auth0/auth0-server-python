@@ -546,7 +546,7 @@ The SDK does not store your private key, so you must re-supply it on the `verify
 By default, `verify()` returns tokens without persisting them to the session store. However, you can automatically persist tokens by setting `persist=True`.
 
 > [!NOTE]
-> `persist=True` updates an existing session when one is present. For first-login MFA flows where the SDK has not created a session yet, `ServerClient.mfa` can create the initial session from the final MFA token response when that response includes an ID token.
+> `persist=True` updates an existing session when one is present. For first login MFA flows where the SDK has not created a session yet, `ServerClient.mfa` can create the initial session from the final MFA token response when that response includes an ID token.
 
 ### Automatic Session Update
 
