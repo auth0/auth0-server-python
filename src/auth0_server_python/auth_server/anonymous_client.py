@@ -446,9 +446,17 @@ class AnonymousClient:
 
         now = int(time.time())
         new_context = AnonymousSessionContext(
-            session_token=token_response.session_token or context.session_token,
-            sub=token_response.sub or context.sub,
-            session_id=token_response.session_id or context.session_id,
+            session_token=(
+                token_response.session_token
+                if token_response.session_token is not None
+                else context.session_token
+            ),
+            sub=token_response.sub if token_response.sub is not None else context.sub,
+            session_id=(
+                token_response.session_id
+                if token_response.session_id is not None
+                else context.session_id
+            ),
             access_token=token_response.access_token,
             expires_at=now + token_response.expires_in,
             session_expires_at=(

@@ -464,6 +464,33 @@ class TestGetToken:
         assert "refresh_token" not in kwargs["json"]
 
     @pytest.mark.asyncio
+    async def test_remint_preserves_empty_string_fields_instead_of_falling_back_to_stale_context(
+        self,
+    ):
+        store = OneSlotStore()
+        _stored_context(store, expires_at=int(time.time()) - 10)
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient([
+            _fake_response(
+                200,
+                {
+                    "access_token": "AT2",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                    "session_token": "",
+                    "sub": "",
+                    "session_id": "",
+                },
+            )
+        ])
+        with patch("httpx.AsyncClient", fake_http):
+            session = await client.get_token()
+        assert session.sub == ""
+        assert session.session_id == ""
+        token = await client.get_session_token_for_injection()
+        assert token == ""
+
+    @pytest.mark.asyncio
     async def test_expired_session_token_triggers_silent_new_session(self):
         store = OneSlotStore()
         _stored_context(store, expires_at=int(time.time()) - 10)
