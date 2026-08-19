@@ -279,11 +279,23 @@ class TestCreateSession:
             await client.create_session(audience="aud", scope="s", metadata={"__proto__": "x"})
 
     @pytest.mark.asyncio
-    async def test_non_string_metadata_value_rejected(self):
+    async def test_non_string_metadata_value_accepted(self):
         store = OneSlotStore()
         client = _make_client(anonymous_store=store)
-        with pytest.raises(AnonymousSessionCreateError, match="must be a string"):
-            await client.create_session(audience="aud", scope="s", metadata={"count": 5})
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
+        with patch("httpx.AsyncClient", fake_http):
+            await client.create_session(
+                audience="aud", scope="s", metadata={"count": 5, "active": True, "tags": ["a", "b"]}
+            )
+        _, _, kwargs = fake_http.calls[0]
+        assert kwargs["json"]["metadata"] == {"count": 5, "active": True, "tags": ["a", "b"]}
+
+    @pytest.mark.asyncio
+    async def test_non_json_serializable_metadata_value_rejected(self):
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        with pytest.raises(AnonymousSessionCreateError, match="JSON-serializable"):
+            await client.create_session(audience="aud", scope="s", metadata={"bad": object()})
 
     @pytest.mark.asyncio
     async def test_create_session_accepts_options_model(self):

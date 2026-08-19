@@ -233,22 +233,23 @@ class AnonymousClient:
 
         Raises:
             AnonymousSessionCreateError: metadata is not a dict, contains a
-                disallowed key, a non-string value, or exceeds 1KB.
+                disallowed key, a non-JSON-serializable value, or exceeds 1KB.
         """
         if metadata is None:
             return
         if not isinstance(metadata, dict):
             raise AnonymousSessionCreateError("metadata must be a JSON object", code="invalid_metadata")
-        for key, value in metadata.items():
+        for key in metadata:
             if key in _DANGEROUS_METADATA_KEYS:
                 raise AnonymousSessionCreateError(
                     f"metadata key '{key}' is not allowed", code="invalid_metadata"
                 )
-            if not isinstance(value, str):
-                raise AnonymousSessionCreateError(
-                    f"metadata value for key '{key}' must be a string", code="invalid_metadata"
-                )
-        size = len(json.dumps(metadata).encode("utf-8"))
+        try:
+            size = len(json.dumps(metadata).encode("utf-8"))
+        except TypeError as e:
+            raise AnonymousSessionCreateError(
+                "metadata must contain only JSON-serializable values", code="invalid_metadata"
+            ) from e
         if size > _METADATA_MAX_BYTES:
             raise AnonymousSessionCreateError(
                 "metadata exceeds the 1KB size limit", code="metadata_too_large"

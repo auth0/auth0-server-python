@@ -51,7 +51,7 @@ session = await server_client.anonymous.create_session(
 )
 ```
 
-`metadata` is **set once, at creation, and never updated** — there is no platform update endpoint for anonymous sessions. Top-level string values only, ≤1 KB total (UTF-8 JSON byte length); oversized or non-string values are rejected client-side before any network call.
+`metadata` is **set once, at creation, and never updated** — there is no platform update endpoint for anonymous sessions. Any JSON-serializable value is accepted, ≤1 KB total (UTF-8 JSON byte length); oversized, non-JSON-serializable, or dangerous-key (`__proto__`, `constructor`, `prototype`) metadata is rejected client-side before any network call.
 
 `AnonymousSession` never exposes the raw session token — only `sub`, `session_id`, `access_token`, `expires_at`, `session_expires_at`, `metadata`, and `is_new`.
 
