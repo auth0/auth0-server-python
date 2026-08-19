@@ -102,29 +102,29 @@ Pushed Authorization Requests (PAR) are not supported for anonymous sessions —
 
 ## Error Handling
 
-All anonymous session errors subclass `AnonymousApiError`, carrying a `.code` you can branch on:
+All anonymous session errors subclass `AnonymousSessionApiError`, carrying a `.code` you can branch on:
 
 ```python
 from auth0_server_python.error import (
-    AnonymousFeatureNotEnabledError,
-    AnonymousClientNotEnabledError,
-    AnonymousClientNotSupportedError,
-    AnonymousResourceServerError,
-    AnonymousScopeError,
-    AnonymousCreateError,
-    AnonymousTokenError,
-    AnonymousIntrospectError,
-    AnonymousLogoutError,
+    AnonymousSessionFeatureNotEnabledError,
+    AnonymousSessionClientNotEnabledError,
+    AnonymousSessionClientNotSupportedError,
+    AnonymousSessionResourceServerError,
+    AnonymousSessionScopeError,
+    AnonymousSessionCreateError,
+    AnonymousSessionTokenError,
+    AnonymousSessionIntrospectError,
+    AnonymousSessionLogoutError,
 )
 
 try:
     session = await server_client.anonymous.create_session(audience="...", scope="...")
-except AnonymousFeatureNotEnabledError:
+except AnonymousSessionFeatureNotEnabledError:
     ...
 ```
 
 ## Known Limitations
 
-- **DPoP is not supported.** `AnonymousClient` has no `dpop_key` parameter anywhere in its public API. A tenant/client configured with `require_proof_of_possession: true` cannot use anonymous sessions, you will see `AnonymousClientNotSupportedError`.
+- **DPoP is not supported.** `AnonymousClient` has no `dpop_key` parameter anywhere in its public API. A tenant/client configured with `require_proof_of_possession: true` cannot use anonymous sessions, you will see `AnonymousSessionClientNotSupportedError`.
 - **PAR, CIBA, Device Flow, RAR, and mTLS clients are not supported** for anonymous sessions.
 - **No server-side revocation.** See [Logging Out](#logging-out) above.

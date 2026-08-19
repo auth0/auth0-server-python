@@ -20,16 +20,16 @@ from auth0_server_python.auth_types import (
 )
 from auth0_server_python.encryption.encrypt import decrypt, encrypt
 from auth0_server_python.error import (
-    AnonymousApiError,
-    AnonymousClientNotEnabledError,
-    AnonymousClientNotSupportedError,
-    AnonymousCreateError,
-    AnonymousFeatureNotEnabledError,
-    AnonymousIntrospectError,
-    AnonymousLogoutError,
-    AnonymousResourceServerError,
-    AnonymousScopeError,
-    AnonymousTokenError,
+    AnonymousSessionApiError,
+    AnonymousSessionClientNotEnabledError,
+    AnonymousSessionClientNotSupportedError,
+    AnonymousSessionCreateError,
+    AnonymousSessionFeatureNotEnabledError,
+    AnonymousSessionIntrospectError,
+    AnonymousSessionLogoutError,
+    AnonymousSessionResourceServerError,
+    AnonymousSessionScopeError,
+    AnonymousSessionTokenError,
     ConfigurationError,
     DomainResolverError,
     _AnonymousSessionExpired,
@@ -200,25 +200,25 @@ class AnonymousClient:
         if code in ("session_expired", "invalid_session_token"):
             return _AnonymousSessionExpired(description)
         if status_code == 400 and "Proof-of-Possession" in description:
-            return AnonymousClientNotSupportedError(description, error_data)
+            return AnonymousSessionClientNotSupportedError(description, error_data)
         if code == "feature_not_enabled":
-            return AnonymousFeatureNotEnabledError(description, error_data)
+            return AnonymousSessionFeatureNotEnabledError(description, error_data)
         if code == "unauthorized_client":
-            return AnonymousClientNotEnabledError(description, error_data)
+            return AnonymousSessionClientNotEnabledError(description, error_data)
         if code in ("invalid_target", "invalid_request"):
-            return AnonymousResourceServerError(description, error_data)
+            return AnonymousSessionResourceServerError(description, error_data)
         if code == "invalid_scope":
-            return AnonymousScopeError(description, error_data)
+            return AnonymousSessionScopeError(description, error_data)
 
         if operation == "create":
-            return AnonymousCreateError(description, cause=error_data)
+            return AnonymousSessionCreateError(description, cause=error_data)
         if operation == "token":
-            return AnonymousTokenError(description, error_data)
+            return AnonymousSessionTokenError(description, error_data)
         if operation == "logout":
-            return AnonymousLogoutError(description, error_data)
+            return AnonymousSessionLogoutError(description, error_data)
         if operation == "introspect":
-            return AnonymousIntrospectError(description, error_data)
-        return AnonymousApiError(code or "anonymous_error", description, error_data)
+            return AnonymousSessionIntrospectError(description, error_data)
+        return AnonymousSessionApiError(code or "anonymous_error", description, error_data)
 
     # ============================================================================
     # METADATA VALIDATION
@@ -232,25 +232,25 @@ class AnonymousClient:
             metadata: The metadata dict to validate, or None.
 
         Raises:
-            AnonymousCreateError: metadata is not a dict, contains a
+            AnonymousSessionCreateError: metadata is not a dict, contains a
                 disallowed key, a non-string value, or exceeds 1KB.
         """
         if metadata is None:
             return
         if not isinstance(metadata, dict):
-            raise AnonymousCreateError("metadata must be a JSON object", code="invalid_metadata")
+            raise AnonymousSessionCreateError("metadata must be a JSON object", code="invalid_metadata")
         for key, value in metadata.items():
             if key in _DANGEROUS_METADATA_KEYS:
-                raise AnonymousCreateError(
+                raise AnonymousSessionCreateError(
                     f"metadata key '{key}' is not allowed", code="invalid_metadata"
                 )
             if not isinstance(value, str):
-                raise AnonymousCreateError(
+                raise AnonymousSessionCreateError(
                     f"metadata value for key '{key}' must be a string", code="invalid_metadata"
                 )
         size = len(json.dumps(metadata).encode("utf-8"))
         if size > _METADATA_MAX_BYTES:
-            raise AnonymousCreateError(
+            raise AnonymousSessionCreateError(
                 "metadata exceeds the 1KB size limit", code="metadata_too_large"
             )
 
@@ -319,7 +319,7 @@ class AnonymousClient:
             The newly created AnonymousSession, with is_new=True.
 
         Raises:
-            AnonymousCreateError: The request failed, or the response
+            AnonymousSessionCreateError: The request failed, or the response
                 was invalid or missing required fields.
         """
         base_url = f"https://{domain}"
@@ -337,23 +337,23 @@ class AnonymousClient:
             try:
                 response = await client.post(f"{base_url}/anonymous/token", json=body)
             except httpx.HTTPError as e:
-                raise AnonymousCreateError("Failed to reach the anonymous token endpoint") from e
+                raise AnonymousSessionCreateError("Failed to reach the anonymous token endpoint") from e
 
             if response.status_code != 200:
                 error_data = self._parse_anonymous_error_body(response)
                 mapped = self._map_anonymous_error(response.status_code, error_data, "create")
                 if isinstance(mapped, _AnonymousSessionExpired):
                     # Internal-only type must never escape.
-                    raise AnonymousCreateError(str(mapped))
+                    raise AnonymousSessionCreateError(str(mapped))
                 raise mapped
 
             try:
                 token_response = AnonymousTokenResponse.model_validate(response.json())
             except (json.JSONDecodeError, ValueError, ValidationError) as e:
-                raise AnonymousCreateError("Failed to parse anonymous token response") from e
+                raise AnonymousSessionCreateError("Failed to parse anonymous token response") from e
 
         if not token_response.session_token:
-            raise AnonymousCreateError("Anonymous token response missing required fields")
+            raise AnonymousSessionCreateError("Anonymous token response missing required fields")
 
         now = int(time.time())
         context = AnonymousSessionContext(
@@ -406,7 +406,7 @@ class AnonymousClient:
             retry-once fallback created a brand-new session.
 
         Raises:
-            AnonymousTokenError: The request failed, or the response was
+            AnonymousSessionTokenError: The request failed, or the response was
                 invalid.
         """
         domain = context.domain or await self._resolve_domain(store_options)
@@ -422,7 +422,7 @@ class AnonymousClient:
             try:
                 response = await client.post(f"{base_url}/anonymous/token", json=body)
             except httpx.HTTPError as e:
-                raise AnonymousTokenError("Failed to reach the anonymous token endpoint") from e
+                raise AnonymousSessionTokenError("Failed to reach the anonymous token endpoint") from e
 
             if response.status_code != 200:
                 error_data = self._parse_anonymous_error_body(response)
@@ -441,7 +441,7 @@ class AnonymousClient:
             try:
                 token_response = AnonymousTokenResponse.model_validate(response.json())
             except (json.JSONDecodeError, ValueError, ValidationError) as e:
-                raise AnonymousTokenError("Failed to parse anonymous token response") from e
+                raise AnonymousSessionTokenError("Failed to parse anonymous token response") from e
 
         now = int(time.time())
         new_context = AnonymousSessionContext(
@@ -538,7 +538,7 @@ class AnonymousClient:
 
         Raises:
             ConfigurationError: No anonymous_store configured.
-            AnonymousCreateError: Invalid options, local validation
+            AnonymousSessionCreateError: Invalid options, local validation
                 failure, or server rejection.
         """
         self._require_store()
@@ -547,7 +547,7 @@ class AnonymousClient:
                 try:
                     options = CreateAnonymousSessionOptions(**options)
                 except ValidationError as e:
-                    raise AnonymousCreateError(
+                    raise AnonymousSessionCreateError(
                         "Invalid create_session options", code="invalid_options"
                     ) from e
             audience = audience if audience is not None else options.audience
@@ -572,13 +572,13 @@ class AnonymousClient:
 
         Raises:
             ConfigurationError: No anonymous_store configured.
-            AnonymousTokenError: No active session, or an unrecoverable
+            AnonymousSessionTokenError: No active session, or an unrecoverable
                 failure.
         """
         self._require_store()
         stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
         if not stored:
-            raise AnonymousTokenError("No active anonymous session. Call create_session() first.")
+            raise AnonymousSessionTokenError("No active anonymous session. Call create_session() first.")
 
         try:
             context = self._decrypt_context(stored)
@@ -634,18 +634,18 @@ class AnonymousClient:
 
         Raises:
             ConfigurationError: No anonymous_store configured.
-            AnonymousIntrospectError: No active session, or a request
+            AnonymousSessionIntrospectError: No active session, or a request
                 failure.
         """
         self._require_store()
         stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
         if not stored:
-            raise AnonymousIntrospectError("No active anonymous session to introspect.")
+            raise AnonymousSessionIntrospectError("No active anonymous session to introspect.")
 
         try:
             context = self._decrypt_context(stored)
         except _AnonymousSessionExpired as e:
-            raise AnonymousIntrospectError(
+            raise AnonymousSessionIntrospectError(
                 "Stored anonymous session is invalid or corrupted."
             ) from e
 
@@ -659,7 +659,7 @@ class AnonymousClient:
                     auth=BearerAuth(context.access_token),
                 )
             except httpx.HTTPError as e:
-                raise AnonymousIntrospectError(
+                raise AnonymousSessionIntrospectError(
                     "Failed to reach the anonymous userinfo endpoint"
                 ) from e
 
@@ -667,13 +667,13 @@ class AnonymousClient:
                 error_data = self._parse_anonymous_error_body(response)
                 mapped = self._map_anonymous_error(response.status_code, error_data, "introspect")
                 if isinstance(mapped, _AnonymousSessionExpired):
-                    raise AnonymousIntrospectError(str(mapped))
+                    raise AnonymousSessionIntrospectError(str(mapped))
                 raise mapped
 
             try:
                 return AnonymousSessionIntrospection.model_validate(response.json())
             except (json.JSONDecodeError, ValueError, ValidationError) as e:
-                raise AnonymousIntrospectError(
+                raise AnonymousSessionIntrospectError(
                     "Failed to parse anonymous introspection response"
                 ) from e
 
