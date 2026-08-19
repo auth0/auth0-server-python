@@ -680,8 +680,16 @@ class AnonymousClient:
     async def logout(self, store_options: Optional[dict[str, Any]] = None) -> None:
         """Clear the locally-held anonymous session without revoking issued tokens.
 
+        Local state is cleared unconditionally, even when the remote call
+        fails, since there is no server-side session to keep in sync with.
+
         Args:
             store_options: Options passed to the anonymous store.
+
+        Raises:
+            ConfigurationError: No anonymous_store configured.
+            AnonymousSessionLogoutError: The remote logout call failed for a
+                reason other than the session already being expired/invalid.
         """
         self._require_store()
         stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
@@ -692,6 +700,9 @@ class AnonymousClient:
             context = self._decrypt_context(stored)
         except _AnonymousSessionExpired:
             context = None
+
+        error_to_raise: Optional[Exception] = None
+        error_cause: Optional[BaseException] = None
 
         if context is not None:
             domain = context.domain or await self._resolve_domain(store_options)
@@ -704,8 +715,20 @@ class AnonymousClient:
                 body["client_secret"] = self._client_secret
             try:
                 async with self._get_http_client() as client:
-                    await client.post(f"{base_url}/anonymous/logout", json=body)
-            except httpx.HTTPError:
-                pass
+                    response = await client.post(f"{base_url}/anonymous/logout", json=body)
+            except httpx.HTTPError as e:
+                error_to_raise = AnonymousSessionLogoutError(
+                    "Failed to reach the anonymous logout endpoint"
+                )
+                error_cause = e
+            else:
+                if response.status_code != 200:
+                    error_data = self._parse_anonymous_error_body(response)
+                    mapped = self._map_anonymous_error(response.status_code, error_data, "logout")
+                    if not isinstance(mapped, _AnonymousSessionExpired):
+                        error_to_raise = mapped
 
         await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
+
+        if error_to_raise is not None:
+            raise error_to_raise from error_cause

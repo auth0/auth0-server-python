@@ -24,6 +24,7 @@ from auth0_server_python.error import (
     AnonymousSessionCreateError,
     AnonymousSessionFeatureNotEnabledError,
     AnonymousSessionIntrospectError,
+    AnonymousSessionLogoutError,
     AnonymousSessionResourceServerError,
     AnonymousSessionScopeError,
     AnonymousSessionTokenError,
@@ -683,7 +684,7 @@ class TestLogout:
             mock_http.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_logout_remote_call_failure_does_not_block_local_clear(self):
+    async def test_logout_remote_call_failure_still_clears_local_state_then_raises(self):
         store = OneSlotStore()
         _stored_context(store)
         client = _make_client(anonymous_store=store)
@@ -702,6 +703,32 @@ class TestLogout:
                 raise httpx.ConnectError("boom")
 
         with patch("httpx.AsyncClient", _RaisingClient()):
+            with pytest.raises(AnonymousSessionLogoutError):
+                await client.logout()
+        assert store.slot is None
+
+    @pytest.mark.asyncio
+    async def test_logout_non_200_response_still_clears_local_state_then_raises(self):
+        store = OneSlotStore()
+        _stored_context(store)
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient(
+            [_fake_response(500, {"error": "server_error", "error_description": "boom"})]
+        )
+        with patch("httpx.AsyncClient", fake_http):
+            with pytest.raises(AnonymousSessionLogoutError):
+                await client.logout()
+        assert store.slot is None
+
+    @pytest.mark.asyncio
+    async def test_logout_session_expired_response_is_not_raised(self):
+        store = OneSlotStore()
+        _stored_context(store)
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient(
+            [_fake_response(400, {"error": "session_expired", "error_description": "expired"})]
+        )
+        with patch("httpx.AsyncClient", fake_http):
             await client.logout()
         assert store.slot is None
 

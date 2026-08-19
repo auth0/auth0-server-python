@@ -88,6 +88,8 @@ await server_client.anonymous.logout(store_options=store_options)
 > [!CAUTION]
 > **`logout()` does not revoke.** There is no server-side anonymous session store to revoke against, this clears only the locally-held encrypted context. Any access token already issued for this anonymous session remains valid until its natural expiry.
 
+Local state is always cleared, even if the remote call fails. If the remote `/anonymous/logout` call itself fails, `logout()` raises `AnonymousSessionLogoutError` after clearing local state, so the failure isn't swallowed.
+
 ## Login Injection
 
 When an anonymous session is active, `start_interactive_login()` automatically includes the session token in the `/authorize` request, no code change needed at your call site. If no anonymous session exists, behavior is same as today.
