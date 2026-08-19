@@ -3,7 +3,7 @@
 Passwordless lets users sign in with a one-time code sent by email or SMS, or with a magic link sent by email. This guide covers the **embedded login** flow on `ServerClient.passwordless` and how each path establishes a server-side session.
 
 > [!NOTE]
-> Passwordless API flows use Auth0 Legacy Passwordless connections (`email` and `sms`). Enable the **Passwordless OTP** grant for your application. See the [Auth0 Passwordless API documentation](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints).
+> Passwordless API flows use Auth0 Passwordless connections (`email` and `sms`). Enable the **Passwordless OTP** grant for your application. See the [Auth0 Passwordless API documentation](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints).
 
 > [!IMPORTANT]
 > These flows are for confidential server-side applications. Tokens stay on the server. The browser should only receive your application's session cookie or opaque session reference.
@@ -35,10 +35,9 @@ OTP start does **not** create a session. The session exists only after `verify()
 ## Prerequisites
 
 These flows require a **Regular Web Application**. Passwordless token exchange
-needs a client secret, which a public/SPA client cannot hold safely.
+needs a client secret, which a public client cannot hold safely.
 
-Two tenant-level settings are also required and are easy to miss because
-neither failure mode looks like a configuration problem:
+Two tenant-level settings are also required:
 
 1. **Authentication Profile must be "Identifier First."** The default
    "Universal Login" profile blocks the direct `/oauth/token` call this SDK
@@ -46,25 +45,10 @@ neither failure mode looks like a configuration problem:
    `unauthorized_client`. Set it under your tenant's Authentication Profile
    settings. (Skip this if you only use passwordless via Universal Login
    redirects rather than this SDK's embedded flow.)
-2. **Enable the Passwordless OTP grant type** on your application
-   (**Applications -> Your App -> Advanced Settings -> Grant Types**). Without
+2. **Enable the Passwordless OTP grant type** on your application. Without
    it, OTP verification also fails with `unauthorized_client`.
 3. **Magic link only.** Set the tenant flag
-   `universal_login.passwordless.allow_magiclink_verify_without_session` to
-   `true` via the Management API:
-
-   ```
-   PATCH /api/v2/tenants/settings
-   { "universal_login": { "passwordless": { "allow_magiclink_verify_without_session": true } } }
-   ```
-
-   This is required for **any** server-side SDK completing magic link (this
-   one, Express, Next.js, etc.). The browser that opens the emailed link is
-   not guaranteed to be the same browser/session that started the flow.
-   Without it, the user sees: *"The link must be opened on the same device
-   and browser from which you submitted your email address."* This flag is
-   not documented in the public Auth0 API reference, so if you don't set it
-   here you will not discover it from a 400 error message.
+   `universal_login.passwordless.allow_magiclink_verify_without_session` to `true`.
 
 ```python
 from auth0_server_python.auth_server.server_client import ServerClient
@@ -96,7 +80,6 @@ start_result = await server_client.passwordless.start(
     store_options={"request": request, "response": response},
 )
 
-# start_result.id is Auth0's request identifier when returned by the API.
 ```
 
 ### Step 2 - Verify the code and establish the session
@@ -297,7 +280,7 @@ except MfaRequiredError as e:
 ```
 
 > [!NOTE]
-> Passwordless OTP MFA is like passkey-first MFA: there is no existing application session until MFA verification succeeds. `persist=True` creates the initial SDK session when the MFA response includes an ID token.
+> For Passwordless OTP MFA there is no existing application session until MFA verification succeeds. `persist=True` creates the initial SDK session when the MFA response includes an ID token.
 
 ## Error Handling
 

@@ -1,5 +1,5 @@
 """
-Error classes for the auth0-server-python SDK.
+Error classes for the SDK.
 These exceptions provide specific error types for different failure scenarios.
 """
 
@@ -376,8 +376,6 @@ class PasswordlessError(ApiError):
     def __init__(self, code: str, message: str, cause=None, retry_after: Optional[int] = None):
         super().__init__(code, message, cause)
         self.name = "PasswordlessError"
-        # Seconds to wait before retrying, from the Retry-After response header
-        # on a 429. None when the response carried no usable value.
         self.retry_after = retry_after
 
 
