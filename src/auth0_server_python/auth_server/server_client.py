@@ -25,8 +25,9 @@ from auth0_server_python.auth_schemes.client_assertion import (
     validate_client_assertion_key,
 )
 from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
-from auth0_server_python.auth_server.mfa_client import MfaClient
+from auth0_server_python.auth_server.mfa_client import DEFAULT_MFA_TOKEN_TTL, MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
+from auth0_server_python.auth_server.passwordless_client import PasswordlessClient
 from auth0_server_python.auth_types import (
     CompleteConnectAccountRequest,
     CompleteConnectAccountResponse,
@@ -40,6 +41,7 @@ from auth0_server_python.auth_types import (
     LogoutOptions,
     LogoutTokenClaims,
     MfaRequirements,
+    MfaVerifyResponse,
     PasskeyAuthResponse,
     PasskeyLoginChallengeResponse,
     PasskeyLoginResult,
@@ -68,6 +70,7 @@ from auth0_server_python.error import (
     InvalidArgumentError,
     IssuerValidationError,
     MfaRequiredError,
+    MfaVerifyError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     OrganizationTokenValidationError,
@@ -129,6 +132,7 @@ class ServerClient(Generic[TStoreOptions]):
         authorization_params: Optional[dict[str, Any]] = None,
         pushed_authorization_requests: bool = False,
         organization: Optional[str] = None,
+        mfa_token_ttl: int = DEFAULT_MFA_TOKEN_TTL,
     ):
         """
         Initialize the Auth0 server client.
@@ -150,6 +154,13 @@ class ServerClient(Generic[TStoreOptions]):
             organization: Default organization for all login flows from this client.
                 Can be an org ID (e.g. 'org_abc123') or an org name (e.g. 'acme-corp').
                 Per-login values passed in StartInteractiveLoginOptions always override this.
+            mfa_token_ttl: Seconds an encrypted MFA token remains valid before
+                `mfa.verify()`/`mfa.challenge_authenticator()` reject it as expired.
+                Defaults to 300 (5 minutes). Increase for authenticator flows that
+                need more time (e.g. OOB push approval on a slow connection).
+
+        Raises:
+            ConfigurationError: If `mfa_token_ttl` is not a positive number of seconds.
         """
         if not secret:
             raise MissingRequiredArgumentError("secret")
@@ -227,8 +238,12 @@ class ServerClient(Generic[TStoreOptions]):
             state_store=self._state_store,
             state_identifier=self._state_identifier,
             headers=self._telemetry_headers,
+            session_establisher=self._establish_session_from_mfa_verify_response,
+            mfa_token_ttl=mfa_token_ttl,
             apply_client_authentication=self._apply_client_authentication,
         )
+
+        self._passwordless_client = PasswordlessClient(self)
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with telemetry headers injected."""
@@ -758,6 +773,9 @@ class ServerClient(Generic[TStoreOptions]):
         # ID token `iat`, used to detect a ceiling that is already past at login.
         issued_at = None
         id_token = token_response.get("id_token")
+        # Verified ID token claims, retained so the session `sid` can be sourced
+        # from them (back-channel logout matches on `sid`).
+        id_token_claims = None
 
         expected_org = transaction_data.organization
 
@@ -800,6 +818,7 @@ class ServerClient(Generic[TStoreOptions]):
                     validate_org_claims(claims, expected_org)
 
                 user_claims = UserClaims.parse_obj(claims)
+                id_token_claims = claims
                 session_expires_at = user_claims.session_expiry
                 issued_at = claims.get("iat")
             except ValueError as e:
@@ -830,41 +849,21 @@ class ServerClient(Generic[TStoreOptions]):
                 )
 
 
-        # Refuse to persist a session whose ceiling is already in the past.
-        if State.is_session_ceiling_in_past(session_expires_at, issued_at):
+        try:
+            state_data = await self._persist_session_from_token_response(
+                token_response=token_response,
+                user_claims=user_claims,
+                origin_domain=origin_domain,
+                audience=transaction_data.audience,
+                session_expires_at=session_expires_at,
+                issued_at=issued_at,
+                id_token_claims=id_token_claims,
+                user_info=user_info if isinstance(user_info, dict) else None,
+                store_options=store_options,
+            )
+        except SessionExpiredError:
             await self._transaction_store.delete(transaction_identifier, options=store_options)
-            raise SessionExpiredError()
-
-        # Build a token set using the token response data
-        token_set = TokenSet(
-            audience=transaction_data.audience or self.DEFAULT_AUDIENCE_STATE_KEY,
-            access_token=token_response.get("access_token", ""),
-            scope=token_response.get("scope", ""),
-            expires_at=int(time.time()) +
-            token_response.get("expires_in", 3600)
-        )
-
-        # Generate a session id (sid) from token_response or transaction data, or create a new one
-        sid = user_info.get(
-            "sid") if user_info and "sid" in user_info else PKCE.generate_random_string(32)
-
-        # Construct state data to represent the session
-        state_data = StateData(
-            user=user_claims,
-            id_token=token_response.get("id_token"),
-            # might be None if not provided
-            refresh_token=token_response.get("refresh_token"),
-            token_sets=[token_set],
-            domain=origin_domain,
-            internal={
-                "sid": sid,
-                "created_at": int(time.time()),
-                "session_expires_at": session_expires_at
-            }
-        )
-
-        # Store the state data in the state store using store_options (Response required)
-        await self._state_store.set(self._state_identifier, state_data, options=store_options)
+            raise
 
         # Clean up transaction data after successful login
         await self._transaction_store.delete(transaction_identifier, options=store_options)
@@ -873,12 +872,147 @@ class ServerClient(Generic[TStoreOptions]):
         if transaction_data.app_state:
             result["app_state"] = transaction_data.app_state
 
-        # For RAR
         authorization_details = token_response.get("authorization_details")
         if authorization_details:
             result["authorization_details"] = authorization_details
 
         return result
+
+    async def _persist_session_from_token_response(
+        self,
+        token_response: dict[str, Any],
+        user_claims: "UserClaims",
+        origin_domain: str,
+        audience: Optional[str],
+        session_expires_at: Optional[int],
+        issued_at: Optional[int],
+        id_token_claims: Optional[dict[str, Any]] = None,
+        user_info: Optional[dict[str, Any]] = None,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> StateData:
+        """
+        Build and persist a session ``StateData`` from a token endpoint response.
+
+        Args:
+            token_response: The token endpoint response.
+            user_claims: Claims parsed from the verified ID token or userinfo.
+            origin_domain: Resolved Auth0 domain for the session.
+            audience: Audience for the persisted token set, or None.
+            session_expires_at: IPSIE session-expiry ceiling (Unix seconds), or None.
+            issued_at: ID token ``iat``, used to reject an already-past ceiling.
+            id_token_claims: Verified ID token claims, primary source of the ``sid``.
+            user_info: Userinfo claims, a fallback source of the ``sid``.
+            store_options: Options passed to the state store.
+
+        Returns:
+            The persisted ``StateData``.
+
+        Raises:
+            SessionExpiredError: If the session ceiling is already in the past.
+        """
+        if State.is_session_ceiling_in_past(session_expires_at, issued_at):
+            raise SessionExpiredError()
+
+        now = int(time.time())
+        token_set = TokenSet(
+            audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
+            access_token=token_response.get("access_token", ""),
+            scope=token_response.get("scope", ""),
+            expires_at=now + token_response.get("expires_in", 3600),
+        )
+
+        # A random sid would make the session untargetable by back-channel logout.
+        sid = None
+        if id_token_claims and id_token_claims.get("sid"):
+            sid = id_token_claims["sid"]
+        elif user_info and user_info.get("sid"):
+            sid = user_info["sid"]
+        if not sid:
+            sid = PKCE.generate_random_string(32)
+
+        state_data = StateData(
+            user=user_claims,
+            id_token=token_response.get("id_token"),
+            refresh_token=token_response.get("refresh_token"),
+            token_sets=[token_set],
+            domain=origin_domain,
+            internal={
+                "sid": sid,
+                "created_at": now,
+                "session_expires_at": session_expires_at,
+            },
+        )
+
+        await self._state_store.set(
+            self._state_identifier, state_data, options=store_options
+        )
+        return state_data
+
+    async def _establish_session_from_mfa_verify_response(
+        self,
+        *,
+        verify_response: MfaVerifyResponse,
+        audience: str,
+        scope: Optional[str],
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """
+        Create the initial SDK session after a first-login MFA flow completes.
+
+        Args:
+            verify_response: The final MFA verification response.
+            audience: Audience for the persisted token set.
+            scope: Scope associated with the token set, or None.
+            store_options: Options passed to the state store.
+
+        Raises:
+            MfaVerifyError: When the response has no ID token, or the ID token
+                fails signature, audience, or issuer validation.
+        """
+        token_response = verify_response.model_dump(exclude_none=True)
+        id_token = token_response.get("id_token")
+        if not id_token:
+            raise MfaVerifyError(
+                "MFA verification response did not include an ID token; cannot create a session"
+            )
+
+        origin_domain = await self._resolve_current_domain(store_options)
+        metadata = await self._get_oidc_metadata_cached(origin_domain)
+        origin_issuer = metadata.get("issuer")
+        jwks = await self._get_jwks_cached(origin_domain, metadata)
+
+        try:
+            claims = await self._verify_and_decode_jwt(
+                id_token, jwks, audience=self._client_id
+            )
+        except ValueError as e:
+            raise MfaVerifyError(str(e)) from e
+        except jwt.InvalidAudienceError as e:
+            raise MfaVerifyError(
+                "ID token audience mismatch. Ensure your client_id is configured correctly."
+            ) from e
+        except jwt.ExpiredSignatureError as e:
+            raise MfaVerifyError(f"ID token has expired: {str(e)}") from e
+        except jwt.InvalidTokenError as e:
+            raise MfaVerifyError(f"ID token verification failed: {str(e)}") from e
+
+        token_issuer = claims.get("iss", "")
+        if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
+            raise MfaVerifyError(
+                "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+            )
+
+        user_claims = UserClaims.model_validate(claims)
+        await self._persist_session_from_token_response(
+            token_response=token_response,
+            user_claims=user_claims,
+            origin_domain=origin_domain,
+            audience=audience,
+            session_expires_at=user_claims.session_expiry,
+            issued_at=claims.get("iat"),
+            id_token_claims=claims,
+            store_options=store_options,
+        )
 
     # ============================================================================
     # USER SESSION MANAGEMENT
@@ -3328,3 +3462,12 @@ class ServerClient(Generic[TStoreOptions]):
             if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError, ApiError, IssuerValidationError, MfaRequiredError, OrganizationTokenValidationError)):
                 raise
             raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Passkey sign-in failed", e) from e
+
+    # ============================================================================
+    # Passwordless (embedded login)
+    # ============================================================================
+
+    @property
+    def passwordless(self) -> PasswordlessClient:
+        """Access the passwordless client for embedded passwordless operations."""
+        return self._passwordless_client

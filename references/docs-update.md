@@ -63,3 +63,4 @@ it from `README.md`'s section for the feature. Name the file after the flow, mat
 | CIBA | `examples/ClientInitiatedBackChannelLogin.md` |
 | MCD domain resolver | `examples/MultipleCustomDomains.md` |
 | Account linking / unlinking | `examples/UserLinking.md` |
+| Passwordless email/SMS OTP + magic link | `examples/Passwordless.md` |

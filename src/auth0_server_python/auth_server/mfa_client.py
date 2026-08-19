@@ -5,7 +5,8 @@ Handles Multi-Factor Authentication operations against the Auth0 MFA API.
 
 import json
 import time
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import httpx
 
@@ -28,6 +29,7 @@ from auth0_server_python.auth_types import (
 )
 from auth0_server_python.encryption.encrypt import decrypt, encrypt
 from auth0_server_python.error import (
+    ConfigurationError,
     DomainResolverError,
     MfaChallengeError,
     MfaEnrollmentError,
@@ -67,7 +69,11 @@ class MfaClient:
         state_store=None,
         state_identifier: str = "_a0_session",
         headers: Optional[dict[str, str]] = None,
-        apply_client_authentication: Optional[Callable] = None
+        session_establisher: Optional[
+            Callable[..., Awaitable[None]]
+        ] = None,
+        mfa_token_ttl: int = DEFAULT_MFA_TOKEN_TTL,
+        apply_client_authentication: Optional[Callable] = None,
     ):
         if callable(domain):
             self._domain = None
@@ -81,6 +87,10 @@ class MfaClient:
         self._state_store = state_store
         self._state_identifier = state_identifier
         self._headers = headers or {}
+        self._session_establisher = session_establisher
+        if mfa_token_ttl <= 0:
+            raise ConfigurationError("mfa_token_ttl must be a positive number of seconds")
+        self._mfa_token_ttl = mfa_token_ttl
         self._apply_client_authentication = apply_client_authentication
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
@@ -146,7 +156,7 @@ class MfaClient:
             raise MfaTokenInvalidError()
 
         elapsed = int(time.time()) - context.created_at
-        if elapsed > DEFAULT_MFA_TOKEN_TTL:
+        if elapsed > self._mfa_token_ttl:
             raise MfaTokenExpiredError()
 
         return context
@@ -638,6 +648,14 @@ class MfaClient:
             )
 
             if not state_data:
+                if self._session_establisher:
+                    await self._session_establisher(
+                        verify_response=verify_response,
+                        audience=audience,
+                        scope=scope,
+                        store_options=store_options,
+                    )
+                    return
                 raise MfaVerifyError(
                     "No existing session found to update with MFA tokens"
                 )
