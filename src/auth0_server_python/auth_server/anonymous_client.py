@@ -5,7 +5,7 @@ Handles pre-login anon@ identity operations against the Auth0 anonymous session 
 
 import json
 import time
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 import httpx
 from pydantic import ValidationError
@@ -56,7 +56,7 @@ class AnonymousClient:
 
     def __init__(
         self,
-        domain,
+        domain: Union[str, Callable, None],
         client_id: str,
         client_secret: str,
         secret: str,
