@@ -599,20 +599,18 @@ class AnonymousClient:
                 store_options=store_options,
             )
 
-        if self._domain_resolver:
-            current_domain = await self._resolve_domain(store_options)
-            if context.domain and self._normalize_url(context.domain) != self._normalize_url(
-                current_domain
-            ):
-                # Cross-tenant reuse must be structurally impossible, so
-                # discard and mint fresh under the current tenant instead.
-                return await self._create_session_at(
-                    current_domain,
-                    audience=context.audience,
-                    scope=context.scope,
-                    metadata=None,
-                    store_options=store_options,
-                )
+        current_domain = await self._resolve_domain(store_options)
+        if context.domain and self._normalize_url(context.domain) != self._normalize_url(
+            current_domain
+        ):
+            # Never reuse a session across domains: discard and mint fresh.
+            return await self._create_session_at(
+                current_domain,
+                audience=context.audience,
+                scope=context.scope,
+                metadata=None,
+                store_options=store_options,
+            )
 
         now = int(time.time())
         if context.expires_at > now:

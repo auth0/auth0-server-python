@@ -927,8 +927,6 @@ class AnonymousSessionContext(BaseModel):
     session_expires_at: Optional[int] = None
     metadata: Optional[dict[str, Any]] = None
     created_at: int
-    # Resolved domain at creation, gated on in resolver/MCD mode so a session
-    # minted for one tenant cannot be read back for another.
     domain: Optional[str] = None
     audience: Optional[str] = None
     scope: Optional[str] = None

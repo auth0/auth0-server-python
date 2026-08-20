@@ -600,6 +600,19 @@ class TestMcdIsolation:
         assert session.is_new is True
 
     @pytest.mark.asyncio
+    async def test_domain_mismatch_in_static_mode_mints_fresh_under_current_tenant(self):
+        store = OneSlotStore()
+        _stored_context(
+            store, expires_at=int(time.time()) + 3600, domain="tenant-a.auth0.local"
+        )
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response(sub="anon@fresh"))])
+        with patch("httpx.AsyncClient", fake_http):
+            session = await client.get_token()
+        assert session.sub == "anon@fresh"
+        assert session.is_new is True
+
+    @pytest.mark.asyncio
     async def test_domain_resolver_failure_propagates(self):
         resolver = AsyncMock(return_value=None)
         client = AnonymousClient(
