@@ -679,6 +679,16 @@ class TestIntrospect:
         with pytest.raises(AnonymousSessionIntrospectError):
             await client.introspect()
 
+    @pytest.mark.asyncio
+    async def test_introspect_corrupted_context_raises_without_server_call(self):
+        store = OneSlotStore()
+        store.slot = (ANON_IDENTIFIER, {"context": "not-a-decryptable-blob"})
+        client = _make_client(anonymous_store=store)
+        with patch("httpx.AsyncClient") as mock_http:
+            with pytest.raises(AnonymousSessionIntrospectError):
+                await client.introspect()
+            mock_http.assert_not_called()
+
 
 # ── logout ────────────────────────────────────────────────────────────────────
 
@@ -770,6 +780,16 @@ class TestLogout:
         )
         with patch("httpx.AsyncClient", fake_http):
             await client.logout()
+        assert store.slot is None
+
+    @pytest.mark.asyncio
+    async def test_logout_corrupted_context_clears_state_without_server_call(self):
+        store = OneSlotStore()
+        store.slot = (ANON_IDENTIFIER, {"context": "not-a-decryptable-blob"})
+        client = _make_client(anonymous_store=store)
+        with patch("httpx.AsyncClient") as mock_http:
+            await client.logout()
+            mock_http.assert_not_called()
         assert store.slot is None
 
 
