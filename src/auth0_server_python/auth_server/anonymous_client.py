@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
 from auth0_server_python.auth_types import (
+    AnonymousCreateTokenResponse,
     AnonymousSession,
     AnonymousSessionContext,
     AnonymousSessionIntrospection,
@@ -349,12 +350,9 @@ class AnonymousClient:
                 raise mapped
 
             try:
-                token_response = AnonymousTokenResponse.model_validate(response.json())
+                token_response = AnonymousCreateTokenResponse.model_validate(response.json())
             except (json.JSONDecodeError, ValueError, ValidationError) as e:
                 raise AnonymousSessionCreateError("Failed to parse anonymous token response") from e
-
-        if not token_response.session_token:
-            raise AnonymousSessionCreateError("Anonymous token response missing required fields")
 
         now = int(time.time())
         context = AnonymousSessionContext(

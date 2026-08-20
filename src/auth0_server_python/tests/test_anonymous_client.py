@@ -226,6 +226,17 @@ class TestCreateSession:
         assert session.metadata == {"cart_id": "c1"}
 
     @pytest.mark.asyncio
+    async def test_create_session_response_missing_session_token_raises(self):
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        response_without_session_token = _token_response()
+        del response_without_session_token["session_token"]
+        fake_http = _FakeAsyncClient([_fake_response(200, response_without_session_token)])
+        with patch("httpx.AsyncClient", fake_http):
+            with pytest.raises(AnonymousSessionCreateError):
+                await client.create_session(audience="aud", scope="s")
+
+    @pytest.mark.asyncio
     async def test_create_session_sends_client_secret_in_json_body_not_auth_tuple(self):
         store = OneSlotStore()
         client = _make_client(anonymous_store=store)

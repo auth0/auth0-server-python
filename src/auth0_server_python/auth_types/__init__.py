@@ -904,6 +904,15 @@ class AnonymousTokenResponse(BaseModel):
     session_id: Optional[str] = None
 
 
+class AnonymousCreateTokenResponse(AnonymousTokenResponse):
+    """Raw response from POST /anonymous/token on the create path.
+
+    session_token is always present on creation, unlike on re-mint.
+    """
+
+    session_token: str
+
+
 class AnonymousSessionContext(BaseModel):
     """Internal context stored inside the encrypted anonymous session record.
 
