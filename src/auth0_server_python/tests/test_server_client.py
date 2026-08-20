@@ -65,6 +65,7 @@ from auth0_server_python.error import (
     SessionExpiredError,
     StartLinkUserError,
 )
+from auth0_server_python.tests.store_fakes import OneSlotStore
 from auth0_server_python.utils import PKCE, State
 
 
@@ -8957,29 +8958,6 @@ async def test_complete_interactive_login_milliseconds_ceiling_fails_open(mocker
 # =============================================================================
 
 
-class _OneSlotStore:
-    """
-    Models a store where a store identifier is used only as an encryption
-    salt, not a location key. One physical slot per instance. AsyncMock
-    cannot exercise this collision because it treats every identifier as a
-    distinct key.
-    """
-
-    def __init__(self):
-        self.slot = None
-
-    async def set(self, identifier, state, options=None):
-        self.slot = (identifier, state)
-
-    async def get(self, identifier, options=None):
-        if not self.slot or self.slot[0] != identifier:
-            return None
-        return self.slot[1]
-
-    async def delete(self, identifier, options=None):
-        self.slot = None
-
-
 def _make_anon_context(secret, **overrides):
     defaults = {
         "session_token": "ANON_TOKEN_1",
@@ -9012,7 +8990,7 @@ async def test_server_client_anonymous_property():
 async def test_anonymous_client_receives_own_store_not_state_store():
     """The anonymous client must never share the authenticated state store instance."""
     state_store = AsyncMock()
-    anon_store = _OneSlotStore()
+    anon_store = OneSlotStore()
     client = ServerClient(
         domain="auth0.local",
         client_id="cid",
@@ -9059,7 +9037,7 @@ async def test_start_interactive_login_no_anonymous_session_is_byte_identical(mo
 @pytest.mark.asyncio
 async def test_start_interactive_login_injects_active_anonymous_session(mocker):
     secret = "a-test-secret-with-enough-length"
-    anon_store = _OneSlotStore()
+    anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
     client = ServerClient(
         domain="auth0.local",
@@ -9090,7 +9068,7 @@ async def test_start_interactive_login_injects_active_anonymous_session(mocker):
 @pytest.mark.asyncio
 async def test_start_interactive_login_stamps_session_token_into_transaction_data(mocker):
     secret = "a-test-secret-with-enough-length"
-    anon_store = _OneSlotStore()
+    anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
     mock_transaction_store = AsyncMock()
     client = ServerClient(
@@ -9121,7 +9099,7 @@ async def test_start_interactive_login_stamps_session_token_into_transaction_dat
 @pytest.mark.asyncio
 async def test_start_interactive_login_absent_session_no_param(mocker):
     """An empty anonymous store behaves exactly like no anonymous_store configured."""
-    anon_store = _OneSlotStore()  # no session ever created
+    anon_store = OneSlotStore()  # no session ever created
     client = ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
@@ -9151,7 +9129,7 @@ async def test_start_interactive_login_absent_session_no_param(mocker):
 @pytest.mark.asyncio
 async def test_start_interactive_login_malformed_anonymous_token_denies_link_allows_login(mocker):
     """Undecryptable stored token: deny the link, never abort the login."""
-    anon_store = _OneSlotStore()
+    anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": "not-a-valid-jwe"})
     client = ServerClient(
         domain="auth0.local",
@@ -9181,7 +9159,7 @@ async def test_start_interactive_login_malformed_anonymous_token_denies_link_all
 async def test_start_interactive_login_suppresses_injection_on_par_branch(mocker):
     """PAR is not supported for anonymous sessions."""
     secret = "a-test-secret-with-enough-length"
-    anon_store = _OneSlotStore()
+    anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
     client = ServerClient(
         domain="auth0.local",
@@ -9239,7 +9217,7 @@ async def test_start_interactive_login_constructor_fixation_blocked_no_active_se
     """
     assert "session_token" in INTERNAL_AUTHORIZE_PARAMS  # belt-and-braces still present
 
-    anon_store = _OneSlotStore()  # no session -> the vulnerable case
+    anon_store = OneSlotStore()  # no session -> the vulnerable case
     client = ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
@@ -9272,7 +9250,7 @@ async def test_start_interactive_login_constructor_fixation_blocked_no_active_se
 @pytest.mark.asyncio
 async def test_start_interactive_login_per_call_fixation_also_blocked(mocker):
     """The same vector via options.authorization_params (per-call) is caught by the existing filter."""
-    anon_store = _OneSlotStore()
+    anon_store = OneSlotStore()
     client = ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
@@ -9304,7 +9282,7 @@ async def test_start_interactive_login_per_call_fixation_also_blocked(mocker):
 @pytest.mark.asyncio
 async def test_start_interactive_login_does_not_clobber_organization_or_invitation(mocker):
     secret = "a-test-secret-with-enough-length"
-    anon_store = _OneSlotStore()
+    anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
     client = ServerClient(
         domain="auth0.local",
@@ -9346,10 +9324,10 @@ async def test_anonymous_write_cannot_destroy_authenticated_session_on_shared_st
     the authenticated session on a separate store instance is provably
     untouched. The separate-instance contract holds.
     """
-    shared_store = _OneSlotStore()
+    shared_store = OneSlotStore()
     shared_store.slot = ("_a0_session", {"user": {"sub": "real_user"}})
 
-    anon_store = _OneSlotStore()
+    anon_store = OneSlotStore()
     client = ServerClient(
         domain="auth0.local",
         client_id="cid",
@@ -9376,7 +9354,7 @@ async def test_missing_anonymous_store_fails_closed_never_falls_back_to_state_st
     If an integrator forgets anonymous_store, the client must raise before any
     write, never silently write anonymous state into ServerClient's state_store.
     """
-    shared_store = _OneSlotStore()
+    shared_store = OneSlotStore()
     shared_store.slot = ("_a0_session", {"user": {"sub": "real_user"}})
     client = ServerClient(
         domain="auth0.local",
@@ -9397,7 +9375,7 @@ async def test_missing_anonymous_store_fails_closed_never_falls_back_to_state_st
 async def test_get_session_and_get_user_unaffected_by_active_anonymous_session():
     """Anonymous state never touches _a0_session. get_session()/get_user() see no new keys."""
     secret = "a-test-secret-with-enough-length"
-    anon_store = _OneSlotStore()
+    anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
     mock_state_store = AsyncMock()
     mock_state_store.get = AsyncMock(return_value=None)

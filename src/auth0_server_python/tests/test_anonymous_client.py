@@ -31,36 +31,13 @@ from auth0_server_python.error import (
     ConfigurationError,
     DomainResolverError,
 )
+from auth0_server_python.tests.store_fakes import OneSlotStore
 
 # Shared fixtures
 DOMAIN = "auth0.local"
 CLIENT_ID = "<client_id>"
 CLIENT_SECRET = "<client_secret>"
 SECRET = "test-secret-long-enough-for-encryption"
-
-
-class OneSlotStore:
-    """
-    Models StatelessStateStore: a store identifier is a salt, not a location.
-    One physical slot per instance, so a mismatched identifier reads as
-    absent, not as a different record. AsyncMock cannot catch a collision
-    because it treats every identifier as a distinct key, so this fake is
-    required instead.
-    """
-
-    def __init__(self):
-        self.slot = None
-
-    async def set(self, identifier, state, options=None):
-        self.slot = (identifier, state)
-
-    async def get(self, identifier, options=None):
-        if not self.slot or self.slot[0] != identifier:
-            return None
-        return self.slot[1]
-
-    async def delete(self, identifier, options=None):
-        self.slot = None
 
 
 def _make_client(anonymous_store=None, **kwargs) -> AnonymousClient:
