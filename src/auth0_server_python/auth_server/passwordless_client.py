@@ -1,8 +1,7 @@
 """
 Passwordless Client for auth0-server-python SDK.
 
-Implements embedded passwordless login (Legacy Passwordless connections) for a
-confidential (Regular Web App) client:
+Implements embedded passwordless login for a client:
 
 * Email OTP / SMS OTP - ``start()`` sends a code, ``verify()`` exchanges it for
   tokens via the passwordless-OTP grant and establishes a server-side session.
@@ -10,8 +9,7 @@ confidential (Regular Web App) client:
   handled by the standard callback (``ServerClient.complete_interactive_login``),
   not by ``verify()``.
 
-Tokens never leave the server. The browser holds only the opaque session
-reference (RWA / BFF posture).
+Tokens never leave the server. The browser holds only the opaque session.
 """
 
 from typing import TYPE_CHECKING, Any, Optional
@@ -45,10 +43,7 @@ if TYPE_CHECKING:
 PASSWORDLESS_OTP_GRANT_TYPE = "http://auth0.com/oauth/grant-type/passwordless/otp"
 DEFAULT_PASSWORDLESS_EMAIL_SCOPE = "openid profile email"
 DEFAULT_PASSWORDLESS_SMS_SCOPE = "openid profile"
-# Header Auth0 reads for the real end-user IP (confidential clients with
-# "Trust Token Endpoint IP Header" enabled).
 FORWARDED_FOR_HEADER = "auth0-forwarded-for"
-# Cap on a non-JSON error body retained as an exception cause.
 _RAW_ERROR_BODY_LIMIT = 2048
 
 
@@ -57,8 +52,7 @@ class PasswordlessClient:
     Client for Auth0 embedded passwordless operations.
 
     Composes the parent :class:`ServerClient` to reuse domain resolution, OIDC
-    discovery, JWKS/ID-token verification, and session persistence rather than
-    duplicating that security-critical logic.
+    discovery, JWKS/ID-token verification, and session persistence.
     """
 
     def __init__(self, server_client: "ServerClient"):
@@ -333,22 +327,11 @@ class PasswordlessClient:
         if store_options is None:
             raise MissingRequiredArgumentError("store_options")
 
-        # Auth0 echoes `state` back unvalidated on this flow. It does not
-        # compare it server-side, and the clicked link's query string can
-        # overwrite whatever was originally stored. This SDK's single-use,
-        # state-keyed transaction plus the exact-match, SDK-owned
-        # `redirect_uri` is therefore the only CSRF and authorization-code-
-        # interception control on magic link. The server provides none.
-        # Never make `state`/`redirect_uri` caller-overridable.
         state = PKCE.generate_random_string(32)
         auth_params["redirect_uri"] = redirect_uri
         auth_params["response_type"] = "code"
         auth_params["state"] = state
         auth_params.setdefault("scope", DEFAULT_PASSWORDLESS_EMAIL_SCOPE)
-        # A caller-supplied scope replaces the default wholesale, so `openid`
-        # is re-injected rather than trusted: without it Auth0 returns no ID
-        # token and the callback never demands one, leaving a session with no
-        # signature-verified claims.
         auth_params["scope"] = self._ensure_openid_scope(auth_params["scope"])
 
         transaction_data = TransactionData(
@@ -481,7 +464,7 @@ class PasswordlessClient:
         error body.
 
         Capped because the body may be an HTML error page, WAF block page, or
-        proxy dump: it is attached as the exception ``cause`` and reaches any
+        proxy dump: it is attached as the exception `cause` and reaches any
         logger that serializes it, and httpx applies no response-size limit.
         """
         try:
