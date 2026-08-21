@@ -9803,3 +9803,44 @@ async def test_apply_client_auth_mtls_returns_none_and_strips_creds():
     assert "client_secret" not in params
     assert "client_assertion" not in params
     assert "client_assertion_type" not in params
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_uses_mtls_token_endpoint(mocker):
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="cv",
+        domain="auth0.local",
+        app_state=None,
+    )
+    mock_tx_store.delete = AsyncMock()
+    mock_state_store = AsyncMock()
+    mock_state_store.get = AsyncMock(return_value=None)
+    mock_state_store.set = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=_dummy_ssl_context(),
+        secret="<secret>",
+        redirect_uri="https://app/cb",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+    )
+
+    mtls_metadata = {
+        "issuer": "https://auth0.local/",
+        "token_endpoint": "https://auth0.local/oauth/token",
+        "mtls_endpoint_aliases": {"token_endpoint": "https://mtls.auth0.local/oauth/token"},
+    }
+    mocker.patch.object(client, "_get_oidc_metadata_cached", AsyncMock(return_value=mtls_metadata))
+    mocker.patch.object(client._oauth, "metadata", mtls_metadata)
+
+    fetch_token = AsyncMock(return_value={"access_token": "at", "expires_in": 3600})
+    mocker.patch.object(client._oauth, "fetch_token", fetch_token)
+
+    await client.complete_interactive_login("https://app/cb?code=abc&state=xyz")
+
+    called_endpoint = fetch_token.call_args[0][0]
+    assert called_endpoint == "https://mtls.auth0.local/oauth/token"
