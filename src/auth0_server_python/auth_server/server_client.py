@@ -3338,6 +3338,12 @@ class ServerClient(Generic[TStoreOptions]):
             raise MissingRequiredArgumentError("auth_session")
         if authn_response is None:
             raise MissingRequiredArgumentError("authn_response")
+        if self._use_mtls and dpop_key is not None:
+            raise ConfigurationError(
+                "dpop_key cannot be combined with use_mtls. DPoP and mTLS bind tokens "
+                "differently; DPoP would take precedence and the token would not be "
+                "certificate-bound."
+            )
 
         try:
             domain = await self._resolve_current_domain(store_options)
