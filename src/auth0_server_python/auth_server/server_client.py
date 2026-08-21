@@ -5,6 +5,7 @@ Handles authentication flows, token management, and user sessions.
 
 import asyncio
 import json
+import ssl
 import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Callable, Generic, Optional, TypeVar, Union
@@ -133,6 +134,8 @@ class ServerClient(Generic[TStoreOptions]):
         pushed_authorization_requests: bool = False,
         organization: Optional[str] = None,
         mfa_token_ttl: int = DEFAULT_MFA_TOKEN_TTL,
+        use_mtls: bool = False,
+        ssl_context: Optional[ssl.SSLContext] = None,
     ):
         """
         Initialize the Auth0 server client.
@@ -188,6 +191,25 @@ class ServerClient(Generic[TStoreOptions]):
                 raise ConfigurationError("Domain cannot be empty.")
             self._domain = domain_str
             self._domain_resolver = None
+
+        self._use_mtls = use_mtls
+        self._ssl_context = ssl_context
+        if use_mtls:
+            if ssl_context is None:
+                raise ConfigurationError(
+                    "use_mtls=True requires an ssl_context with the client certificate "
+                    "loaded (ssl.create_default_context() + load_cert_chain())."
+                )
+            if client_secret:
+                raise ConfigurationError(
+                    "use_mtls cannot be combined with client_secret. The client "
+                    "certificate is the sole credential under mTLS."
+                )
+            if client_assertion_signing_key:
+                raise ConfigurationError(
+                    "use_mtls cannot be combined with client_assertion_signing_key. "
+                    "The client certificate is the sole credential under mTLS."
+                )
 
         self._client_id = client_id
         self._client_secret = client_secret
