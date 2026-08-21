@@ -9753,3 +9753,42 @@ async def test_mtls_get_http_client_passes_ssl_context(mocker):
     client._get_http_client()
     _, kwargs = spy.call_args
     assert kwargs.get("verify") is ctx
+
+
+def _mtls_client():
+    return ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=_dummy_ssl_context(),
+        secret="<secret>",
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_token_endpoint_uses_alias_under_mtls():
+    client = _mtls_client()
+    metadata = {
+        "token_endpoint": "https://auth0.local/oauth/token",
+        "mtls_endpoint_aliases": {"token_endpoint": "https://mtls.auth0.local/oauth/token"},
+    }
+    assert client._resolve_token_endpoint(metadata) == "https://mtls.auth0.local/oauth/token"
+
+
+@pytest.mark.asyncio
+async def test_resolve_token_endpoint_raises_when_alias_missing():
+    client = _mtls_client()
+    with pytest.raises(ConfigurationError):
+        client._resolve_token_endpoint({"token_endpoint": "https://auth0.local/oauth/token"})
+
+
+@pytest.mark.asyncio
+async def test_resolve_token_endpoint_standard_when_not_mtls():
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="<secret>",
+    )
+    metadata = {"token_endpoint": "https://auth0.local/oauth/token"}
+    assert client._resolve_token_endpoint(metadata) == "https://auth0.local/oauth/token"
