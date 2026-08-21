@@ -4,6 +4,7 @@ Handles Multi-Factor Authentication operations against the Auth0 MFA API.
 """
 
 import json
+import ssl
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional, Union
@@ -74,6 +75,8 @@ class MfaClient:
         ] = None,
         mfa_token_ttl: int = DEFAULT_MFA_TOKEN_TTL,
         apply_client_authentication: Optional[Callable] = None,
+        use_mtls: bool = False,
+        ssl_context: Optional[ssl.SSLContext] = None,
     ):
         if callable(domain):
             self._domain = None
@@ -92,10 +95,14 @@ class MfaClient:
             raise ConfigurationError("mfa_token_ttl must be a positive number of seconds")
         self._mfa_token_ttl = mfa_token_ttl
         self._apply_client_authentication = apply_client_authentication
+        self._use_mtls = use_mtls
+        self._ssl_context = ssl_context
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with default headers injected."""
         headers = {**kwargs.pop("headers", {}), **self._headers}
+        if self._use_mtls and "verify" not in kwargs:
+            kwargs["verify"] = self._ssl_context
         return httpx.AsyncClient(headers=headers, **kwargs)
 
     def _apply_mfa_client_authentication(self, body: dict, base_url: str) -> None:
@@ -472,6 +479,7 @@ class MfaClient:
         options: dict[str, Any],
         store_options: Optional[dict[str, Any]] = None,
         dpop_key: Optional["jwk.JWK"] = None,
+        token_endpoint_override: Optional[str] = None,
     ) -> MfaVerifyResponse:
         """
         Verifies an MFA code and completes authentication.
@@ -504,6 +512,12 @@ class MfaClient:
             MfaRequiredError: When chained MFA is required.
             ConfigurationError: If neither client_secret nor client_assertion_signing_key is configured.
         """
+        if self._use_mtls and dpop_key is not None:
+            raise ConfigurationError(
+                "dpop_key cannot be combined with use_mtls. DPoP and mTLS bind tokens "
+                "differently; DPoP would take precedence and the token would not be "
+                "certificate-bound."
+            )
         mfa_token = options.get("mfa_token")
         if not mfa_token:
             raise MfaTokenInvalidError()
@@ -534,7 +548,7 @@ class MfaClient:
             )
 
         try:
-            token_endpoint = f"{base_url}/oauth/token"
+            token_endpoint = token_endpoint_override or f"{base_url}/oauth/token"
 
             async with self._get_http_client() as client:
                 headers = {"Content-Type": "application/x-www-form-urlencoded"}

@@ -84,6 +84,29 @@ The key must be a PKCS8 PEM private key. Register its public key on your Auth0 a
 > [!IMPORTANT]
 > Private keys must not be committed to source control. Load them from a secure secret store or an environment-provided file.
 
+#### Authenticating with Mutual TLS (mTLS)
+
+The SDK supports mTLS client authentication (RFC 8705): the client presents a TLS certificate during the handshake instead of a client secret. Pass `use_mtls=True` and a caller-built `ssl.SSLContext` that already has the certificate loaded:
+
+```python
+import ssl
+
+ssl_context = ssl.create_default_context()
+ssl_context.load_cert_chain("client.crt", "client.key")
+
+auth0 = ServerClient(
+    domain="login.example.com",   # self_managed_certs custom domain
+    client_id="<AUTH0_CLIENT_ID>",
+    use_mtls=True,
+    ssl_context=ssl_context,
+    secret="<AUTH0_SECRET>",
+)
+```
+
+`use_mtls=True` requires an Enterprise tenant with the Highly Regulated Identity add-on, a `self_managed_certs` custom domain, and mTLS endpoint aliases enabled. It cannot be combined with `client_secret`, `client_assertion_signing_key`, or a per-call `dpop_key` — each raises `ConfigurationError`.
+
+See [examples/MutualTLS.md](examples/MutualTLS.md) for the full setup guide, certificate generation, and token sender-constraining details.
+
 ### 3. Add login to your Application (interactive)
 
 Before using redirect-based login, ensure the `redirect_uri` is configured when initializing the SDK:

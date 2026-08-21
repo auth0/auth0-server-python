@@ -5,7 +5,9 @@ Handles authentication flows, token management, and user sessions.
 
 import asyncio
 import json
+import ssl
 import time
+import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Callable, Generic, Optional, TypeVar, Union
 
@@ -133,6 +135,8 @@ class ServerClient(Generic[TStoreOptions]):
         pushed_authorization_requests: bool = False,
         organization: Optional[str] = None,
         mfa_token_ttl: int = DEFAULT_MFA_TOKEN_TTL,
+        use_mtls: bool = False,
+        ssl_context: Optional[ssl.SSLContext] = None,
     ):
         """
         Initialize the Auth0 server client.
@@ -189,6 +193,25 @@ class ServerClient(Generic[TStoreOptions]):
             self._domain = domain_str
             self._domain_resolver = None
 
+        self._use_mtls = use_mtls
+        self._ssl_context = ssl_context
+        if use_mtls:
+            if ssl_context is None:
+                raise ConfigurationError(
+                    "use_mtls=True requires an ssl_context with the client certificate "
+                    "loaded (ssl.create_default_context() + load_cert_chain())."
+                )
+            if client_secret:
+                raise ConfigurationError(
+                    "use_mtls cannot be combined with client_secret. The client "
+                    "certificate is the sole credential under mTLS."
+                )
+            if client_assertion_signing_key:
+                raise ConfigurationError(
+                    "use_mtls cannot be combined with client_assertion_signing_key. "
+                    "The client certificate is the sole credential under mTLS."
+                )
+
         self._client_id = client_id
         self._client_secret = client_secret
         self._client_assertion_signing_key = client_assertion_signing_key
@@ -218,6 +241,7 @@ class ServerClient(Generic[TStoreOptions]):
             client_id=client_id,
             client_secret=None if client_assertion_signing_key else client_secret,
             headers=self._telemetry_headers,
+            **({"verify": self._ssl_context} if self._use_mtls else {}),
         )
 
         self._my_account_client = MyAccountClient(
@@ -241,6 +265,8 @@ class ServerClient(Generic[TStoreOptions]):
             session_establisher=self._establish_session_from_mfa_verify_response,
             mfa_token_ttl=mfa_token_ttl,
             apply_client_authentication=self._apply_client_authentication,
+            use_mtls=self._use_mtls,
+            ssl_context=self._ssl_context,
         )
 
         self._passwordless_client = PasswordlessClient(self)
@@ -248,7 +274,27 @@ class ServerClient(Generic[TStoreOptions]):
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with telemetry headers injected."""
         headers = {**kwargs.pop("headers", {}), **self._telemetry_headers}
+        if self._use_mtls and "verify" not in kwargs:
+            kwargs["verify"] = self._ssl_context
         return httpx.AsyncClient(headers=headers, **kwargs)
+
+    def _resolve_token_endpoint(self, metadata: dict) -> Optional[str]:
+        """Return the token endpoint, routed to the mTLS alias when mTLS is enabled.
+
+        Under mTLS, raises ConfigurationError immediately if the alias is absent.
+        Under standard auth, returns None if token_endpoint is missing (caller's guard handles it).
+        """
+        if self._use_mtls:
+            aliases = metadata.get("mtls_endpoint_aliases") or {}
+            endpoint = aliases.get("token_endpoint")
+            if not endpoint:
+                raise ConfigurationError(
+                    "use_mtls is enabled but the authorization server discovery document "
+                    "does not advertise mtls_endpoint_aliases.token_endpoint. Ensure mTLS "
+                    "endpoint aliases are enabled on your Auth0 tenant."
+                )
+            return endpoint
+        return metadata.get("token_endpoint")
 
     def _apply_client_authentication(
         self, params: dict, issuer: str, in_body: bool = False
@@ -269,6 +315,11 @@ class ServerClient(Generic[TStoreOptions]):
         """
         for reserved in ("client_secret", "client_assertion", "client_assertion_type"):
             params.pop(reserved, None)
+
+        if self._use_mtls:
+            # The client certificate presented in the TLS handshake is the sole
+            # credential; no body credential or HTTP basic auth is sent.
+            return None
 
         if self._client_assertion_signing_key:
             params["client_assertion"] = build_client_assertion(
@@ -392,6 +443,31 @@ class ServerClient(Generic[TStoreOptions]):
             kwargs["audience"] = audience
 
         return jwt.decode(token, signing_key.key, **kwargs)
+
+    def _warn_if_not_cert_bound(self, access_token: Optional[str]) -> None:
+        """Advisory warning when mTLS is on but the access token is not certificate-bound.
+
+        Silent on opaque (non-JWT) tokens and when mTLS is off; never raises.
+        """
+        if not self._use_mtls or not access_token:
+            return
+        try:
+            claims = jwt.decode(
+                access_token,
+                options={"verify_signature": False},
+                algorithms=["HS256", "RS256", "ES256", "PS256"],
+            )
+        except Exception:
+            return  # opaque or unparseable token — nothing to assert
+        cnf = claims.get("cnf") if isinstance(claims, dict) else None
+        if not (isinstance(cnf, dict) and cnf.get("x5t#S256")):
+            warnings.warn(
+                "mTLS is enabled but the access token is not certificate-bound "
+                "(no cnf.x5t#S256). Sender-constraining is not active — configure "
+                "Token Sender-Constraining (mTLS) on the API resource server.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     async def _fetch_oidc_metadata(self, domain: str) -> dict:
         """Fetch OIDC metadata from domain."""
@@ -752,7 +828,7 @@ class ServerClient(Generic[TStoreOptions]):
         )
 
         try:
-            token_endpoint = self._oauth.metadata["token_endpoint"]
+            token_endpoint = self._resolve_token_endpoint(self._oauth.metadata)
             token_response = await self._oauth.fetch_token(
                 token_endpoint,
                 code=code,
@@ -764,6 +840,8 @@ class ServerClient(Generic[TStoreOptions]):
             # Raise a custom error (or handle it as appropriate)
             raise ApiError(
                 "token_error", f"Token exchange failed: {str(e)}", e)
+
+        self._warn_if_not_cert_bound(token_response.get("access_token"))
 
         # Use the userinfo field from the token_response for user claims
         user_info = token_response.get("userinfo")
@@ -1382,7 +1460,7 @@ class ServerClient(Generic[TStoreOptions]):
             # Fetch OIDC metadata from the correct domain
             metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = metadata.get("token_endpoint")
+            token_endpoint = self._resolve_token_endpoint(metadata)
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -1442,6 +1520,8 @@ class ServerClient(Generic[TStoreOptions]):
                     )
 
                 token_response = response.json()
+
+                self._warn_if_not_cert_bound(token_response.get("access_token"))
 
                 # Add required fields if they are missing
                 if "expires_in" in token_response and "expires_at" not in token_response:
@@ -1792,7 +1872,7 @@ class ServerClient(Generic[TStoreOptions]):
             domain = await self._resolve_current_domain(store_options)
             metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = metadata.get("token_endpoint")
+            token_endpoint = self._resolve_token_endpoint(metadata)
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -2241,7 +2321,7 @@ class ServerClient(Generic[TStoreOptions]):
             # Fetch OIDC metadata from the correct domain
             metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = metadata.get("token_endpoint")
+            token_endpoint = self._resolve_token_endpoint(metadata)
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -2621,7 +2701,7 @@ class ServerClient(Generic[TStoreOptions]):
             domain = await self._resolve_current_domain(store_options)
             metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = metadata.get("token_endpoint")
+            token_endpoint = self._resolve_token_endpoint(metadata)
             if not token_endpoint:
                 raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
 
@@ -3290,12 +3370,18 @@ class ServerClient(Generic[TStoreOptions]):
             raise MissingRequiredArgumentError("auth_session")
         if authn_response is None:
             raise MissingRequiredArgumentError("authn_response")
+        if self._use_mtls and dpop_key is not None:
+            raise ConfigurationError(
+                "dpop_key cannot be combined with use_mtls. DPoP and mTLS bind tokens "
+                "differently; DPoP would take precedence and the token would not be "
+                "certificate-bound."
+            )
 
         try:
             domain = await self._resolve_current_domain(store_options)
             metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = metadata.get("token_endpoint")
+            token_endpoint = self._resolve_token_endpoint(metadata)
             if not token_endpoint:
                 raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Token endpoint missing in OIDC metadata")
 
