@@ -240,6 +240,7 @@ class ServerClient(Generic[TStoreOptions]):
             client_id=client_id,
             client_secret=None if client_assertion_signing_key else client_secret,
             headers=self._telemetry_headers,
+            **({"verify": self._ssl_context} if self._use_mtls else {}),
         )
 
         self._my_account_client = MyAccountClient(
@@ -270,6 +271,8 @@ class ServerClient(Generic[TStoreOptions]):
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with telemetry headers injected."""
         headers = {**kwargs.pop("headers", {}), **self._telemetry_headers}
+        if self._use_mtls and "verify" not in kwargs:
+            kwargs["verify"] = self._ssl_context
         return httpx.AsyncClient(headers=headers, **kwargs)
 
     def _apply_client_authentication(
