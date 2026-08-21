@@ -9792,3 +9792,14 @@ async def test_resolve_token_endpoint_standard_when_not_mtls():
     )
     metadata = {"token_endpoint": "https://auth0.local/oauth/token"}
     assert client._resolve_token_endpoint(metadata) == "https://auth0.local/oauth/token"
+
+
+@pytest.mark.asyncio
+async def test_apply_client_auth_mtls_returns_none_and_strips_creds():
+    client = _mtls_client()
+    params = {"grant_type": "refresh_token", "client_secret": "leaked", "client_assertion": "x"}
+    result = client._apply_client_authentication(params, "https://auth0.local/")
+    assert result is None
+    assert "client_secret" not in params
+    assert "client_assertion" not in params
+    assert "client_assertion_type" not in params
