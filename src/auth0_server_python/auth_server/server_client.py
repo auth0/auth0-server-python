@@ -309,6 +309,11 @@ class ServerClient(Generic[TStoreOptions]):
         for reserved in ("client_secret", "client_assertion", "client_assertion_type"):
             params.pop(reserved, None)
 
+        if self._use_mtls:
+            # The client certificate presented in the TLS handshake is the sole
+            # credential; no body credential or HTTP basic auth is sent.
+            return None
+
         if self._client_assertion_signing_key:
             params["client_assertion"] = build_client_assertion(
                 self._client_assertion_signing_key,
