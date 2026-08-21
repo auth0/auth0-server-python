@@ -9737,3 +9737,19 @@ async def test_mtls_happy_path_constructs():
     )
     assert client._use_mtls is True
     assert client._ssl_context is not None
+
+
+@pytest.mark.asyncio
+async def test_mtls_get_http_client_passes_ssl_context(mocker):
+    ctx = _dummy_ssl_context()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ctx,
+        secret="<secret>",
+    )
+    spy = mocker.patch("auth0_server_python.auth_server.server_client.httpx.AsyncClient")
+    client._get_http_client()
+    _, kwargs = spy.call_args
+    assert kwargs.get("verify") is ctx
