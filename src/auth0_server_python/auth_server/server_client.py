@@ -265,6 +265,8 @@ class ServerClient(Generic[TStoreOptions]):
             session_establisher=self._establish_session_from_mfa_verify_response,
             mfa_token_ttl=mfa_token_ttl,
             apply_client_authentication=self._apply_client_authentication,
+            use_mtls=self._use_mtls,
+            ssl_context=self._ssl_context,
         )
 
         self._passwordless_client = PasswordlessClient(self)
