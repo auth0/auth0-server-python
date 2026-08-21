@@ -350,22 +350,27 @@ class AnonymousClient:
                 raise mapped
 
             try:
-                token_response = AnonymousCreateTokenResponse.model_validate(response.json())
-            except (json.JSONDecodeError, ValueError, ValidationError) as e:
+                body = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                raise AnonymousSessionCreateError("Failed to parse anonymous token response") from e
+
+            if isinstance(body, dict) and not body.get("session_token"):
+                raise AnonymousSessionCreateError(
+                    "Anonymous token response contained no session_token. Enable session_token in the response for this tenant.",
+                    code="missing_session_token",
+                )
+
+            try:
+                token_response = AnonymousCreateTokenResponse.model_validate(body)
+            except (ValueError, ValidationError) as e:
                 raise AnonymousSessionCreateError("Failed to parse anonymous token response") from e
 
         now = int(time.time())
         context = AnonymousSessionContext(
             session_token=token_response.session_token,
-            sub=token_response.sub,
-            session_id=token_response.session_id,
             access_token=token_response.access_token,
             expires_at=now + token_response.expires_in,
-            session_expires_at=(
-                now + token_response.session_expires_in
-                if token_response.session_expires_in
-                else None
-            ),
+            session_expires_at=now + token_response.session_expires_in,
             metadata=metadata,
             created_at=now,
             domain=domain,
@@ -378,9 +383,8 @@ class AnonymousClient:
             options=store_options,
         )
         return AnonymousSession(
-            sub=context.sub,
-            session_id=context.session_id,
             access_token=context.access_token,
+            session_token=context.session_token,
             expires_at=context.expires_at,
             session_expires_at=context.session_expires_at,
             metadata=context.metadata,
@@ -416,6 +420,11 @@ class AnonymousClient:
         }
         if self._client_secret:
             body["client_secret"] = self._client_secret
+        # Re-mint must replay audience/scope. The endpoint doesn't remember them.
+        if context.audience:
+            body["audience"] = context.audience
+        if context.scope:
+            body["scope"] = context.scope
 
         async with self._get_http_client() as client:
             try:
@@ -449,19 +458,9 @@ class AnonymousClient:
                 if token_response.session_token is not None
                 else context.session_token
             ),
-            sub=token_response.sub if token_response.sub is not None else context.sub,
-            session_id=(
-                token_response.session_id
-                if token_response.session_id is not None
-                else context.session_id
-            ),
             access_token=token_response.access_token,
             expires_at=now + token_response.expires_in,
-            session_expires_at=(
-                now + token_response.session_expires_in
-                if token_response.session_expires_in
-                else context.session_expires_at
-            ),
+            session_expires_at=now + token_response.session_expires_in,
             metadata=context.metadata,
             created_at=context.created_at,
             domain=domain,
@@ -474,9 +473,8 @@ class AnonymousClient:
             options=store_options,
         )
         return AnonymousSession(
-            sub=new_context.sub,
-            session_id=new_context.session_id,
             access_token=new_context.access_token,
+            session_token=new_context.session_token,
             expires_at=new_context.expires_at,
             session_expires_at=new_context.session_expires_at,
             metadata=new_context.metadata,
@@ -603,7 +601,6 @@ class AnonymousClient:
         if context.domain and self._normalize_url(context.domain) != self._normalize_url(
             current_domain
         ):
-            # Never reuse a session across domains: discard and mint fresh.
             return await self._create_session_at(
                 current_domain,
                 audience=context.audience,
@@ -615,9 +612,8 @@ class AnonymousClient:
         now = int(time.time())
         if context.expires_at > now:
             return AnonymousSession(
-                sub=context.sub,
-                session_id=context.session_id,
                 access_token=context.access_token,
+                session_token=context.session_token,
                 expires_at=context.expires_at,
                 session_expires_at=context.session_expires_at,
                 metadata=context.metadata,
@@ -712,22 +708,21 @@ class AnonymousClient:
         if context is not None:
             domain = context.domain or await self._resolve_domain(store_options)
             base_url = f"https://{domain}"
-            body: dict[str, Any] = {
-                "client_id": self._client_id,
-                "session_token": context.session_token,
-            }
-            if self._client_secret:
-                body["client_secret"] = self._client_secret
+            auth = (
+                (self._client_id, self._client_secret) if self._client_secret else None
+            )
             try:
                 async with self._get_http_client() as client:
-                    response = await client.post(f"{base_url}/anonymous/logout", json=body)
+                    response = await client.post(
+                        f"{base_url}/anonymous/logout", json={}, auth=auth
+                    )
             except httpx.HTTPError as e:
                 error_to_raise = AnonymousSessionLogoutError(
                     "Failed to reach the anonymous logout endpoint"
                 )
                 error_cause = e
             else:
-                if response.status_code != 200:
+                if not 200 <= response.status_code < 300:
                     error_data = self._parse_anonymous_error_body(response)
                     mapped = self._map_anonymous_error(response.status_code, error_data, "logout")
                     if not isinstance(mapped, _AnonymousSessionExpired):

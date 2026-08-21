@@ -9099,7 +9099,7 @@ async def test_start_interactive_login_stamps_session_token_into_transaction_dat
 @pytest.mark.asyncio
 async def test_start_interactive_login_absent_session_no_param(mocker):
     """An empty anonymous store behaves exactly like no anonymous_store configured."""
-    anon_store = OneSlotStore()  # no session ever created
+    anon_store = OneSlotStore()
     client = ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
@@ -9341,7 +9341,6 @@ async def test_anonymous_write_cannot_destroy_authenticated_session_on_shared_st
         ANON_IDENTIFIER, {"context": _make_anon_context("a-test-secret-with-enough-length")}
     )
 
-    # The authenticated session, on its own store instance, is untouched.
     assert shared_store.slot == ("_a0_session", {"user": {"sub": "real_user"}})
     session = await client.get_session()
     assert session is not None
@@ -9367,7 +9366,6 @@ async def test_missing_anonymous_store_fails_closed_never_falls_back_to_state_st
     )
     with pytest.raises(ConfigurationError):
         await client.anonymous.create_session(audience="aud", scope="s")
-    # The authenticated session store is completely untouched by the failed attempt.
     assert shared_store.slot == ("_a0_session", {"user": {"sub": "real_user"}})
 
 

@@ -873,9 +873,8 @@ class PasskeyTokenResponse(BaseModel):
 class AnonymousSession(BaseModel):
     """Public result of create_session() and the renewal ladder."""
 
-    sub: Optional[str] = None
-    session_id: Optional[str] = None
     access_token: str
+    session_token: str
     expires_at: int
     session_expires_at: Optional[int] = None
     metadata: Optional[dict[str, Any]] = None
@@ -898,10 +897,8 @@ class AnonymousTokenResponse(BaseModel):
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
+    session_expires_in: int
     session_token: Optional[str] = None
-    session_expires_in: Optional[int] = None
-    sub: Optional[str] = None
-    session_id: Optional[str] = None
 
 
 class AnonymousCreateTokenResponse(AnonymousTokenResponse):
@@ -920,8 +917,6 @@ class AnonymousSessionContext(BaseModel):
     """
 
     session_token: str
-    sub: Optional[str] = None
-    session_id: Optional[str] = None
     access_token: str
     expires_at: int
     session_expires_at: Optional[int] = None

@@ -28,3 +28,4 @@ coverage.xml
 
 # AI tools
 .claude
+.worktrees
