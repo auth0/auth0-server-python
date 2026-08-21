@@ -9806,6 +9806,17 @@ async def test_apply_client_auth_mtls_returns_none_and_strips_creds():
 
 
 @pytest.mark.asyncio
+async def test_signin_with_passkey_rejects_dpop_under_mtls(mocker):
+    client = _mtls_client()
+    with pytest.raises(ConfigurationError):
+        await client.signin_with_passkey(
+            auth_session="sess",
+            authn_response=mocker.Mock(),
+            dpop_key=object(),
+        )
+
+
+@pytest.mark.asyncio
 async def test_complete_interactive_login_uses_mtls_token_endpoint(mocker):
     mock_tx_store = AsyncMock()
     mock_tx_store.get.return_value = TransactionData(
