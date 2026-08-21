@@ -275,8 +275,12 @@ class ServerClient(Generic[TStoreOptions]):
             kwargs["verify"] = self._ssl_context
         return httpx.AsyncClient(headers=headers, **kwargs)
 
-    def _resolve_token_endpoint(self, metadata: dict) -> str:
-        """Return the token endpoint, routed to the mTLS alias when mTLS is enabled."""
+    def _resolve_token_endpoint(self, metadata: dict) -> Optional[str]:
+        """Return the token endpoint, routed to the mTLS alias when mTLS is enabled.
+
+        Under mTLS, raises ConfigurationError immediately if the alias is absent.
+        Under standard auth, returns None if token_endpoint is missing (caller's guard handles it).
+        """
         if self._use_mtls:
             aliases = metadata.get("mtls_endpoint_aliases") or {}
             endpoint = aliases.get("token_endpoint")
@@ -287,7 +291,7 @@ class ServerClient(Generic[TStoreOptions]):
                     "endpoint aliases are enabled on your Auth0 tenant."
                 )
             return endpoint
-        return metadata["token_endpoint"]
+        return metadata.get("token_endpoint")
 
     def _apply_client_authentication(
         self, params: dict, issuer: str, in_body: bool = False
@@ -796,7 +800,7 @@ class ServerClient(Generic[TStoreOptions]):
         )
 
         try:
-            token_endpoint = self._oauth.metadata["token_endpoint"]
+            token_endpoint = self._resolve_token_endpoint(self._oauth.metadata)
             token_response = await self._oauth.fetch_token(
                 token_endpoint,
                 code=code,
@@ -1426,7 +1430,7 @@ class ServerClient(Generic[TStoreOptions]):
             # Fetch OIDC metadata from the correct domain
             metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = metadata.get("token_endpoint")
+            token_endpoint = self._resolve_token_endpoint(metadata)
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -1836,7 +1840,7 @@ class ServerClient(Generic[TStoreOptions]):
             domain = await self._resolve_current_domain(store_options)
             metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = metadata.get("token_endpoint")
+            token_endpoint = self._resolve_token_endpoint(metadata)
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -2285,7 +2289,7 @@ class ServerClient(Generic[TStoreOptions]):
             # Fetch OIDC metadata from the correct domain
             metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = metadata.get("token_endpoint")
+            token_endpoint = self._resolve_token_endpoint(metadata)
             if not token_endpoint:
                 raise ApiError("configuration_error",
                                "Token endpoint missing in OIDC metadata")
@@ -2665,7 +2669,7 @@ class ServerClient(Generic[TStoreOptions]):
             domain = await self._resolve_current_domain(store_options)
             metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = metadata.get("token_endpoint")
+            token_endpoint = self._resolve_token_endpoint(metadata)
             if not token_endpoint:
                 raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
 
@@ -3339,7 +3343,7 @@ class ServerClient(Generic[TStoreOptions]):
             domain = await self._resolve_current_domain(store_options)
             metadata = await self._get_oidc_metadata_cached(domain)
 
-            token_endpoint = metadata.get("token_endpoint")
+            token_endpoint = self._resolve_token_endpoint(metadata)
             if not token_endpoint:
                 raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Token endpoint missing in OIDC metadata")
 
