@@ -275,6 +275,20 @@ class ServerClient(Generic[TStoreOptions]):
             kwargs["verify"] = self._ssl_context
         return httpx.AsyncClient(headers=headers, **kwargs)
 
+    def _resolve_token_endpoint(self, metadata: dict) -> str:
+        """Return the token endpoint, routed to the mTLS alias when mTLS is enabled."""
+        if self._use_mtls:
+            aliases = metadata.get("mtls_endpoint_aliases") or {}
+            endpoint = aliases.get("token_endpoint")
+            if not endpoint:
+                raise ConfigurationError(
+                    "use_mtls is enabled but the authorization server discovery document "
+                    "does not advertise mtls_endpoint_aliases.token_endpoint. Ensure mTLS "
+                    "endpoint aliases are enabled on your Auth0 tenant."
+                )
+            return endpoint
+        return metadata["token_endpoint"]
+
     def _apply_client_authentication(
         self, params: dict, issuer: str, in_body: bool = False
     ) -> Optional[tuple[str, str]]:
