@@ -1,5 +1,6 @@
 import base64
 import json
+import ssl
 import time
 import unicodedata
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -9677,3 +9678,62 @@ async def test_complete_interactive_login_milliseconds_ceiling_fails_open(mocker
     mock_state_store.set.assert_awaited_once()
     stored_state = mock_state_store.set.call_args.args[1]
     assert stored_state.internal.session_expires_at is None
+
+
+# ============================================================================
+# mTLS CLIENT AUTHENTICATION
+# ============================================================================
+
+
+def _dummy_ssl_context():
+    return ssl.create_default_context()
+
+
+@pytest.mark.asyncio
+async def test_mtls_requires_ssl_context():
+    with pytest.raises(ConfigurationError):
+        ServerClient(
+            domain="auth0.local",
+            client_id="<client_id>",
+            use_mtls=True,
+            secret="<secret>",
+        )
+
+
+@pytest.mark.asyncio
+async def test_mtls_rejects_client_secret():
+    with pytest.raises(ConfigurationError):
+        ServerClient(
+            domain="auth0.local",
+            client_id="<client_id>",
+            client_secret="<client_secret>",
+            use_mtls=True,
+            ssl_context=_dummy_ssl_context(),
+            secret="<secret>",
+        )
+
+
+@pytest.mark.asyncio
+async def test_mtls_rejects_client_assertion_signing_key():
+    with pytest.raises(ConfigurationError):
+        ServerClient(
+            domain="auth0.local",
+            client_id="<client_id>",
+            client_assertion_signing_key="<key>",
+            use_mtls=True,
+            ssl_context=_dummy_ssl_context(),
+            secret="<secret>",
+        )
+
+
+@pytest.mark.asyncio
+async def test_mtls_happy_path_constructs():
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=_dummy_ssl_context(),
+        secret="<secret>",
+    )
+    assert client._use_mtls is True
+    assert client._ssl_context is not None
