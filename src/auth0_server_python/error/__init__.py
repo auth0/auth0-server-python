@@ -1,5 +1,5 @@
 """
-Error classes for the auth0-server-python SDK.
+Error classes for the SDK.
 These exceptions provide specific error types for different failure scenarios.
 """
 

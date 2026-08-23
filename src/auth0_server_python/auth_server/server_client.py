@@ -872,7 +872,6 @@ class ServerClient(Generic[TStoreOptions]):
         if transaction_data.app_state:
             result["app_state"] = transaction_data.app_state
 
-        # For RAR
         authorization_details = token_response.get("authorization_details")
         if authorization_details:
             result["authorization_details"] = authorization_details

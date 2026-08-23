@@ -917,14 +917,8 @@ class _StartPasswordlessBase(BaseModel):
     # BCP 47 tag (e.g. "fr", "en-US"). Forwarded as x-request-language to
     # localise the email/SMS template.
     language: Optional[str] = None
-    # Extra params forwarded to /passwordless/start. SDK-owned keys
-    # (PASSWORDLESS_RESERVED_AUTH_PARAMS) are stripped in the client.
     auth_params: Optional[dict[str, Any]] = None
-    # Attempted solution to a captcha challenge, when the tenant requires one.
     captcha: Optional[str] = None
-    # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` so brute-force
-    # and suspicious-IP protection key on the real user, not the app server. Only
-    # honored for confidential clients with "Trust Token Endpoint IP Header" on.
     client_ip: Optional[str] = None
 
     @field_validator("language")
@@ -975,16 +969,11 @@ class VerifyPasswordlessOtpOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connection: PasswordlessConnection
-    # Sent to Auth0 as the `otp` form parameter.
     verification_code: str
     email: Optional[str] = None
     phone_number: Optional[str] = None
     scope: Optional[str] = None
     audience: Optional[str] = None
-    # End-user client IP, relayed to Auth0 as `auth0-forwarded-for` on the OTP
-    # token exchange so brute-force protection keys on the real user, not the
-    # app server. Honored only for confidential clients with "Trust Token
-    # Endpoint IP Header" enabled.
     client_ip: Optional[str] = None
 
     @field_validator("phone_number")
@@ -1019,7 +1008,6 @@ class VerifyPasswordlessOtpOptions(BaseModel):
 class PasswordlessStartResult(BaseModel):
     """Success payload from POST /passwordless/start."""
 
-    # Auth0 returns the request id as `_id`. Aliased so `.id` is populated.
     id: Optional[str] = Field(default=None, alias="_id")
 
     class Config:
