@@ -53,10 +53,7 @@ session = await server_client.anonymous.create_session(
 
 `metadata` is **set once, at creation, and never updated** — there is no platform update endpoint for anonymous sessions. Any JSON-serializable value is accepted, ≤1 KB total (UTF-8 JSON byte length); oversized, non-JSON-serializable, or dangerous-key (`__proto__`, `constructor`, `prototype`) metadata is rejected client-side before any network call.
 
-`AnonymousSession` never exposes the raw session token — only `sub`, `session_id`, `access_token`, `expires_at`, `session_expires_at`, `metadata`, and `is_new`.
-
-> [!IMPORTANT]
-> **Always check `is_new`.** It is `True` both on the first call to `create_session()` and on a *silent* re-mint (see below) — the only signal your application receives when the anonymous `sub` has changed. Any code correlating data on `sub` (e.g. a cart keyed by anonymous user) must check this on every call.
+`AnonymousSession` returns `session_token`, `access_token`, `expires_at`, `session_expires_at`, and `metadata`.
 
 ## Getting a Token
 
@@ -68,7 +65,7 @@ Renewal logic, in order:
 
 1. Cached access token still fresh → returned with no network call.
 2. Expired → re-minted using the stored session token (not a refresh-token grant — anonymous sessions never issue refresh tokens).
-3. Session token also expired or invalid → a **brand-new session is silently created, once**. Metadata from the old session is permanently lost, and `sub` changes. This never raises — an anonymous pre-login session carries no authorization, so re-minting crosses no trust boundary.
+3. Session token also expired or invalid → a **brand-new session is silently created, once**. Metadata from the old session is permanently lost, and `session_token` changes. This never raises — an anonymous pre-login session carries no authorization, so re-minting crosses no trust boundary.
 4. Any other error → raised as a typed exception. No swallow, no auto-retry beyond the one re-mint in step 3.
 
 ## Introspecting a Session
