@@ -318,7 +318,7 @@ class AnonymousClient:
             store_options: Options passed to the anonymous store.
 
         Returns:
-            The newly created AnonymousSession, with is_new=True.
+            The newly created AnonymousSession.
 
         Raises:
             AnonymousSessionCreateError: The request failed, or the response
@@ -388,7 +388,6 @@ class AnonymousClient:
             expires_at=context.expires_at,
             session_expires_at=context.session_expires_at,
             metadata=context.metadata,
-            is_new=True,
         )
 
     # ============================================================================
@@ -405,8 +404,7 @@ class AnonymousClient:
             store_options: Options passed to the anonymous store.
 
         Returns:
-            The refreshed AnonymousSession. is_new is True only when the
-            retry-once fallback created a brand-new session.
+            The refreshed AnonymousSession.
 
         Raises:
             AnonymousSessionTokenError: The request failed, or the response was
@@ -478,7 +476,6 @@ class AnonymousClient:
             expires_at=new_context.expires_at,
             session_expires_at=new_context.session_expires_at,
             metadata=new_context.metadata,
-            is_new=False,
         )
 
     # ============================================================================
@@ -617,7 +614,6 @@ class AnonymousClient:
                 expires_at=context.expires_at,
                 session_expires_at=context.session_expires_at,
                 metadata=context.metadata,
-                is_new=False,
             )
 
         return await self._remint(context, store_options)

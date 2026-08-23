@@ -878,7 +878,6 @@ class AnonymousSession(BaseModel):
     expires_at: int
     session_expires_at: Optional[int] = None
     metadata: Optional[dict[str, Any]] = None
-    is_new: bool
 
 
 class AnonymousSessionIntrospection(BaseModel):

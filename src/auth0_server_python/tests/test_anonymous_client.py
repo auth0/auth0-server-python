@@ -191,7 +191,6 @@ class TestCreateSession:
             session = await client.create_session(
                 audience="https://api.example.com", scope="read:cart", metadata={"cart_id": "c1"}
             )
-        assert session.is_new is True
         assert session.metadata == {"cart_id": "c1"}
 
     @pytest.mark.asyncio
@@ -457,7 +456,6 @@ class TestGetToken:
         with patch("httpx.AsyncClient") as mock_http:
             session = await client.get_token()
             mock_http.assert_not_called()
-        assert session.is_new is False
         assert session.access_token == "AT1"
 
     @pytest.mark.asyncio
@@ -486,7 +484,6 @@ class TestGetToken:
         with patch("httpx.AsyncClient", fake_http):
             session = await client.get_token()
         assert session.access_token == "AT2"
-        assert session.is_new is False
         _, _, kwargs = fake_http.calls[0]
         assert kwargs["json"]["session_token"] == "ST1"
         assert "refresh_token" not in kwargs["json"]
@@ -576,8 +573,8 @@ class TestGetToken:
             _fake_response(200, _token_response()),
         ])
         with patch("httpx.AsyncClient", fake_http):
-            session = await client.get_token()
-        assert session.is_new is True
+            await client.get_token()
+        assert len(fake_http.calls) == 2
 
     @pytest.mark.asyncio
     async def test_silent_remint_drops_metadata(self):
@@ -628,7 +625,8 @@ class TestGetToken:
         fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
         with patch("httpx.AsyncClient", fake_http):
             session = await client.get_token()
-        assert session.is_new is True
+        assert session.access_token == "AT1"
+        assert len(fake_http.calls) == 1
 
     @pytest.mark.asyncio
     async def test_network_error_during_renewal_not_misclassified_as_expiry(self):
@@ -681,8 +679,9 @@ class TestMcdIsolation:
         client._domain = None
         fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
         with patch("httpx.AsyncClient", fake_http):
-            session = await client.get_token()
-        assert session.is_new is True
+            await client.get_token()
+        _, url, _ = fake_http.calls[0]
+        assert url.startswith("https://tenant-b.auth0.local")
 
     @pytest.mark.asyncio
     async def test_domain_mismatch_in_static_mode_mints_fresh_under_current_tenant(self):
@@ -693,8 +692,9 @@ class TestMcdIsolation:
         client = _make_client(anonymous_store=store)
         fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
         with patch("httpx.AsyncClient", fake_http):
-            session = await client.get_token()
-        assert session.is_new is True
+            await client.get_token()
+        _, url, _ = fake_http.calls[0]
+        assert "tenant-a.auth0.local" not in url
 
     @pytest.mark.asyncio
     async def test_domain_resolver_failure_propagates(self):
