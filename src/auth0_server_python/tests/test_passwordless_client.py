@@ -1123,10 +1123,62 @@ class TestPrivateKeyJwt:
         assert claims["sub"] == CLIENT_ID
 
     @pytest.mark.asyncio
+    async def test_start_uses_client_secret_when_configured(self):
+        client = _make_client()
+        http = _mock_http(client, 200, {})
+
+        await client.passwordless.start(
+            StartPasswordlessEmailOptions(email="user@example.com", send="code")
+        )
+
+        body = http.post.call_args.kwargs["json"]
+        assert body["client_secret"] == CLIENT_SECRET
+        assert "client_assertion" not in body
+
+    @pytest.mark.asyncio
+    async def test_verify_uses_client_secret_when_configured(self, mocker):
+        client = _make_client()
+        claims_from_id_token = {"iss": ISSUER, "sub": "auth0|1", "sid": "SID-123", "iat": 1_000}
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+        mocker.patch.object(
+            client,
+            "_get_jwks_cached",
+            return_value={"keys": [{"kty": "RSA", "kid": "k1"}]},
+        )
+        mocker.patch.object(client, "_verify_and_decode_jwt", return_value=claims_from_id_token)
+        http = _mock_http(
+            client,
+            200,
+            {"access_token": "at", "id_token": "idt", "expires_in": 3600, "scope": "openid"},
+        )
+
+        await client.passwordless.verify(
+            VerifyPasswordlessOtpOptions(
+                connection="email", email="user@example.com", verification_code="123456"
+            )
+        )
+
+        data = http.post.call_args.kwargs["data"]
+        assert data["client_secret"] == CLIENT_SECRET
+        assert "client_assertion" not in data
+
+    @pytest.mark.asyncio
     async def test_start_no_client_auth_configured_raises_configuration_error(self):
         client = _make_client(client_secret=None)
 
         with pytest.raises(ConfigurationError):
             await client.passwordless.start(
                 StartPasswordlessEmailOptions(email="user@example.com", send="code")
+            )
+
+    @pytest.mark.asyncio
+    async def test_verify_no_client_auth_configured_raises_configuration_error(self, mocker):
+        client = _make_client(client_secret=None)
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=METADATA)
+
+        with pytest.raises(ConfigurationError):
+            await client.passwordless.verify(
+                VerifyPasswordlessOtpOptions(
+                    connection="email", email="user@example.com", verification_code="123456"
+                )
             )
