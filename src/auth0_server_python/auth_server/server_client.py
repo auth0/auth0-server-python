@@ -19,10 +19,16 @@ from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import ValidationError
 
+from auth0_server_python.auth_schemes.client_assertion import (
+    CLIENT_ASSERTION_TYPE,
+    build_client_assertion,
+    validate_client_assertion_key,
+)
 from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
 from auth0_server_python.auth_server.anonymous_client import AnonymousClient
-from auth0_server_python.auth_server.mfa_client import MfaClient
+from auth0_server_python.auth_server.mfa_client import DEFAULT_MFA_TOKEN_TTL, MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
+from auth0_server_python.auth_server.passwordless_client import PasswordlessClient
 from auth0_server_python.auth_types import (
     CompleteConnectAccountRequest,
     CompleteConnectAccountResponse,
@@ -36,6 +42,7 @@ from auth0_server_python.auth_types import (
     LogoutOptions,
     LogoutTokenClaims,
     MfaRequirements,
+    MfaVerifyResponse,
     PasskeyAuthResponse,
     PasskeyLoginChallengeResponse,
     PasskeyLoginResult,
@@ -64,6 +71,7 @@ from auth0_server_python.error import (
     InvalidArgumentError,
     IssuerValidationError,
     MfaRequiredError,
+    MfaVerifyError,
     MissingRequiredArgumentError,
     MissingTransactionError,
     OrganizationTokenValidationError,
@@ -115,6 +123,8 @@ class ServerClient(Generic[TStoreOptions]):
         domain: Union[str, Callable[[Optional[dict[str, Any]]], str]] = None,
         client_id: str = None,
         client_secret: str = None,
+        client_assertion_signing_key: Optional[str] = None,
+        client_assertion_signing_alg: Optional[str] = None,
         redirect_uri: Optional[str] = None,
         secret: str = None,
         transaction_store=None,
@@ -125,6 +135,7 @@ class ServerClient(Generic[TStoreOptions]):
         authorization_params: Optional[dict[str, Any]] = None,
         pushed_authorization_requests: bool = False,
         organization: Optional[str] = None,
+        mfa_token_ttl: int = DEFAULT_MFA_TOKEN_TTL,
     ):
         """
         Initialize the Auth0 server client.
@@ -133,6 +144,8 @@ class ServerClient(Generic[TStoreOptions]):
             domain: Auth0 domain - either a static string (e.g., 'tenant.auth0.com') or a callable that resolves domain dynamically.
             client_id: Auth0 client ID
             client_secret: Auth0 client secret
+            client_assertion_signing_key: Private key (PKCS8 PEM) for private_key_jwt client authentication. When set, token requests authenticate with a signed client assertion instead of the client secret.
+            client_assertion_signing_alg: Signing algorithm for the client assertion (defaults to "RS256").
             redirect_uri: Default redirect URI for authentication
             secret: Secret used for encryption
             transaction_store: Custom transaction store (defaults to MemoryTransactionStore)
@@ -151,6 +164,13 @@ class ServerClient(Generic[TStoreOptions]):
             organization: Default organization for all login flows from this client.
                 Can be an org ID (e.g. 'org_abc123') or an org name (e.g. 'acme-corp').
                 Per-login values passed in StartInteractiveLoginOptions always override this.
+            mfa_token_ttl: Seconds an encrypted MFA token remains valid before
+                `mfa.verify()`/`mfa.challenge_authenticator()` reject it as expired.
+                Defaults to 300 (5 minutes). Increase for authenticator flows that
+                need more time (e.g. OOB push approval on a slow connection).
+
+        Raises:
+            ConfigurationError: If `mfa_token_ttl` is not a positive number of seconds.
         """
         if not secret:
             raise MissingRequiredArgumentError("secret")
@@ -181,6 +201,12 @@ class ServerClient(Generic[TStoreOptions]):
 
         self._client_id = client_id
         self._client_secret = client_secret
+        self._client_assertion_signing_key = client_assertion_signing_key
+        self._client_assertion_signing_alg = client_assertion_signing_alg or "RS256"
+        if client_assertion_signing_key:
+            validate_client_assertion_key(
+                client_assertion_signing_key, self._client_assertion_signing_alg
+            )
         self._redirect_uri = redirect_uri
         self._secret = secret
         self._default_authorization_params = authorization_params or {}
@@ -198,10 +224,10 @@ class ServerClient(Generic[TStoreOptions]):
         self._telemetry = Telemetry.default()
         self._telemetry_headers = self._telemetry.headers
 
-        # Initialize OAuth client
+        # A signing key takes precedence, so the secret is withheld to keep client auth single.
         self._oauth = AsyncOAuth2Client(
             client_id=client_id,
-            client_secret=client_secret,
+            client_secret=None if client_assertion_signing_key else client_secret,
             headers=self._telemetry_headers,
         )
 
@@ -223,6 +249,9 @@ class ServerClient(Generic[TStoreOptions]):
             state_store=self._state_store,
             state_identifier=self._state_identifier,
             headers=self._telemetry_headers,
+            session_establisher=self._establish_session_from_mfa_verify_response,
+            mfa_token_ttl=mfa_token_ttl,
+            apply_client_authentication=self._apply_client_authentication,
         )
 
         # Its own store, never self._state_store, so anonymous state stays isolated.
@@ -238,11 +267,52 @@ class ServerClient(Generic[TStoreOptions]):
             else None,
             headers=self._telemetry_headers,
         )
+        self._passwordless_client = PasswordlessClient(self)
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with telemetry headers injected."""
         headers = {**kwargs.pop("headers", {}), **self._telemetry_headers}
         return httpx.AsyncClient(headers=headers, **kwargs)
+
+    def _apply_client_authentication(
+        self, params: dict, issuer: str, in_body: bool = False
+    ) -> Optional[tuple[str, str]]:
+        """
+        Apply client authentication to an outgoing token request.
+
+        Args:
+            params: The outgoing token request body. Any caller-supplied client-auth keys are removed, then the client assertion is added (or the client secret when in_body is True).
+            issuer: The authorization server issuer identifier, used as the assertion audience.
+            in_body: When True, place the client secret in params instead of returning it for HTTP basic auth (for endpoints that authenticate the client in the request body).
+
+        Returns:
+            The (client_id, client_secret) tuple for HTTP basic auth, or None when the client was authenticated in params.
+
+        Raises:
+            ConfigurationError: If neither client_secret nor client_assertion_signing_key is configured.
+        """
+        for reserved in ("client_secret", "client_assertion", "client_assertion_type"):
+            params.pop(reserved, None)
+
+        if self._client_assertion_signing_key:
+            params["client_assertion"] = build_client_assertion(
+                self._client_assertion_signing_key,
+                self._client_id,
+                issuer,
+                self._client_assertion_signing_alg,
+            )
+            params["client_assertion_type"] = CLIENT_ASSERTION_TYPE
+            return None
+
+        if self._client_secret:
+            if in_body:
+                params["client_secret"] = self._client_secret
+                return None
+            return (self._client_id, self._client_secret)
+
+        raise ConfigurationError(
+            "Client authentication is not configured. Provide either client_secret or client_assertion_signing_key."
+        )
 
     def _normalize_url(self, value: str) -> str:
         """
@@ -511,6 +581,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             Authorization URL to redirect the user to
+
+        Raises:
+            ConfigurationError: If no client authentication is configured.
         """
         options = options or StartInteractiveLoginOptions()
 
@@ -609,12 +682,16 @@ class ServerClient(Generic[TStoreOptions]):
                     "configuration_error", "PAR is enabled but pushed_authorization_request_endpoint is missing in metadata")
 
             auth_params["client_id"] = self._client_id
+            # authlib supplies response_type on the non-PAR path, but the PAR post is built by hand.
+            auth_params["response_type"] = "code"
+            issuer = metadata.get("issuer") or f"https://{origin_domain}/"
+            client_auth = self._apply_client_authentication(auth_params, issuer)
             # Post the auth_params to the PAR endpoint
             async with self._get_http_client() as client:
                 par_response = await client.post(
                     par_endpoint,
                     data=auth_params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
                 if par_response.status_code not in (200, 201):
                     error_data = par_response.json()
@@ -662,6 +739,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             Dictionary containing session data and app state
+
+        Raises:
+            ConfigurationError: If no client authentication is configured.
         """
         # Parse the URL to get query parameters
         parsed_url = urlparse(url)
@@ -701,6 +781,13 @@ class ServerClient(Generic[TStoreOptions]):
         # Exchange the code for tokens
         # Use redirect_uri from transaction if available, otherwise fall back to default
         token_redirect_uri = transaction_data.redirect_uri or self._redirect_uri
+
+        # client_secret is applied by self._oauth. private_key_jwt is passed to fetch_token as params.
+        client_auth_params: dict = {}
+        self._apply_client_authentication(
+            client_auth_params, origin_issuer or f"https://{origin_domain}/"
+        )
+
         try:
             token_endpoint = self._oauth.metadata["token_endpoint"]
             token_response = await self._oauth.fetch_token(
@@ -708,6 +795,7 @@ class ServerClient(Generic[TStoreOptions]):
                 code=code,
                 code_verifier=transaction_data.code_verifier,
                 redirect_uri=token_redirect_uri,
+                **client_auth_params,
             )
         except OAuthError as e:
             # Raise a custom error (or handle it as appropriate)
@@ -722,6 +810,9 @@ class ServerClient(Generic[TStoreOptions]):
         # ID token `iat`, used to detect a ceiling that is already past at login.
         issued_at = None
         id_token = token_response.get("id_token")
+        # Verified ID token claims, retained so the session `sid` can be sourced
+        # from them (back-channel logout matches on `sid`).
+        id_token_claims = None
 
         expected_org = transaction_data.organization
 
@@ -764,6 +855,7 @@ class ServerClient(Generic[TStoreOptions]):
                     validate_org_claims(claims, expected_org)
 
                 user_claims = UserClaims.parse_obj(claims)
+                id_token_claims = claims
                 session_expires_at = user_claims.session_expiry
                 issued_at = claims.get("iat")
             except ValueError as e:
@@ -794,41 +886,21 @@ class ServerClient(Generic[TStoreOptions]):
                 )
 
 
-        # Refuse to persist a session whose ceiling is already in the past.
-        if State.is_session_ceiling_in_past(session_expires_at, issued_at):
+        try:
+            state_data = await self._persist_session_from_token_response(
+                token_response=token_response,
+                user_claims=user_claims,
+                origin_domain=origin_domain,
+                audience=transaction_data.audience,
+                session_expires_at=session_expires_at,
+                issued_at=issued_at,
+                id_token_claims=id_token_claims,
+                user_info=user_info if isinstance(user_info, dict) else None,
+                store_options=store_options,
+            )
+        except SessionExpiredError:
             await self._transaction_store.delete(transaction_identifier, options=store_options)
-            raise SessionExpiredError()
-
-        # Build a token set using the token response data
-        token_set = TokenSet(
-            audience=transaction_data.audience or self.DEFAULT_AUDIENCE_STATE_KEY,
-            access_token=token_response.get("access_token", ""),
-            scope=token_response.get("scope", ""),
-            expires_at=int(time.time()) +
-            token_response.get("expires_in", 3600)
-        )
-
-        # Generate a session id (sid) from token_response or transaction data, or create a new one
-        sid = user_info.get(
-            "sid") if user_info and "sid" in user_info else PKCE.generate_random_string(32)
-
-        # Construct state data to represent the session
-        state_data = StateData(
-            user=user_claims,
-            id_token=token_response.get("id_token"),
-            # might be None if not provided
-            refresh_token=token_response.get("refresh_token"),
-            token_sets=[token_set],
-            domain=origin_domain,
-            internal={
-                "sid": sid,
-                "created_at": int(time.time()),
-                "session_expires_at": session_expires_at
-            }
-        )
-
-        # Store the state data in the state store using store_options (Response required)
-        await self._state_store.set(self._state_identifier, state_data, options=store_options)
+            raise
 
         # Clean up transaction data after successful login
         await self._transaction_store.delete(transaction_identifier, options=store_options)
@@ -837,12 +909,147 @@ class ServerClient(Generic[TStoreOptions]):
         if transaction_data.app_state:
             result["app_state"] = transaction_data.app_state
 
-        # For RAR
         authorization_details = token_response.get("authorization_details")
         if authorization_details:
             result["authorization_details"] = authorization_details
 
         return result
+
+    async def _persist_session_from_token_response(
+        self,
+        token_response: dict[str, Any],
+        user_claims: "UserClaims",
+        origin_domain: str,
+        audience: Optional[str],
+        session_expires_at: Optional[int],
+        issued_at: Optional[int],
+        id_token_claims: Optional[dict[str, Any]] = None,
+        user_info: Optional[dict[str, Any]] = None,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> StateData:
+        """
+        Build and persist a session ``StateData`` from a token endpoint response.
+
+        Args:
+            token_response: The token endpoint response.
+            user_claims: Claims parsed from the verified ID token or userinfo.
+            origin_domain: Resolved Auth0 domain for the session.
+            audience: Audience for the persisted token set, or None.
+            session_expires_at: IPSIE session-expiry ceiling (Unix seconds), or None.
+            issued_at: ID token ``iat``, used to reject an already-past ceiling.
+            id_token_claims: Verified ID token claims, primary source of the ``sid``.
+            user_info: Userinfo claims, a fallback source of the ``sid``.
+            store_options: Options passed to the state store.
+
+        Returns:
+            The persisted ``StateData``.
+
+        Raises:
+            SessionExpiredError: If the session ceiling is already in the past.
+        """
+        if State.is_session_ceiling_in_past(session_expires_at, issued_at):
+            raise SessionExpiredError()
+
+        now = int(time.time())
+        token_set = TokenSet(
+            audience=audience or self.DEFAULT_AUDIENCE_STATE_KEY,
+            access_token=token_response.get("access_token", ""),
+            scope=token_response.get("scope", ""),
+            expires_at=now + token_response.get("expires_in", 3600),
+        )
+
+        # A random sid would make the session untargetable by back-channel logout.
+        sid = None
+        if id_token_claims and id_token_claims.get("sid"):
+            sid = id_token_claims["sid"]
+        elif user_info and user_info.get("sid"):
+            sid = user_info["sid"]
+        if not sid:
+            sid = PKCE.generate_random_string(32)
+
+        state_data = StateData(
+            user=user_claims,
+            id_token=token_response.get("id_token"),
+            refresh_token=token_response.get("refresh_token"),
+            token_sets=[token_set],
+            domain=origin_domain,
+            internal={
+                "sid": sid,
+                "created_at": now,
+                "session_expires_at": session_expires_at,
+            },
+        )
+
+        await self._state_store.set(
+            self._state_identifier, state_data, options=store_options
+        )
+        return state_data
+
+    async def _establish_session_from_mfa_verify_response(
+        self,
+        *,
+        verify_response: MfaVerifyResponse,
+        audience: str,
+        scope: Optional[str],
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """
+        Create the initial SDK session after a first-login MFA flow completes.
+
+        Args:
+            verify_response: The final MFA verification response.
+            audience: Audience for the persisted token set.
+            scope: Scope associated with the token set, or None.
+            store_options: Options passed to the state store.
+
+        Raises:
+            MfaVerifyError: When the response has no ID token, or the ID token
+                fails signature, audience, or issuer validation.
+        """
+        token_response = verify_response.model_dump(exclude_none=True)
+        id_token = token_response.get("id_token")
+        if not id_token:
+            raise MfaVerifyError(
+                "MFA verification response did not include an ID token; cannot create a session"
+            )
+
+        origin_domain = await self._resolve_current_domain(store_options)
+        metadata = await self._get_oidc_metadata_cached(origin_domain)
+        origin_issuer = metadata.get("issuer")
+        jwks = await self._get_jwks_cached(origin_domain, metadata)
+
+        try:
+            claims = await self._verify_and_decode_jwt(
+                id_token, jwks, audience=self._client_id
+            )
+        except ValueError as e:
+            raise MfaVerifyError(str(e)) from e
+        except jwt.InvalidAudienceError as e:
+            raise MfaVerifyError(
+                "ID token audience mismatch. Ensure your client_id is configured correctly."
+            ) from e
+        except jwt.ExpiredSignatureError as e:
+            raise MfaVerifyError(f"ID token has expired: {str(e)}") from e
+        except jwt.InvalidTokenError as e:
+            raise MfaVerifyError(f"ID token verification failed: {str(e)}") from e
+
+        token_issuer = claims.get("iss", "")
+        if self._normalize_url(token_issuer) != self._normalize_url(origin_issuer):
+            raise MfaVerifyError(
+                "ID token issuer mismatch. Ensure your Auth0 domain is configured correctly."
+            )
+
+        user_claims = UserClaims.model_validate(claims)
+        await self._persist_session_from_token_response(
+            token_response=token_response,
+            user_claims=user_claims,
+            origin_domain=origin_domain,
+            audience=audience,
+            session_expires_at=user_claims.session_expiry,
+            issued_at=claims.get("iat"),
+            id_token_claims=claims,
+            store_options=store_options,
+        )
 
     # ============================================================================
     # USER SESSION MANAGEMENT
@@ -1196,6 +1403,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             AccessTokenError: If there was an issue requesting the access token.
+            ConfigurationError: If no client authentication is configured.
 
         Returns:
             A dictionary containing the token response from Auth0.
@@ -1236,12 +1444,15 @@ class ServerClient(Generic[TStoreOptions]):
             if merged_scope:
                 token_params["scope"] = merged_scope
 
+            issuer = metadata.get("issuer") or f"https://{domain}/"
+            client_auth = self._apply_client_authentication(token_params, issuer)
+
             # Exchange the refresh token for an access token
             async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=token_params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
 
                 if response.status_code != 200:
@@ -1277,7 +1488,7 @@ class ServerClient(Generic[TStoreOptions]):
                 return token_response
 
         except Exception as e:
-            if isinstance(e, ApiError):
+            if isinstance(e, (ApiError, ConfigurationError)):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.REFRESH_TOKEN_ERROR,
@@ -1553,12 +1764,14 @@ class ServerClient(Generic[TStoreOptions]):
             if authorization_params:
                 params.update(authorization_params)
 
+            client_auth = self._apply_client_authentication(params, issuer)
+
             # Make the backchannel authentication request
             async with self._get_http_client() as client:
                 backchannel_response = await client.post(
                     backchannel_endpoint,
                     data=params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
 
                 if backchannel_response.status_code != 200:
@@ -1581,7 +1794,7 @@ class ServerClient(Generic[TStoreOptions]):
                 return backchannel_data
 
         except Exception as e:
-            if isinstance(e, ApiError):
+            if isinstance(e, (ApiError, ConfigurationError)):
                 raise
             raise ApiError(
                 "backchannel_error",
@@ -1603,6 +1816,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             AccessTokenError: If there was an issue requesting the access token.
+            ConfigurationError: If no client authentication is configured.
 
         Returns:
             A dictionary containing the token response from Auth0.
@@ -1625,15 +1839,17 @@ class ServerClient(Generic[TStoreOptions]):
                 "grant_type": "urn:openid:params:grant-type:ciba",
                 "auth_req_id": auth_req_id,
                 "client_id": self._client_id,
-                "client_secret": self._client_secret
             }
+
+            issuer = metadata.get("issuer") or f"https://{domain}/"
+            client_auth = self._apply_client_authentication(token_params, issuer)
 
             # Exchange the auth_req_id for an access token
             async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=token_params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
 
                 if response.status_code != 200:
@@ -1663,7 +1879,7 @@ class ServerClient(Generic[TStoreOptions]):
                 return token_response
 
         except Exception as e:
-            if isinstance(e, (ApiError, PollingApiError)):
+            if isinstance(e, (ApiError, PollingApiError, ConfigurationError)):
                 raise
             raise AccessTokenError(
                 AccessTokenErrorCode.AUTH_REQ_ID_ERROR,
@@ -2046,6 +2262,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             AccessTokenForConnectionError: If there was an issue requesting the access token.
+            ConfigurationError: If no client authentication is configured.
 
         Returns:
             Dictionary containing the token response with accessToken, expiresAt, and scope.
@@ -2080,12 +2297,15 @@ class ServerClient(Generic[TStoreOptions]):
             if "login_hint" in options and options["login_hint"]:
                 params["login_hint"] = options["login_hint"]
 
+            issuer = metadata.get("issuer") or f"https://{domain}/"
+            client_auth = self._apply_client_authentication(params, issuer)
+
             # Make the request
             async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
 
                 if response.status_code != 200:
@@ -2106,6 +2326,8 @@ class ServerClient(Generic[TStoreOptions]):
                 }
 
         except Exception as e:
+            if isinstance(e, ConfigurationError):
+                raise
             if isinstance(e, ApiError):
                 raise AccessTokenForConnectionError(
                     AccessTokenForConnectionErrorCode.API_ERROR,
@@ -2374,6 +2596,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             CustomTokenExchangeError: If token exchange fails
             MissingRequiredArgumentError: If required parameters are missing
+            ConfigurationError: If no client authentication is configured
 
         Example:
             ```python
@@ -2464,17 +2687,23 @@ class ServerClient(Generic[TStoreOptions]):
             # Merge additional authorization params
             if options.authorization_params:
                 # Prevent override of critical parameters
-                forbidden_params = {"grant_type", "client_id", "subject_token", "subject_token_type"}
+                forbidden_params = {
+                    "grant_type", "client_id", "subject_token", "subject_token_type",
+                    "client_assertion", "client_assertion_type",
+                }
                 for key, value in options.authorization_params.items():
                     if key not in forbidden_params:
                         params[key] = value
+
+            issuer = metadata.get("issuer") or f"https://{domain}/"
+            client_auth = self._apply_client_authentication(params, issuer)
 
             # Make the token exchange request
             async with self._get_http_client() as client:
                 response = await client.post(
                     token_endpoint,
                     data=params,
-                    auth=(self._client_id, self._client_secret)
+                    auth=client_auth
                 )
 
                 if response.status_code != 200:
@@ -2520,7 +2749,7 @@ class ServerClient(Generic[TStoreOptions]):
                 f"Token validation failed: {str(e)}"
             )
         except Exception as e:
-            if isinstance(e, (CustomTokenExchangeError, ApiError)):
+            if isinstance(e, (CustomTokenExchangeError, ApiError, ConfigurationError)):
                 raise
             raise CustomTokenExchangeError(
                 CustomTokenExchangeErrorCode.TOKEN_EXCHANGE_FAILED,
@@ -3123,8 +3352,10 @@ class ServerClient(Generic[TStoreOptions]):
                 "auth_session": auth_session,
                 "authn_response": authn_response.model_dump(by_alias=True, exclude_none=True),
             }
-            if self._client_secret:
-                body["client_secret"] = self._client_secret
+            # Passkey signin allows public clients, so only authenticate when configured.
+            if self._client_secret or self._client_assertion_signing_key:
+                issuer = metadata.get("issuer") or f"https://{domain}/"
+                self._apply_client_authentication(body, issuer, in_body=True)
             if connection:
                 body["realm"] = connection
             if resolved_org:
@@ -3277,3 +3508,12 @@ class ServerClient(Generic[TStoreOptions]):
             if isinstance(e, (PasskeyError, MissingRequiredArgumentError, ValidationError, ApiError, IssuerValidationError, MfaRequiredError, OrganizationTokenValidationError)):
                 raise
             raise PasskeyError(PasskeyErrorCode.TOKEN_EXCHANGE_FAILED, "Passkey sign-in failed", e) from e
+
+    # ============================================================================
+    # Passwordless (embedded login)
+    # ============================================================================
+
+    @property
+    def passwordless(self) -> PasswordlessClient:
+        """Access the passwordless client for embedded passwordless operations."""
+        return self._passwordless_client

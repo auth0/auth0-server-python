@@ -55,6 +55,35 @@ The `AUTH0_SECRET` is the key used to encrypt the session and transaction cookie
 openssl rand -hex 64
 ```
 
+#### Authenticating with Private Key JWT
+
+The SDK authenticates to Auth0 with either a client secret or a Private Key JWT (`private_key_jwt`). To use Private Key JWT, pass your private signing key as `client_assertion_signing_key` instead of `client_secret`:
+
+```python
+from auth0_server_python.auth_server.server_client import ServerClient
+
+with open('private_key.pem') as f:
+    private_key = f.read()
+
+auth0 = ServerClient(
+    domain='<AUTH0_DOMAIN>',
+    client_id='<AUTH0_CLIENT_ID>',
+    client_assertion_signing_key=private_key,
+    secret='<AUTH0_SECRET>',
+    authorization_params={
+        'redirect_uri': '<AUTH0_REDIRECT_URI>',
+    }
+)
+```
+
+The key must be a PKCS8 PEM private key. Register its public key on your Auth0 application under **Settings → Credentials**, and set the application's authentication method to Private Key JWT. The signing algorithm defaults to `RS256` and can be overridden with `client_assertion_signing_alg`. Auth0 accepts `RS256`, `RS384`, and `PS256`, all of which use an RSA key. The algorithm must match the key type and the algorithm chosen when the public key credential was created.
+
+> [!NOTE]
+> The passkey challenge endpoints (`register` and `challenge`) accept only a client secret, so a client configured with just a signing key cannot use them.
+
+> [!IMPORTANT]
+> Private keys must not be committed to source control. Load them from a secure secret store or an environment-provided file.
+
 ### 3. Add login to your Application (interactive)
 
 Before using redirect-based login, ensure the `redirect_uri` is configured when initializing the SDK:
@@ -200,7 +229,11 @@ Let a logged-in user manage their own enrolled authentication methods — enroll
 
 Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. DPoP is supported for Passkey sign-in (`signin_with_passkey`) and the authentication-methods/factors methods on `MyAccountClient`. For key generation and usage, see [examples/Passkeys.md](examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](examples/MyAccountAuthenticationMethods.md#dpop).
 
-### 10. Anonymous Sessions
+### 10. Passwordless Authentication
+
+Sign users in with a one-time code sent by email or SMS, or with a magic link sent by email, via [Auth0 embedded passwordless login](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints). OTP verification and the magic-link callback each establish a server-side session like every other login path. For prerequisites, both flows, custom scopes/audiences, step-up MFA, and error handling, see [examples/Passwordless.md](examples/Passwordless.md).
+
+### 11. Anonymous Sessions
 
 Give a visitor an Auth0 `anon@<uuid>` identity before they log in, so cart/preference metadata attached pre-login is available to Post-Login Actions once they do. Requires a separate `anonymous_store` instance — never the same instance as `state_store` — and a tenant-level paid add-on flag. For setup, the token renewal ladder, login injection, and the store-isolation requirement, see [examples/AnonymousSessions.md](examples/AnonymousSessions.md).
 
