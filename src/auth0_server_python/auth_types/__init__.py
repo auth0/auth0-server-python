@@ -217,6 +217,15 @@ class StartInteractiveLoginOptions(BaseModel):
     invitation: Optional[str] = None
 
 
+class StartEnterpriseLoginOptions(StartInteractiveLoginOptions):
+    """
+    Options for starting an Enterprise Connect login.
+    Adds the user's email, used for WebFinger discovery and as the login hint.
+    """
+
+    email: str
+
+
 class LogoutOptions(BaseModel):
     """
     Options for logout operations.
@@ -224,6 +233,7 @@ class LogoutOptions(BaseModel):
     """
 
     return_to: Optional[str] = None
+    federated: Optional[bool] = False
 
 
 class AuthorizationParameters(BaseModel):

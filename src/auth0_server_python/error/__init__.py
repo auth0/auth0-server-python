@@ -437,3 +437,31 @@ class PasskeyErrorCode:
     CHALLENGE_FAILED = "passkey_challenge_error"
     TOKEN_EXCHANGE_FAILED = "passkey_token_error"
     INVALID_RESPONSE = "invalid_response"
+
+
+# =============================================================================
+# Enterprise Connect Error Classes
+# =============================================================================
+
+
+class EnterpriseConnectError(Auth0Error):
+    """
+    Error raised when a session or token method is called on a client
+    configured for Enterprise Connect, where the SDK owns no session.
+
+    Parents Auth0Error rather than ApiError because the refusal makes no
+    request to Auth0, so there is no upstream error body to carry.
+    """
+
+    def __init__(self, code: str, message: str, cause=None):
+        super().__init__(message)
+        self.code = code
+        self.name = "EnterpriseConnectError"
+        self.cause = cause
+
+
+class EnterpriseConnectErrorCode:
+    """Error codes for Enterprise Connect misuse guards."""
+
+    SESSION_UNAVAILABLE = "enterprise_connect_session_unavailable"
+    ACCESS_TOKEN_UNAVAILABLE = "enterprise_connect_access_token_unavailable"
