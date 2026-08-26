@@ -1,17 +1,17 @@
 # Code Style
 
-Linter config: `.ruff.toml` (repo root — not `[tool.ruff]` in `pyproject.toml`).
+Linter config: `.ruff.toml` (repo root - not `[tool.ruff]` in `pyproject.toml`).
 
 ## Enforced rule sets
 
-`select = ["E", "W", "F", "I", "B", "C4", "UP", "S", "PLC0415"]` — pycodestyle, pyflakes, isort,
+`select = ["E", "W", "F", "I", "B", "C4", "UP", "S", "PLC0415"]` - pycodestyle, pyflakes, isort,
 bugbear, comprehensions, pyupgrade, **bandit (security)**, and no-import-outside-top-level.
 
-`ignore = ["E501", "B904", "S101", "S105", "S106"]` — line length is not enforced despite
-`line-length = 100`; `raise ... from` is optional; `assert` and hardcoded-password-string warnings are
+`ignore = ["E501", "B904", "S101", "S105", "S106"]` - line length is not enforced despite
+`line-length = 100`. `raise ... from` is optional. `assert` and hardcoded-password-string warnings are
 off (for tests and for kwargs like `client_secret=`).
 
-`target-version = "py39"` — pyupgrade will not rewrite to 3.10+ syntax, and must not.
+`target-version = "py39"` - pyupgrade will not rewrite to 3.10+ syntax, and must not.
 
 ## Naming
 
@@ -29,7 +29,7 @@ off (for tests and for kwargs like `client_secret=`).
 Two-step flows name themselves: `start_*` / `complete_*` (`start_link_user` → `complete_link_user`),
 and challenge-then-exchange flows use `*_challenge` → `signin_with_*`.
 
-## ✅ Good — the dominant public-method shape
+## ✅ Good - the dominant public-method shape
 
 ```python
 async def passkey_login_challenge(
@@ -71,11 +71,11 @@ async def passkey_login_challenge(
 
 What makes it conform:
 
-- `async` + keyword-only-ish optional params, every one typed, `Optional[...]` (not `X | None` — py39 floor)
-- returns a **Pydantic model**, validated via `model_validate` — never a raw `dict`
+- `async` + keyword-only-ish optional params, every one typed, `Optional[...]` (not `X | None` - py39 floor)
+- returns a **Pydantic model**, validated via `model_validate` - never a raw `dict`
 - `store_options` threaded through so MCD domain resolution works
 - Google-style docstring with `Args` / `Returns` / `Raises`
-- `async with self._get_http_client()` — the telemetry-carrying client, never a bare `httpx.AsyncClient`
+- `async with self._get_http_client()` - the telemetry-carrying client, never a bare `httpx.AsyncClient`
 - catch-all re-raises the SDK's own typed errors untouched, then wraps anything unexpected in a typed
   error with a code, chaining the cause
 
@@ -98,32 +98,32 @@ can mistake for "no passkey" instead of "request failed", and an unvalidated `di
 
 ## Patterns in use
 
-- **Generic client over the store type** — `ServerClient(Generic[TStoreOptions])`; store implementations
+- **Generic client over the store type** - `ServerClient(Generic[TStoreOptions])`; store implementations
   subclass `StateStore` / `TransactionStore` from `store/abstract.py` (template method: the ABC owns
   `encrypt`/`decrypt`, subclasses own `set`/`get`/`delete`)
-- **Sub-client composition** — `ServerClient` owns `MfaClient` and `MyAccountClient`; MFA is exposed
+- **Sub-client composition** - `ServerClient` owns `MfaClient` and `MyAccountClient`. MFA is exposed
   through the read-only `mfa` property, and connected-accounts calls delegate to `_my_account_client`
-- **`httpx.Auth` strategies** — `BearerAuth` and `DPoPAuth` in `auth_schemes/`, selected by a
+- **`httpx.Auth` strategies** - `BearerAuth` and `DPoPAuth` in `auth_schemes/`, selected by a
   `_make_auth(access_token, dpop_key)` helper. Add a new scheme as another `httpx.Auth`, not as
   inline header-setting.
-- **Pydantic models as the wire contract** — everything in `auth_types/__init__.py`; caller-supplied
+- **Pydantic models as the wire contract** - everything in `auth_types/__init__.py`; caller-supplied
   enums are `Literal[...]` while server-returned fields stay `str` so a new Auth0 factor type doesn't
   fail closed
-- **Flat typed error hierarchy** — every error subclasses `Auth0Error` and carries a stable `code`;
-  code enumeration classes (`AccessTokenErrorCode`, `PasskeyErrorCode`, …) hold the string constants
-- **PEP 562 module `__getattr__`** for deprecated public aliases (`auth_types._DEPRECATED_ALIASES`) —
+- **Flat typed error hierarchy** - every error subclasses `Auth0Error` and carries a stable `code`.
+  Code enumeration classes (`AccessTokenErrorCode`, `PasskeyErrorCode`, …) hold the string constants
+- **PEP 562 module `__getattr__`** for deprecated public aliases (`auth_types._DEPRECATED_ALIASES`) -
   the import keeps working and emits a `DeprecationWarning`. Follow this when retiring a public name.
-- **Section banners** — long modules are divided with `# ====== SECTION ======` comment blocks;
-  keep new methods inside the matching section and preserve existing declaration order.
-- **Deliberate placement, even without banners** — in a file with no section banners, put a new
+- **Section banners** - long modules are divided with `# ====== SECTION ======` comment blocks.
+  Keep new methods inside the matching section and preserve existing declaration order.
+- **Deliberate placement, even without banners** - in a file with no section banners, put a new
   method/class/function next to the related code it belongs with, or append it at the end of the
   file/class. Never insert one at an arbitrary position just because it compiles there.
 
 ## Comments
 
-Code is largely self-documenting; comments are reserved for *why* — a protocol citation
-(`# RFC 9449 §8.2 — server-nonce retry`), a non-obvious security decision (`# NFC-normalize before
-comparison...`), or an intentional omission (`# redirect_uri is intentionally excluded — in MCD mode
+Code is largely self-documenting. Comments are reserved for *why* - a protocol citation
+(`# RFC 9449 §8.2 - server-nonce retry`), a non-obvious security decision (`# NFC-normalize before
+comparison...`), or an intentional omission (`# redirect_uri is intentionally excluded - in MCD mode
 it is built dynamically`). Don't add comments that restate the code.
 
 ## Repo Conventions
