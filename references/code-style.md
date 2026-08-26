@@ -125,3 +125,39 @@ Code is largely self-documenting; comments are reserved for *why* — a protocol
 (`# RFC 9449 §8.2 — server-nonce retry`), a non-obvious security decision (`# NFC-normalize before
 comparison...`), or an intentional omission (`# redirect_uri is intentionally excluded — in MCD mode
 it is built dynamically`). Don't add comments that restate the code.
+
+## Repo Conventions
+
+Enforced on every change (code, tests, docs, commit messages). A change that
+violates one is not done.
+
+1. **Helpers stay grouped.** Keep private and internal helpers together in one
+   place. Never interleave a helper between the public API methods of a flow -
+   no public method immediately followed by its own private helper. A reader
+   scanning the public surface must not trip over internals.
+2. **New public API goes last.** The public API for a new, independent feature
+   is added at the end of the class, so existing flows stay contiguous and read
+   top to bottom. Insert new methods without reordering existing declarations.
+   Keep the diff minimal.
+3. **Standard docstring format.** A crisp one-line description of what the
+   function does, then `Args`, then `Returns`/`Raises`. No multi-line prose
+   restating the code or narrating design rationale - that belongs in the PR
+   description.
+4. **Plain hyphens only.** No em or en dashes anywhere in prose: comments,
+   docstrings, commit messages, Markdown docs. Use a plain `-`.
+5. **No semicolon clause-splicing.** Never join two independent clauses with a
+   semicolon. Split them into separate sentences.
+6. **No narrating comments.** Never add a comment that restates a
+   self-explanatory line. A comment is earned only by a non-obvious WHY: a
+   hidden constraint, a subtle invariant, or a security rationale a reader could
+   not infer from the code.
+7. **No internal references.** No pointer a future reader cannot resolve from
+   the code alone: ticket numbers, planning-doc IDs, design-doc paths, or
+   internal links.
+8. **Trim comments to the minimum.** Default to few or none. An earned comment
+   is a single sharp line, focused and to the point, carrying only what is
+   valuable to the developer. Multi-line comments are exceptional and must
+   justify themselves.
+9. **Plain, direct voice.** No conversational filler and no cross-implementation
+   references ("same as the Node SDK"). State the behavior or invariant directly
+   in simple, clear English.
