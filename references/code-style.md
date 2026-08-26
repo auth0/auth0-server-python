@@ -135,10 +135,12 @@ violates one is not done.
    place. Never interleave a helper between the public API methods of a flow -
    no public method immediately followed by its own private helper. A reader
    scanning the public surface must not trip over internals.
-2. **New public API goes last.** The public API for a new, independent feature
-   is added at the end of the class, so existing flows stay contiguous and read
-   top to bottom. Insert new methods without reordering existing declarations.
-   Keep the diff minimal.
+2. **New public API goes last.** A pre-existing `# ==== SECTION ====` banner
+   takes precedence: place a new method in its matching section (see "Section
+   banners" above). Only when no matching section exists is a new, independent
+   feature's public API added at the end of the class, so existing flows stay
+   contiguous and read top to bottom. Either way, insert new methods without
+   reordering existing declarations, and keep the diff minimal.
 3. **Standard docstring format.** A crisp one-line description of what the
    function does, then `Args`, then `Returns`/`Raises`. No multi-line prose
    restating the code or narrating design rationale - that belongs in the PR
