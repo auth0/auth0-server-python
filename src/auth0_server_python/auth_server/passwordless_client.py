@@ -85,15 +85,16 @@ class PasswordlessClient:
             MissingRequiredArgumentError: When a magic link is requested but no
                 ``redirect_uri`` is configured on the client, or ``store_options``
                 is not provided.
+            ConfigurationError: When client authentication is not configured.
         """
         client = self._client
         origin_domain = await client._resolve_current_domain(store_options)
 
         body: dict[str, Any] = {
             "client_id": client._client_id,
-            "client_secret": client._client_secret,
             "connection": options.connection,
         }
+        client._apply_client_authentication(body, f"https://{origin_domain}/", in_body=True)
 
         if isinstance(options, StartPasswordlessEmailOptions):
             body["email"] = options.email
@@ -194,6 +195,7 @@ class PasswordlessClient:
             ApiError: When fetching the JWKS used to verify the ID token fails.
             SessionExpiredError: When the token's session-expiry ceiling is
                 already in the past.
+            ConfigurationError: When client authentication is not configured.
         """
         client = self._client
         origin_domain = await client._resolve_current_domain(store_options)
@@ -222,12 +224,12 @@ class PasswordlessClient:
         body: dict[str, Any] = {
             "grant_type": PASSWORDLESS_OTP_GRANT_TYPE,
             "client_id": client._client_id,
-            "client_secret": client._client_secret,
             "realm": options.connection,
             "username": options.username,
             "otp": options.verification_code,
             "scope": scope,
         }
+        client._apply_client_authentication(body, origin_issuer or f"https://{origin_domain}/", in_body=True)
         if options.audience:
             body["audience"] = options.audience
 
