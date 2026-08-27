@@ -11,7 +11,7 @@ For the concepts, tenant requirements, and available `acr_values` policies, see 
 
 ## Requesting Step-Up
 
-Pass `acr_values` inside `authorization_params` when starting the login. Add `max_age: 0` to force a fresh authentication instead of silently reusing the current session, and use `app_state` to remember where to resume.
+Pass `acr_values` inside `authorization_params` when starting the login. Add `max_age: 0` to force a fresh authentication instead of silently reusing the current session, and use `app_state` to remember where to resume. This assumes a configured `server_client` (see the constructor in [InteractiveLogin.md](./InteractiveLogin.md), or the full example below):
 
 ```python
 from auth0_server_python.auth_types import StartInteractiveLoginOptions
