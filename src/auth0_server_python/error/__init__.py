@@ -465,3 +465,4 @@ class EnterpriseConnectErrorCode:
 
     SESSION_UNAVAILABLE = "enterprise_connect_session_unavailable"
     ACCESS_TOKEN_UNAVAILABLE = "enterprise_connect_access_token_unavailable"
+    METHOD_UNAVAILABLE = "enterprise_connect_method_unavailable"

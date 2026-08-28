@@ -9978,6 +9978,68 @@ async def test_get_access_token_raises_in_enterprise_connect():
     assert exc.value.code == EnterpriseConnectErrorCode.ACCESS_TOKEN_UNAVAILABLE
 
 
+_EC_BLOCKED_ASYNC_MEMBERS = [
+    ("get_user", ()),
+    ("get_token_by_refresh_token", ({},)),
+    ("login_backchannel", ({},)),
+    ("backchannel_authentication", ({},)),
+    ("start_link_user", ({},)),
+    ("complete_link_user", ("https://app.example/callback",)),
+    ("start_unlink_user", ({},)),
+    ("complete_unlink_user", ("https://app.example/callback",)),
+    ("get_access_token_for_connection", ({},)),
+    ("get_token_for_connection", ({},)),
+    ("start_connect_account", (None,)),
+    ("complete_connect_account", ("https://app.example/callback",)),
+    ("list_connected_accounts", ()),
+    ("delete_connected_account", ("acc_1",)),
+    ("list_connected_account_connections", ()),
+    ("login_with_custom_token_exchange", (None,)),
+    ("request_session_transfer_token", ("subject-token", "urn:token-type")),
+    ("passkey_signup_challenge", ()),
+    ("passkey_login_challenge", ()),
+    ("signin_with_passkey", ("auth-session", None)),
+]
+
+
+@pytest.mark.parametrize("method_name, args", _EC_BLOCKED_ASYNC_MEMBERS)
+@pytest.mark.asyncio
+async def test_enterprise_connect_blocks_async_member(method_name, args):
+    client = _make_ec_client()
+    with pytest.raises(EnterpriseConnectError) as exc:
+        await getattr(client, method_name)(*args)
+    assert exc.value.code == EnterpriseConnectErrorCode.METHOD_UNAVAILABLE
+
+
+def test_enterprise_connect_blocks_build_session_transfer_redirect():
+    client = _make_ec_client()
+    with pytest.raises(EnterpriseConnectError) as exc:
+        client.build_session_transfer_redirect("https://auth0.local/authorize", None)
+    assert exc.value.code == EnterpriseConnectErrorCode.METHOD_UNAVAILABLE
+
+
+@pytest.mark.parametrize("property_name", ["mfa", "passwordless"])
+def test_enterprise_connect_blocks_property_access(property_name):
+    client = _make_ec_client()
+    with pytest.raises(EnterpriseConnectError) as exc:
+        getattr(client, property_name)
+    assert exc.value.code == EnterpriseConnectErrorCode.METHOD_UNAVAILABLE
+
+
+def test_reject_in_enterprise_connect_is_noop_without_flag():
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret",
+        transaction_store=AsyncMock(),
+        state_store=AsyncMock(),
+    )
+    client._reject_in_enterprise_connect("get_user")
+    assert client.mfa is not None
+    assert client.passwordless is not None
+
+
 @pytest.mark.asyncio
 async def test_handle_backchannel_logout_is_noop_in_enterprise_connect():
     client = _make_ec_client()

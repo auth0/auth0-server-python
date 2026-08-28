@@ -319,6 +319,21 @@ class ServerClient(Generic[TStoreOptions]):
                 stacklevel=2,
             )
 
+    def _reject_in_enterprise_connect(self, method: str) -> None:
+        """Rejects a session or refresh dependent call on an Enterprise Connect client.
+
+        Args:
+            method: Public member name, used in the error message.
+
+        Raises:
+            EnterpriseConnectError: When the client is in Enterprise Connect mode.
+        """
+        if self._enterprise_connect:
+            raise EnterpriseConnectError(
+                EnterpriseConnectErrorCode.METHOD_UNAVAILABLE,
+                f"{method} is unavailable in Enterprise Connect mode.",
+            )
+
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with telemetry headers injected."""
         headers = {**kwargs.pop("headers", {}), **self._telemetry_headers}
@@ -1194,7 +1209,12 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             The user, or None if no user found in the store.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("get_user")
+
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if state_data:
@@ -1234,9 +1254,7 @@ class ServerClient(Generic[TStoreOptions]):
         if self._enterprise_connect:
             raise EnterpriseConnectError(
                 EnterpriseConnectErrorCode.SESSION_UNAVAILABLE,
-                "get_session is unavailable in Enterprise Connect mode. The SDK owns "
-                "no session - read the user from complete_interactive_login's result "
-                "and manage the session in your own application store.",
+                "get_session is unavailable in Enterprise Connect mode.",
             )
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
@@ -1421,9 +1439,7 @@ class ServerClient(Generic[TStoreOptions]):
         if self._enterprise_connect:
             raise EnterpriseConnectError(
                 EnterpriseConnectErrorCode.ACCESS_TOKEN_UNAVAILABLE,
-                "get_access_token is unavailable in Enterprise Connect mode. Auth0 "
-                "acts as a pure SSO relay and issues no refresh token - use the "
-                "access token returned by complete_interactive_login while it is valid.",
+                "get_access_token is unavailable in Enterprise Connect mode.",
             )
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
@@ -1541,10 +1557,13 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             AccessTokenError: If there was an issue requesting the access token.
             ConfigurationError: If no client authentication is configured.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
 
         Returns:
             A dictionary containing the token response from Auth0.
         """
+        self._reject_in_enterprise_connect("get_token_by_refresh_token")
+
         refresh_token = options.get("refresh_token")
         if not refresh_token:
             raise MissingRequiredArgumentError("refresh_token")
@@ -1706,7 +1725,12 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             A dictionary containing the authorizationDetails (when RAR was used).
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("login_backchannel")
+
         token_endpoint_response = await self.backchannel_authentication({
             "binding_message": options.get("binding_message"),
             "login_hint": options.get("login_hint"),
@@ -1762,7 +1786,10 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             ApiError: If the backchannel authentication fails
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("backchannel_authentication")
+
         backchannel_data = await self.initiate_backchannel_authentication(options, store_options=store_options)
         auth_req_id = backchannel_data.get("auth_req_id")
         expires_in = backchannel_data.get(
@@ -2044,7 +2071,12 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             URL to redirect the user to for authentication.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("start_link_user")
+
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if not state_data or not state_data.get("id_token"):
@@ -2113,7 +2145,11 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             Dictionary containing the original app state
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("complete_link_user")
 
         # We can reuse the interactive login completion since the flow is similar
         result = await self.complete_interactive_login(url, store_options)
@@ -2137,7 +2173,12 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             URL to redirect the user to for authentication.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("start_unlink_user")
+
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if not state_data or not state_data.get("id_token"):
@@ -2205,7 +2246,11 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             Dictionary containing the original app state
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("complete_unlink_user")
 
         # We can reuse the interactive login completion since the flow is similar
         result = await self.complete_interactive_login(url, store_options)
@@ -2328,7 +2373,10 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             AccessTokenForConnectionError: If the access token was not found or
                 there was an issue requesting the access token.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("get_access_token_for_connection")
+
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
@@ -2400,10 +2448,13 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             AccessTokenForConnectionError: If there was an issue requesting the access token.
             ConfigurationError: If no client authentication is configured.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
 
         Returns:
             Dictionary containing the token response with accessToken, expiresAt, and scope.
         """
+        self._reject_in_enterprise_connect("get_token_for_connection")
+
         # Constants
         SUBJECT_TYPE_REFRESH_TOKEN = "urn:ietf:params:oauth:token-type:refresh_token"
         REQUESTED_TOKEN_TYPE_FEDERATED_CONNECTION_ACCESS_TOKEN = "http://auth0.com/oauth/token-type/federated-connection-access-token"
@@ -2499,7 +2550,12 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             The a connect URL containing a ticket to redirect the user to.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("start_connect_account")
+
         # Use the default redirect_uri if none is specified
         redirect_uri = options.redirect_uri or self._redirect_uri
         # Ensure we have a redirect_uri
@@ -2569,7 +2625,12 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             A response from the connect account flow.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("complete_connect_account")
+
         # Parse the URL to get query parameters
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
@@ -2636,7 +2697,10 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             Auth0Error: If there is an error retrieving the access token.
             MyAccountApiError: If the My Account API returns an error response.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("list_connected_accounts")
+
         if take is not None and (not isinstance(take, int) or take < 1):
             raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
 
@@ -2663,7 +2727,10 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             Auth0Error: If there is an error retrieving the access token.
             MyAccountApiError: If the My Account API returns an error response.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("delete_connected_account")
+
         if not connected_account_id:
             raise MissingRequiredArgumentError("connected_account_id")
 
@@ -2695,7 +2762,10 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             Auth0Error: If there is an error retrieving the access token.
             MyAccountApiError: If the My Account API returns an error response.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("list_connected_account_connections")
+
         if take is not None and (not isinstance(take, int) or take < 1):
             raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
 
@@ -2915,6 +2985,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             CustomTokenExchangeError: If token exchange fails
             ApiError: If session management fails
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
 
         Example:
             ```python
@@ -2932,6 +3003,8 @@ class ServerClient(Generic[TStoreOptions]):
         See:
             https://datatracker.ietf.org/doc/html/rfc8693
         """
+        self._reject_in_enterprise_connect("login_with_custom_token_exchange")
+
         try:
             # Perform token exchange
             exchange_options = CustomTokenExchangeOptions(
@@ -3168,7 +3241,10 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             CustomTokenExchangeError: If no actor can be resolved or the exchange fails
             InvalidArgumentError: If organization is provided but blank
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("request_session_transfer_token")
+
         try:
             # Validate the subject up front - before any session read/refresh/network.
             if not subject_token or not subject_token.strip():
@@ -3246,7 +3322,10 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             MissingRequiredArgumentError: If target_login_url is missing or blank
             InvalidArgumentError: If target_login_url is not an absolute https URL, or organization is blank
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("build_session_transfer_redirect")
+
         URL.validate_https_redirect_target(target_login_url, "target_login_url")
 
         params = {"session_transfer_token": result.session_transfer_token}
@@ -3264,6 +3343,7 @@ class ServerClient(Generic[TStoreOptions]):
     @property
     def mfa(self) -> MfaClient:
         """Access the MFA client for multi-factor authentication operations."""
+        self._reject_in_enterprise_connect("mfa")
         return self._mfa_client
 
     # ============================================================================
@@ -3298,7 +3378,10 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             PasskeyError: If the challenge request fails.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("passkey_signup_challenge")
+
         try:
             domain = await self._resolve_current_domain(store_options)
 
@@ -3371,7 +3454,10 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             PasskeyError: If the challenge request fails.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("passkey_login_challenge")
+
         try:
             domain = await self._resolve_current_domain(store_options)
 
@@ -3459,7 +3545,10 @@ class ServerClient(Generic[TStoreOptions]):
             OrganizationTokenValidationError: If an organization was requested but the
                 token response included no ID token, or the ID token's org claim does
                 not match.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        self._reject_in_enterprise_connect("signin_with_passkey")
+
         if not auth_session:
             raise MissingRequiredArgumentError("auth_session")
         if authn_response is None:
@@ -3644,6 +3733,7 @@ class ServerClient(Generic[TStoreOptions]):
     @property
     def passwordless(self) -> PasswordlessClient:
         """Access the passwordless client for embedded passwordless operations."""
+        self._reject_in_enterprise_connect("passwordless")
         return self._passwordless_client
 
     # ============================================================================
