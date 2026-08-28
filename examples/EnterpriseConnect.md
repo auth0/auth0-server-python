@@ -118,6 +118,8 @@ The returned dict contains:
 - `domain` - the Auth0 domain the login came from
 - `app_state` - present only when you passed `app_state` at `start_enterprise_login()`
 
+`result` is a plain dict, so index it with `result["user"]`. `user` is a `UserClaims` model with no dict access, so read claims by attribute like `user.org_id`.
+
 The SDK verifies the ID token's signature and issuer, and derives the returned claims from it, before returning. It does not write a session store record and retains no refresh token.
 
 ## 4. Organizations and multi-tenant apps
