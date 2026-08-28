@@ -64,7 +64,10 @@ For apps using request/response-backed stores or multiple custom domains, pass `
 from auth0_server_python.auth_types import StartEnterpriseLoginOptions
 
 auth_url = await server_client.start_enterprise_login(
-    StartEnterpriseLoginOptions(email=user_email),
+    StartEnterpriseLoginOptions(
+        email=user_email,
+        app_state={"return_to": "/dashboard"},
+    ),
     store_options={"request": request, "response": response},
 )
 
@@ -101,6 +104,10 @@ domain = result["domain"]
 
 # Create YOUR OWN session from these claims.
 create_app_session(user_id=user.sub)
+
+# app_state round-trips whatever you passed at start_enterprise_login.
+app_state = result.get("app_state") or {}
+return redirect(app_state.get("return_to", "/"))
 ```
 
 The returned dict contains:
@@ -115,10 +122,10 @@ The SDK verifies the ID token's signature and issuer, and derives the returned c
 
 ## 4. Organizations and multi-tenant apps
 
-Auth0 stamps the resolved organization into the token as `org_id`, available on `result["user"]`. The SDK surfaces it but does not enforce it - it cannot know which organization *your* app expected for this user.
+Auth0 stamps the resolved organization into the token as `org_id`, available on `result["user"]`. The SDK surfaces it but does not enforce it. It cannot know which organization *your* app expected for this user.
 
 > [!WARNING]
-> If your application serves more than one customer organization, or restricts access to specific enterprises, you must check `org_id` yourself before creating the session. Without this check, a user who authenticates through any managed connection could obtain a session in a context you did not intend. This is an authorization decision your app owns.
+> Validate `org_id` after every callback, regardless of routing. WebFinger discovery and `login_hint` are routing mechanisms, not security controls. On their own they do not prove the user belongs to a customer you serve. Read `org_id` from the returned claims and check it against your own record of known organizations before creating the session. Without this check, a user who authenticates through any managed connection could obtain a session in a context you did not intend. This is an authorization decision your app owns.
 
 ```python
 user = result["user"]
@@ -126,7 +133,7 @@ if user.org_id not in allowed_orgs_for(current_customer):
     raise Forbidden("user does not belong to this organization")
 ```
 
-Single-tenant apps that accept any user from the one configured enterprise do not need this check.
+If you serve exactly one organization, this is a single check against your one known org, not a reason to skip it. An app that skips it today can silently let users in from other tenants the day it onboards a second customer.
 
 ## 5. Logout
 
@@ -157,39 +164,37 @@ logout_url = await server_client.logout(
 
 ## What is not available in Enterprise Connect
 
-Because the SDK owns no session and no refresh token in this mode, some methods behave differently. They fall into two groups.
+Auth0 issues no refresh token and the SDK stores no session in this mode. Any member that reads a session or refreshes a token raises `EnterpriseConnectError`. Catch it and branch on `code`.
 
-**Guarded - these fail with a clear, typed error:**
+| Member | Behavior |
+|---|---|
+| `get_session()` | Raises, code `enterprise_connect_session_unavailable` |
+| `get_access_token()` | Raises, code `enterprise_connect_access_token_unavailable`. Read the token from `complete_interactive_login()` instead |
+| Refresh, user linking, connected accounts, session transfer, passkey sign-in, `login_with_custom_token_exchange`, and the `mfa` and `passwordless` sub-clients | Raise, code `enterprise_connect_method_unavailable` |
+| `handle_backchannel_logout()` | No-op. The SDK holds no session to revoke |
+| `custom_token_exchange()` | Works once, while the callback access token is valid. No refresh after it expires |
 
-- `get_session()` and `get_access_token()` raise `EnterpriseConnectError`. Read the user from the callback result and manage the session in your own store. Use the access token from `complete_interactive_login()` while it is valid.
-- `handle_backchannel_logout()` is a no-op - there is no stored session to revoke. Handle logout in your own session layer.
-
-**Not supported - do not call these on an Enterprise Connect client:**
-
-Refresh, connected-accounts, custom token exchange, and session-transfer flows are not designed for this mode and are not guarded. They depend on a stored session, which does not exist here, so calling them results in undefined behavior rather than a clean `EnterpriseConnectError`. Do not call them - manage the session and any token refresh in your own layer.
+Own the session and any token refresh in your app.
 
 ## Error Handling
 
 ```python
-from auth0_server_python.error import (
-    ApiError,
-    Auth0Error,
-    EnterpriseConnectError,
-    EnterpriseConnectErrorCode,
-    InvalidArgumentError,
-    MissingRequiredArgumentError,
-)
+from auth0_server_python.error import ApiError, EnterpriseConnectError
 
+# The callback can fail on the token exchange or on unverifiable claims.
 try:
     result = await server_client.complete_interactive_login(
         str(request.url),
         store_options={"request": request, "response": response},
     )
-except EnterpriseConnectError as e:
-    # A session/token method was called on an Enterprise Connect client.
+except ApiError as e:
     return {"error": e.code}
-except Auth0Error as e:
-    return {"error": str(e)}
+
+# Session and token methods are unavailable in this mode and raise EnterpriseConnectError.
+try:
+    await server_client.get_access_token()
+except EnterpriseConnectError as e:
+    return {"error": e.code}
 ```
 
 Errors you may see:
@@ -197,6 +202,7 @@ Errors you may see:
 - `EnterpriseConnectError` - a session or token method is unavailable in this mode. Branch on `code`:
   - `enterprise_connect_session_unavailable` - `get_session()` was called
   - `enterprise_connect_access_token_unavailable` - `get_access_token()` was called
+  - `enterprise_connect_method_unavailable` - any other session or refresh dependent member was called
 - `MissingRequiredArgumentError` - `start_enterprise_login()` was called without an email
 - `InvalidArgumentError` - the email is not a valid address
 - `ApiError` - the token exchange failed, or the login returned no verifiable claims (`invalid_response`)
