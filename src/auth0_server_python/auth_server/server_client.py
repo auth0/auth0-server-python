@@ -1289,7 +1289,8 @@ class ServerClient(Generic[TStoreOptions]):
         options = options or LogoutOptions()
 
         if not self._domain_resolver:
-            # Enterprise Connect owns no session, so there is nothing to delete.
+            # No domain resolver means one fixed domain. Delete the session when a
+            # state store exists. Enterprise Connect has none, so nothing to delete.
             if self._state_store is not None:
                 await self._state_store.delete(self._state_identifier, store_options)
             domain = self._domain

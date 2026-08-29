@@ -15,8 +15,9 @@ Enterprise Connect lets your application sign users in through their company's i
 - [1. Configure the client](#1-configure-the-client)
 - [2. Discover and start the login](#2-discover-and-start-the-login)
 - [3. Complete the callback](#3-complete-the-callback)
-- [4. Organizations and multi-tenant apps](#4-organizations-and-multi-tenant-apps)
-- [5. Logout](#5-logout)
+- [4. Protect your routes](#4-protect-your-routes)
+- [5. Organizations and multi-tenant apps](#5-organizations-and-multi-tenant-apps)
+- [6. Logout](#6-logout)
 - [What is not available in Enterprise Connect](#what-is-not-available-in-enterprise-connect)
 - [Error Handling](#error-handling)
 
@@ -58,7 +59,7 @@ For apps using request/response-backed stores or multiple custom domains, pass `
 
 ## 2. Discover and start the login
 
-`start_enterprise_login()` takes the user's email, runs discovery, and returns the authorization URL when the domain is managed, or `None` when it is not.
+Your app must serve a login page that collects the user's work email. Pass it to `start_enterprise_login()`, which runs WebFinger discovery and returns the authorization URL when the domain is managed, or `None` when it is not.
 
 ```python
 from auth0_server_python.auth_types import StartEnterpriseLoginOptions
@@ -122,7 +123,23 @@ The returned dict contains:
 
 The SDK verifies the ID token's signature and issuer, and derives the returned claims from it, before returning. It does not write a session store record and retains no refresh token.
 
-## 4. Organizations and multi-tenant apps
+## 4. Protect your routes
+
+Your app owns the session - the SDK holds nothing. Check your session store at the start of any route that requires authentication and redirect to your login page when the session is absent.
+
+```python
+user = your_session.get("user")
+if not user:
+    return redirect("/login")
+
+# The dict holds what you stored at the callback: sub, email, org_id.
+your_template.render(user=user)
+```
+
+> [!IMPORTANT]
+> Do not store an Auth0 access or ID token in your session. Store only the claims you need (for example `sub`, `email`, `org_id`). The browser must never see an Auth0 token.
+
+## 5. Organizations and multi-tenant apps
 
 Auth0 stamps the resolved organization into the token as `org_id`, available on `result["user"]`. The SDK surfaces it but does not enforce it. It cannot know which organization *your* app expected for this user.
 
@@ -137,7 +154,7 @@ if user.org_id not in allowed_orgs_for(current_customer):
 
 If you serve exactly one organization, this is a single check against your one known org, not a reason to skip it. An app that skips it today can silently let users in from other tenants the day it onboards a second customer.
 
-## 5. Logout
+## 6. Logout
 
 Clear your own application session first, then send the user to the Auth0 logout URL.
 
@@ -154,6 +171,8 @@ return redirect(logout_url)
 ```
 
 By default this ends the Auth0 session but leaves the upstream identity provider session intact, so the user is not re-prompted at their IdP on the next login. To also terminate the IdP session, pass `federated=True`.
+
+Federated logout ends the corporate IdP session itself, which can also sign the user out of other applications that share that same enterprise SSO, not just yours. Weigh that against the shared-device benefit before enabling it by default.
 
 ```python
 logout_url = await server_client.logout(
