@@ -502,6 +502,9 @@ class MfaClient:
             dpop_key: Optional EC P-256 JWK to DPoP-bind the token. Pass the same
                 key used at login (e.g. given to signin_with_passkey) to preserve
                 the sender constraint through step-up. Never stored by the SDK.
+            token_endpoint_override: Optional token endpoint URL. When provided, overrides
+                the default ``{base_url}/oauth/token``. Used by ServerClient to supply the
+                mTLS endpoint alias when use_mtls is enabled.
 
         Returns:
             MfaVerifyResponse with access_token, token_type, etc.
@@ -510,6 +513,8 @@ class MfaClient:
             MfaVerifyError: When verification fails, or when dpop_key was supplied
                 but the server returned an unbound (Bearer) token.
             MfaRequiredError: When chained MFA is required.
+            ConfigurationError: If dpop_key is combined with use_mtls. DPoP and mTLS
+                use incompatible token-binding mechanisms and cannot be used together.
             ConfigurationError: If neither client_secret nor client_assertion_signing_key is configured.
         """
         if self._use_mtls and dpop_key is not None:
