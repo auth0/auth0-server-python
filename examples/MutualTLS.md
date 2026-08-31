@@ -59,9 +59,7 @@ All three raise `ConfigurationError` immediately (constructor for the first two,
 
 ## Token sender-constraining
 
-When the target API has **Token Sender-Constraining (mTLS)** enabled, issued access tokens carry a `cnf.x5t#S256` claim binding the token to the certificate thumbprint. The SDK warns if it receives a token that lacks this claim:
-
-> `UserWarning: mTLS is enabled but the access token is not certificate-bound (no cnf.x5t#S256). Sender-constraining is not active - configure Token Sender-Constraining (mTLS) on the API resource server.`
+When the target API has **Token Sender-Constraining (mTLS)** enabled, issued access tokens carry a `cnf.x5t#S256` claim binding the token to the certificate thumbprint. If your tokens do not contain this claim, enable **Token Sender-Constraining (mTLS)** on the API resource server in the Auth0 dashboard.
 
 To verify the thumbprint yourself:
 

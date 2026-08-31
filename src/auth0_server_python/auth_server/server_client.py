@@ -7,7 +7,6 @@ import asyncio
 import json
 import ssl
 import time
-import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Callable, Generic, Optional, TypeVar, Union
 
@@ -451,31 +450,6 @@ class ServerClient(Generic[TStoreOptions]):
 
         return jwt.decode(token, signing_key.key, **kwargs)
 
-    def _warn_if_not_cert_bound(self, access_token: Optional[str]) -> None:
-        """Advisory warning when mTLS is on but the access token is not certificate-bound.
-
-        Silent on opaque (non-JWT) tokens and when mTLS is off; never raises.
-        """
-        if not self._use_mtls or not access_token:
-            return
-        try:
-            claims = jwt.decode(
-                access_token,
-                options={"verify_signature": False},
-                algorithms=["HS256", "RS256", "ES256", "PS256"],
-            )
-        except Exception:
-            return  # opaque or unparseable token - nothing to assert
-        cnf = claims.get("cnf") if isinstance(claims, dict) else None
-        if not (isinstance(cnf, dict) and cnf.get("x5t#S256")):
-            warnings.warn(
-                "mTLS is enabled but the access token is not certificate-bound "
-                "(no cnf.x5t#S256). Sender-constraining is not active - configure "
-                "Token Sender-Constraining (mTLS) on the API resource server.",
-                UserWarning,
-                stacklevel=2,
-            )
-
     async def _fetch_oidc_metadata(self, domain: str) -> dict:
         """Fetch OIDC metadata from domain."""
         normalized_domain = self._normalize_url(domain)
@@ -849,8 +823,6 @@ class ServerClient(Generic[TStoreOptions]):
             # Raise a custom error (or handle it as appropriate)
             raise ApiError(
                 "token_error", f"Token exchange failed: {str(e)}", e)
-
-        self._warn_if_not_cert_bound(token_response.get("access_token"))
 
         # Use the userinfo field from the token_response for user claims
         user_info = token_response.get("userinfo")
@@ -1529,8 +1501,6 @@ class ServerClient(Generic[TStoreOptions]):
                     )
 
                 token_response = response.json()
-
-                self._warn_if_not_cert_bound(token_response.get("access_token"))
 
                 # Add required fields if they are missing
                 if "expires_in" in token_response and "expires_at" not in token_response:
