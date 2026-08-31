@@ -103,7 +103,7 @@ auth0 = ServerClient(
 )
 ```
 
-`use_mtls=True` requires an Enterprise tenant with the Highly Regulated Identity add-on, a `self_managed_certs` custom domain, and mTLS endpoint aliases enabled. It cannot be combined with `client_secret`, `client_assertion_signing_key`, or a per-call `dpop_key` — each raises `ConfigurationError`.
+`use_mtls=True` requires an Enterprise tenant with the Highly Regulated Identity add-on, a `self_managed_certs` custom domain, and mTLS endpoint aliases enabled. It cannot be combined with `client_secret`, `client_assertion_signing_key`, or a per-call `dpop_key`. Each raises `ConfigurationError`.
 
 See [examples/MutualTLS.md](examples/MutualTLS.md) for the full setup guide, certificate generation, and token sender-constraining details.
 
