@@ -520,7 +520,7 @@ class MfaClient:
         if self._use_mtls and dpop_key is not None:
             raise ConfigurationError(
                 "dpop_key cannot be combined with use_mtls. DPoP and mTLS bind tokens "
-                "differently; DPoP would take precedence and the token would not be "
+                "differently. DPoP would take precedence and the token would not be "
                 "certificate-bound."
             )
         mfa_token = options.get("mfa_token")

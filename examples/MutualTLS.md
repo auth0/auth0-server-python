@@ -12,7 +12,7 @@ Authenticate to Auth0 with a TLS client certificate instead of a client secret (
 ## Generating a client certificate (development)
 
 ```bash
-# Self-signed CA + client cert (development only — use your PKI in production)
+# Self-signed CA + client cert (development only - use your PKI in production)
 openssl req -x509 -newkey rsa:4096 -keyout ca.key -out ca.crt -days 365 -nodes \
   -subj "/CN=dev-ca"
 openssl req -newkey rsa:2048 -keyout client.key -out client.csr -nodes \
@@ -43,7 +43,7 @@ auth0 = ServerClient(
 )
 ```
 
-The SDK passes `ssl_context` as `verify=ssl_context` to every `httpx.AsyncClient` it constructs, including the authlib client used for the authorization-code exchange. You never call `load_cert_chain` inside the SDK — the caller owns the TLS material.
+The SDK passes `ssl_context` as `verify=ssl_context` to every `httpx.AsyncClient` it constructs, including the authlib client used for the authorization-code exchange. You never call `load_cert_chain` inside the SDK - the caller owns the TLS material.
 
 ## Mutual exclusion
 
@@ -51,8 +51,8 @@ The SDK passes `ssl_context` as `verify=ssl_context` to every `httpx.AsyncClient
 
 | Parameter | Reason |
 |-----------|--------|
-| `client_secret` | One client-auth method only — Auth0 rejects requests carrying both. |
-| `client_assertion_signing_key` | Same — one method only. |
+| `client_secret` | One client-auth method only - Auth0 rejects requests carrying both. |
+| `client_assertion_signing_key` | Same - one method only. |
 | `dpop_key` (per-call on `signin_with_passkey` / `mfa.verify`) | DPoP binds to its own key (`cnf.jkt`) and suppresses `cnf.x5t#S256`; combining them silently defeats mTLS token binding. |
 
 All three raise `ConfigurationError` immediately (constructor for the first two, at the call site for DPoP).
@@ -61,7 +61,7 @@ All three raise `ConfigurationError` immediately (constructor for the first two,
 
 When the target API has **Token Sender-Constraining (mTLS)** enabled, issued access tokens carry a `cnf.x5t#S256` claim binding the token to the certificate thumbprint. The SDK warns if it receives a token that lacks this claim:
 
-> `UserWarning: mTLS is enabled but the access token is not certificate-bound (no cnf.x5t#S256). Sender-constraining is not active — configure Token Sender-Constraining (mTLS) on the API resource server.`
+> `UserWarning: mTLS is enabled but the access token is not certificate-bound (no cnf.x5t#S256). Sender-constraining is not active - configure Token Sender-Constraining (mTLS) on the API resource server.`
 
 To verify the thumbprint yourself:
 

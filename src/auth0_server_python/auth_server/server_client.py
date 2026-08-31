@@ -198,8 +198,8 @@ class ServerClient(Generic[TStoreOptions]):
         if use_mtls:
             if ssl_context is None:
                 raise ConfigurationError(
-                    "use_mtls=True requires an ssl_context with the client certificate "
-                    "loaded (ssl.create_default_context() + load_cert_chain())."
+                    "ssl_context is required when use_mtls=True. Create an ssl.SSLContext "
+                    "and call load_cert_chain() to load the client certificate."
                 )
             if client_secret:
                 raise ConfigurationError(
@@ -458,12 +458,12 @@ class ServerClient(Generic[TStoreOptions]):
                 algorithms=["HS256", "RS256", "ES256", "PS256"],
             )
         except Exception:
-            return  # opaque or unparseable token — nothing to assert
+            return  # opaque or unparseable token - nothing to assert
         cnf = claims.get("cnf") if isinstance(claims, dict) else None
         if not (isinstance(cnf, dict) and cnf.get("x5t#S256")):
             warnings.warn(
                 "mTLS is enabled but the access token is not certificate-bound "
-                "(no cnf.x5t#S256). Sender-constraining is not active — configure "
+                "(no cnf.x5t#S256). Sender-constraining is not active - configure "
                 "Token Sender-Constraining (mTLS) on the API resource server.",
                 UserWarning,
                 stacklevel=2,
@@ -3375,7 +3375,7 @@ class ServerClient(Generic[TStoreOptions]):
         if self._use_mtls and dpop_key is not None:
             raise ConfigurationError(
                 "dpop_key cannot be combined with use_mtls. DPoP and mTLS bind tokens "
-                "differently; DPoP would take precedence and the token would not be "
+                "differently. DPoP would take precedence and the token would not be "
                 "certificate-bound."
             )
 
