@@ -244,7 +244,9 @@ class ServerClient(Generic[TStoreOptions]):
         )
 
         self._my_account_client = MyAccountClient(
-            domain=domain, headers=self._telemetry_headers
+            domain=domain,
+            headers=self._telemetry_headers,
+            **({"ssl_context": self._ssl_context} if self._use_mtls else {}),
         )
 
         # Unified cache for OIDC metadata and JWKS per domain (LRU eviction + TTL)
