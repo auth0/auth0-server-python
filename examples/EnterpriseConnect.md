@@ -63,18 +63,22 @@ Your app must serve a login page that collects the user's work email. Pass it to
 
 ```python
 from auth0_server_python.auth_types import StartEnterpriseLoginOptions
+from auth0_server_python.error import MissingRequiredArgumentError, InvalidArgumentError
 
-auth_url = await server_client.start_enterprise_login(
-    StartEnterpriseLoginOptions(
-        email=user_email,
-        app_state={"return_to": "/dashboard"},
-    ),
-    store_options={"request": request, "response": response},
-)
+try:
+    auth_url = await server_client.start_enterprise_login(
+        StartEnterpriseLoginOptions(
+            email=user_email,
+            app_state={"return_to": "/dashboard"},
+        ),
+        store_options={"request": request, "response": response},
+    )
+except (MissingRequiredArgumentError, InvalidArgumentError):
+    auth_url = None
 
 if auth_url:
-    return redirect(auth_url)          # enterprise SSO
-return redirect("/login/password")     # your own non-enterprise login
+    return redirect(auth_url)
+return redirect("/login/password")
 ```
 
 > [!IMPORTANT]
@@ -98,15 +102,13 @@ result = await server_client.complete_interactive_login(
     store_options={"request": request, "response": response},
 )
 
-user = result["user"]            # verified UserClaims (includes sub, email, and org_id when present)
+user = result["user"]
 access_token = result["token_set"]["access_token"]
 id_token = result["id_token"]
 domain = result["domain"]
 
-# Create YOUR OWN session from these claims.
 create_app_session(user_id=user.sub)
 
-# app_state round-trips whatever you passed at start_enterprise_login.
 app_state = result.get("app_state") or {}
 return redirect(app_state.get("return_to", "/"))
 ```
@@ -132,7 +134,6 @@ user = your_session.get("user")
 if not user:
     return redirect("/login")
 
-# The dict holds what you stored at the callback: sub, email, org_id.
 your_template.render(user=user)
 ```
 
@@ -185,15 +186,21 @@ logout_url = await server_client.logout(
 
 ## What is not available in Enterprise Connect
 
-Auth0 issues no refresh token and the SDK stores no session in this mode. Any member that reads a session or refreshes a token raises `EnterpriseConnectError`. Catch it and branch on `code`.
+These members work in Enterprise Connect mode:
 
-| Member | Behavior |
+| Member | Notes |
 |---|---|
-| `get_session()` | Raises, code `enterprise_connect_session_unavailable` |
-| `get_access_token()` | Raises, code `enterprise_connect_access_token_unavailable`. Read the token from `complete_interactive_login()` instead |
-| Refresh, user linking, connected accounts, session transfer, passkey sign-in, `login_with_custom_token_exchange`, and the `mfa` and `passwordless` sub-clients | Raise, code `enterprise_connect_method_unavailable` |
-| `handle_backchannel_logout()` | No-op. The SDK holds no session to revoke |
+| `start_enterprise_login()` | EC login entry point |
+| `start_interactive_login()` | Writes the transaction store only |
+| `complete_interactive_login()` | Returns verified claims without persisting a session |
+| `logout()` | Clears transaction state and returns the Auth0 logout URL |
 | `custom_token_exchange()` | Works once, while the callback access token is valid. No refresh after it expires |
+| `handle_backchannel_logout()` | No-op. The SDK holds no session to revoke |
+
+Everything else raises `EnterpriseConnectError`. Branch on `code`:
+- `enterprise_connect_session_unavailable` - `get_session()` was called
+- `enterprise_connect_access_token_unavailable` - `get_access_token()` was called. Read the token from `complete_interactive_login()` instead
+- `enterprise_connect_method_unavailable` - any other session or refresh-dependent member was called
 
 Own the session and any token refresh in your app.
 
@@ -202,7 +209,6 @@ Own the session and any token refresh in your app.
 ```python
 from auth0_server_python.error import ApiError, EnterpriseConnectError
 
-# The callback can fail on the token exchange or on unverifiable claims.
 try:
     result = await server_client.complete_interactive_login(
         str(request.url),
@@ -211,7 +217,6 @@ try:
 except ApiError as e:
     return {"error": e.code}
 
-# Session and token methods are unavailable in this mode and raise EnterpriseConnectError.
 try:
     await server_client.get_access_token()
 except EnterpriseConnectError as e:
@@ -224,6 +229,4 @@ Errors you may see:
   - `enterprise_connect_session_unavailable` - `get_session()` was called
   - `enterprise_connect_access_token_unavailable` - `get_access_token()` was called
   - `enterprise_connect_method_unavailable` - any other session or refresh dependent member was called
-- `MissingRequiredArgumentError` - `start_enterprise_login()` was called without an email
-- `InvalidArgumentError` - the email is not a valid address
 - `ApiError` - the token exchange failed, or the login returned no verifiable claims (`invalid_response`)
