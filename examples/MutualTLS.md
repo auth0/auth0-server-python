@@ -77,3 +77,11 @@ await auth0.mfa.verify(
     {"mfa_token": encrypted_token, "otp": "123456"},
 )
 ```
+
+## Passkeys under mTLS
+
+`/passkey/challenge` and `/passkey/register` are not served on the mTLS endpoint aliases. Auth0 only accepts `client_secret` as the credential on those endpoints - the client certificate is not a valid credential there.
+
+Because `use_mtls=True` forbids `client_secret` at construction time, an mTLS-configured client has no valid credential for `passkey_login_challenge` and `passkey_signup_challenge`. Those calls will be rejected by Auth0 if the application is registered as a confidential client.
+
+`signin_with_passkey` (the token-exchange step) is not affected - it calls the token endpoint, which is served on the mTLS alias and routed correctly.
