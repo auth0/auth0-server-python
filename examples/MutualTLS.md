@@ -72,16 +72,10 @@ openssl x509 -in client.crt -outform DER | openssl dgst -sha256 -binary | openss
 
 ## MFA under mTLS
 
-The client certificate is presented on all MFA API calls. Only the token-endpoint call inside `mfa.verify` is routed through the mTLS alias; challenge and enrollment calls stay on the standard host (the standard host does not request a client certificate, so the loaded context is inert on those calls).
-
-When calling `client.mfa.verify` directly (rather than through the SDK's built-in flow), pass the resolved mTLS token endpoint:
+The client certificate is presented on all MFA API calls. The token-endpoint call inside `mfa.verify` is routed through the mTLS alias automatically. Challenge and enrollment calls stay on the standard host, which does not request a client certificate.
 
 ```python
-metadata = await auth0._get_oidc_metadata_cached(domain)
-mtls_token_endpoint = auth0._resolve_token_endpoint(metadata)
-
 await auth0.mfa.verify(
     {"mfa_token": encrypted_token, "otp": "123456"},
-    token_endpoint_override=mtls_token_endpoint,
 )
 ```
