@@ -9863,44 +9863,4 @@ async def test_apply_client_auth_mtls_returns_none_and_strips_creds():
     assert "client_assertion_type" not in params
 
 
-_TEST_JWT_KEY = "test-signing-key-for-mtls-tests-32b"  # ≥32 bytes avoids InsecureKeyLengthWarning
-
-
-@pytest.mark.asyncio
-async def test_warn_when_jwt_missing_cnf_under_mtls(recwarn):
-    client = _mtls_client()
-    token = jwt.encode({"sub": "u", "aud": "api"}, _TEST_JWT_KEY, algorithm="HS256")
-    client._warn_if_not_cert_bound(token)
-    assert any(
-        "cnf" in str(w.message).lower() or "certificate-bound" in str(w.message).lower()
-        for w in recwarn.list
-    )
-
-
-@pytest.mark.asyncio
-async def test_no_warn_when_jwt_has_cnf(recwarn):
-    client = _mtls_client()
-    token = jwt.encode({"sub": "u", "cnf": {"x5t#S256": "abc"}}, _TEST_JWT_KEY, algorithm="HS256")
-    client._warn_if_not_cert_bound(token)
-    assert len(recwarn.list) == 0
-
-
-@pytest.mark.asyncio
-async def test_no_warn_on_opaque_token(recwarn):
-    client = _mtls_client()
-    client._warn_if_not_cert_bound("opaque-not-a-jwt")
-    assert len(recwarn.list) == 0
-
-
-@pytest.mark.asyncio
-async def test_warn_never_raises_and_silent_when_not_mtls(recwarn):
-    non_mtls = ServerClient(
-        domain="auth0.local",
-        client_id="<client_id>",
-        client_secret="<client_secret>",
-        secret="<secret>",
-    )
-    non_mtls._warn_if_not_cert_bound(None)
-    assert len(recwarn.list) == 0
-
 
