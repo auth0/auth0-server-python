@@ -9002,6 +9002,23 @@ async def test_signin_with_passkey_client_default_org_is_validated_against_id_to
     state_store.set.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_signin_with_passkey_rejects_dpop_under_mtls(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        secret="<secret>",
+    )
+    with pytest.raises(ConfigurationError):
+        await client.signin_with_passkey(
+            auth_session="sess",
+            authn_response=mocker.Mock(),
+            dpop_key=object(),
+        )
+
+
 # =============================================================================
 # IPSIE session_expiry enforcement
 # =============================================================================
@@ -9680,6 +9697,47 @@ async def test_complete_interactive_login_milliseconds_ceiling_fails_open(mocker
     assert stored_state.internal.session_expires_at is None
 
 
+@pytest.mark.asyncio
+async def test_complete_interactive_login_uses_mtls_token_endpoint(mocker):
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="cv",
+        domain="auth0.local",
+        app_state=None,
+    )
+    mock_tx_store.delete = AsyncMock()
+    mock_state_store = AsyncMock()
+    mock_state_store.get = AsyncMock(return_value=None)
+    mock_state_store.set = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        secret="<secret>",
+        redirect_uri="https://app/cb",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+    )
+
+    mtls_metadata = {
+        "issuer": "https://auth0.local/",
+        "token_endpoint": "https://auth0.local/oauth/token",
+        "mtls_endpoint_aliases": {"token_endpoint": "https://mtls.auth0.local/oauth/token"},
+    }
+    mocker.patch.object(client, "_get_oidc_metadata_cached", AsyncMock(return_value=mtls_metadata))
+    mocker.patch.object(client._oauth, "metadata", mtls_metadata)
+
+    fetch_token = AsyncMock(return_value={"access_token": "at", "expires_in": 3600})
+    mocker.patch.object(client._oauth, "fetch_token", fetch_token)
+
+    await client.complete_interactive_login("https://app/cb?code=abc&state=xyz")
+
+    called_endpoint = fetch_token.call_args[0][0]
+    assert called_endpoint == "https://mtls.auth0.local/oauth/token"
+
+
 # ============================================================================
 # mTLS CLIENT AUTHENTICATION
 # ============================================================================
@@ -9846,53 +9904,3 @@ async def test_warn_never_raises_and_silent_when_not_mtls(recwarn):
     assert len(recwarn.list) == 0
 
 
-@pytest.mark.asyncio
-async def test_signin_with_passkey_rejects_dpop_under_mtls(mocker):
-    client = _mtls_client()
-    with pytest.raises(ConfigurationError):
-        await client.signin_with_passkey(
-            auth_session="sess",
-            authn_response=mocker.Mock(),
-            dpop_key=object(),
-        )
-
-
-@pytest.mark.asyncio
-async def test_complete_interactive_login_uses_mtls_token_endpoint(mocker):
-    mock_tx_store = AsyncMock()
-    mock_tx_store.get.return_value = TransactionData(
-        code_verifier="cv",
-        domain="auth0.local",
-        app_state=None,
-    )
-    mock_tx_store.delete = AsyncMock()
-    mock_state_store = AsyncMock()
-    mock_state_store.get = AsyncMock(return_value=None)
-    mock_state_store.set = AsyncMock()
-
-    client = ServerClient(
-        domain="auth0.local",
-        client_id="<client_id>",
-        use_mtls=True,
-        ssl_context=_dummy_ssl_context(),
-        secret="<secret>",
-        redirect_uri="https://app/cb",
-        transaction_store=mock_tx_store,
-        state_store=mock_state_store,
-    )
-
-    mtls_metadata = {
-        "issuer": "https://auth0.local/",
-        "token_endpoint": "https://auth0.local/oauth/token",
-        "mtls_endpoint_aliases": {"token_endpoint": "https://mtls.auth0.local/oauth/token"},
-    }
-    mocker.patch.object(client, "_get_oidc_metadata_cached", AsyncMock(return_value=mtls_metadata))
-    mocker.patch.object(client._oauth, "metadata", mtls_metadata)
-
-    fetch_token = AsyncMock(return_value={"access_token": "at", "expires_in": 3600})
-    mocker.patch.object(client._oauth, "fetch_token", fetch_token)
-
-    await client.complete_interactive_login("https://app/cb?code=abc&state=xyz")
-
-    called_endpoint = fetch_token.call_args[0][0]
-    assert called_endpoint == "https://mtls.auth0.local/oauth/token"
