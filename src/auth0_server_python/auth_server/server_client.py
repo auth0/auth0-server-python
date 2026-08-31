@@ -267,6 +267,7 @@ class ServerClient(Generic[TStoreOptions]):
             apply_client_authentication=self._apply_client_authentication,
             use_mtls=self._use_mtls,
             ssl_context=self._ssl_context,
+            token_endpoint_resolver=self._resolve_mfa_token_endpoint if self._use_mtls else None,
         )
 
         self._passwordless_client = PasswordlessClient(self)
@@ -277,6 +278,12 @@ class ServerClient(Generic[TStoreOptions]):
         if self._use_mtls and "verify" not in kwargs:
             kwargs["verify"] = self._ssl_context
         return httpx.AsyncClient(headers=headers, **kwargs)
+
+    async def _resolve_mfa_token_endpoint(self, store_options) -> str:
+        """Resolve the token endpoint for MfaClient, applying the mTLS alias when enabled."""
+        domain = await self._resolve_current_domain(store_options)
+        metadata = await self._get_oidc_metadata_cached(domain)
+        return self._resolve_token_endpoint(metadata)
 
     def _resolve_token_endpoint(self, metadata: dict) -> Optional[str]:
         """Return the token endpoint, routed to the mTLS alias when mTLS is enabled.
@@ -829,6 +836,8 @@ class ServerClient(Generic[TStoreOptions]):
 
         try:
             token_endpoint = self._resolve_token_endpoint(self._oauth.metadata)
+            if not token_endpoint:
+                raise ApiError("configuration_error", "Token endpoint missing in OIDC metadata")
             token_response = await self._oauth.fetch_token(
                 token_endpoint,
                 code=code,

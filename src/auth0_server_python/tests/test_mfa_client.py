@@ -1129,8 +1129,19 @@ async def test_mfa_verify_rejects_dpop_under_mtls():
 
 
 @pytest.mark.asyncio
-async def test_mfa_verify_uses_token_endpoint_override(mocker):
-    mfa = _mtls_mfa_client()
+async def test_mfa_verify_uses_token_endpoint_resolver_under_mtls(mocker):
+    async def resolver(store_options):
+        return "https://mtls.auth0.local/oauth/token"
+
+    mfa = MfaClient(
+        domain=DOMAIN,
+        client_id=CLIENT_ID,
+        client_secret=None,
+        secret=SECRET,
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        token_endpoint_resolver=resolver,
+    )
     response = AsyncMock()
     response.status_code = 200
     response.json = MagicMock(return_value={
@@ -1144,8 +1155,5 @@ async def test_mfa_verify_uses_token_endpoint_override(mocker):
 
     mocker.patch("httpx.AsyncClient.post", new=mock_post)
 
-    await mfa.verify(
-        {"mfa_token": _enc(), "otp": "123456"},
-        token_endpoint_override="https://mtls.auth0.local/oauth/token",
-    )
+    await mfa.verify({"mfa_token": _enc(), "otp": "123456"})
     assert captured["url"] == "https://mtls.auth0.local/oauth/token"

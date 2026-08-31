@@ -77,6 +77,7 @@ class MfaClient:
         apply_client_authentication: Optional[Callable] = None,
         use_mtls: bool = False,
         ssl_context: Optional[ssl.SSLContext] = None,
+        token_endpoint_resolver: Optional[Callable[..., Awaitable[str]]] = None,
     ):
         if callable(domain):
             self._domain = None
@@ -97,6 +98,7 @@ class MfaClient:
         self._apply_client_authentication = apply_client_authentication
         self._use_mtls = use_mtls
         self._ssl_context = ssl_context
+        self._token_endpoint_resolver = token_endpoint_resolver
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with default headers injected."""
@@ -479,7 +481,6 @@ class MfaClient:
         options: dict[str, Any],
         store_options: Optional[dict[str, Any]] = None,
         dpop_key: Optional["jwk.JWK"] = None,
-        token_endpoint_override: Optional[str] = None,
     ) -> MfaVerifyResponse:
         """
         Verifies an MFA code and completes authentication.
@@ -502,9 +503,6 @@ class MfaClient:
             dpop_key: Optional EC P-256 JWK to DPoP-bind the token. Pass the same
                 key used at login (e.g. given to signin_with_passkey) to preserve
                 the sender constraint through step-up. Never stored by the SDK.
-            token_endpoint_override: Optional token endpoint URL. When provided, overrides
-                the default ``{base_url}/oauth/token``. Used by ServerClient to supply the
-                mTLS endpoint alias when use_mtls is enabled.
 
         Returns:
             MfaVerifyResponse with access_token, token_type, etc.
@@ -553,7 +551,10 @@ class MfaClient:
             )
 
         try:
-            token_endpoint = token_endpoint_override or f"{base_url}/oauth/token"
+            if self._use_mtls and self._token_endpoint_resolver:
+                token_endpoint = await self._token_endpoint_resolver(store_options)
+            else:
+                token_endpoint = f"{base_url}/oauth/token"
 
             async with self._get_http_client() as client:
                 headers = {"Content-Type": "application/x-www-form-urlencoded"}
