@@ -3361,6 +3361,8 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             MissingRequiredArgumentError: If auth_session or authn_response is missing.
+            ConfigurationError: If dpop_key is combined with use_mtls. DPoP and mTLS
+                use incompatible token-binding mechanisms and cannot be used together.
             PasskeyError: If token exchange or session creation fails.
             OrganizationTokenValidationError: If an organization was requested but the
                 token response included no ID token, or the ID token's org claim does
