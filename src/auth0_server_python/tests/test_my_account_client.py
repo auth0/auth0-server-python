@@ -1,5 +1,6 @@
 import base64
 import json
+import ssl
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import httpx
@@ -1422,3 +1423,25 @@ def test_dpop_auth_flow_no_retry_on_non_401():
 
     assert not retried
 
+
+
+# =============================================================================
+# mTLS ssl_context wiring
+# =============================================================================
+
+
+def test_get_http_client_passes_ssl_context_when_set(mocker):
+    ctx = ssl.create_default_context()
+    client = MyAccountClient(domain="auth0.local", ssl_context=ctx)
+    spy = mocker.patch("auth0_server_python.auth_server.my_account_client.httpx.AsyncClient")
+    client._get_http_client()
+    _, kwargs = spy.call_args
+    assert kwargs.get("verify") is ctx
+
+
+def test_get_http_client_omits_verify_without_ssl_context(mocker):
+    client = MyAccountClient(domain="auth0.local")
+    spy = mocker.patch("auth0_server_python.auth_server.my_account_client.httpx.AsyncClient")
+    client._get_http_client()
+    _, kwargs = spy.call_args
+    assert "verify" not in kwargs
