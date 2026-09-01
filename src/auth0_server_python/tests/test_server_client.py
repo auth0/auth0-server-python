@@ -279,6 +279,42 @@ async def test_par_request_caller_cannot_inject_client_assertion(mocker):
 
 
 @pytest.mark.asyncio
+async def test_par_request_uses_mtls_alias_endpoint(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        secret="<secret>",
+        pushed_authorization_requests=True,
+        authorization_params={"redirect_uri": "https://app/cb"},
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+    )
+    mtls_metadata = {
+        "issuer": "https://auth0.local/",
+        "authorization_endpoint": "https://auth0.local/authorize",
+        "pushed_authorization_request_endpoint": "https://auth0.local/oauth/par",
+        "mtls_endpoint_aliases": {
+            "pushed_authorization_request_endpoint": "https://mtls.auth0.local/oauth/par",
+        },
+    }
+    mocker.patch.object(client, "_get_oidc_metadata_cached", AsyncMock(return_value=mtls_metadata))
+    mocker.patch.object(client._oauth, "metadata", mtls_metadata)
+
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    par_response = AsyncMock()
+    par_response.status_code = 201
+    par_response.json = MagicMock(return_value={"request_uri": "urn:req:abc", "expires_in": 60})
+    mock_post.return_value = par_response
+
+    await client.start_interactive_login()
+
+    called_url = mock_post.call_args[0][0]
+    assert called_url == "https://mtls.auth0.local/oauth/par"
+
+
+@pytest.mark.asyncio
 async def test_complete_interactive_login_no_transaction():
     mock_transaction_store = AsyncMock()
     mock_transaction_store.get.return_value = None  # no transaction
@@ -9850,6 +9886,32 @@ async def test_resolve_token_endpoint_standard_when_not_mtls():
     )
     metadata = {"token_endpoint": "https://auth0.local/oauth/token"}
     assert client._resolve_token_endpoint(metadata) == "https://auth0.local/oauth/token"
+
+
+def test_resolve_par_endpoint_uses_alias_under_mtls():
+    client = _mtls_client()
+    metadata = {
+        "pushed_authorization_request_endpoint": "https://auth0.local/oauth/par",
+        "mtls_endpoint_aliases": {"pushed_authorization_request_endpoint": "https://mtls.auth0.local/oauth/par"},
+    }
+    assert client._resolve_par_endpoint(metadata) == "https://mtls.auth0.local/oauth/par"
+
+
+def test_resolve_par_endpoint_raises_when_mtls_alias_missing():
+    client = _mtls_client()
+    with pytest.raises(ConfigurationError):
+        client._resolve_par_endpoint({"pushed_authorization_request_endpoint": "https://auth0.local/oauth/par"})
+
+
+def test_resolve_par_endpoint_standard_when_not_mtls():
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        secret="<secret>",
+    )
+    metadata = {"pushed_authorization_request_endpoint": "https://auth0.local/oauth/par"}
+    assert client._resolve_par_endpoint(metadata) == "https://auth0.local/oauth/par"
 
 
 @pytest.mark.asyncio
