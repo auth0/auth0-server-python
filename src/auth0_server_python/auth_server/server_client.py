@@ -304,6 +304,24 @@ class ServerClient(Generic[TStoreOptions]):
             return endpoint
         return metadata.get("token_endpoint")
 
+    def _resolve_par_endpoint(self, metadata: dict) -> Optional[str]:
+        """Return the PAR endpoint, routed to the mTLS alias when mTLS is enabled.
+
+        Under mTLS, raises ConfigurationError immediately if the alias is absent.
+        Under standard auth, returns None if the endpoint is missing (caller's guard handles it).
+        """
+        if self._use_mtls:
+            aliases = metadata.get("mtls_endpoint_aliases") or {}
+            endpoint = aliases.get("pushed_authorization_request_endpoint")
+            if not endpoint:
+                raise ConfigurationError(
+                    "use_mtls is enabled but the authorization server discovery document "
+                    "does not advertise mtls_endpoint_aliases.pushed_authorization_request_endpoint. "
+                    "Ensure mTLS endpoint aliases are enabled on your Auth0 tenant."
+                )
+            return endpoint
+        return metadata.get("pushed_authorization_request_endpoint")
+
     def _apply_client_authentication(
         self, params: dict, issuer: str, in_body: bool = False
     ) -> Optional[tuple[str, str]]:
@@ -697,8 +715,7 @@ class ServerClient(Generic[TStoreOptions]):
         self._oauth.metadata = metadata
         # If PAR is enabled, use the PAR endpoint
         if self._pushed_authorization_requests:
-            par_endpoint = self._oauth.metadata.get(
-                "pushed_authorization_request_endpoint")
+            par_endpoint = self._resolve_par_endpoint(self._oauth.metadata)
             if not par_endpoint:
                 raise ApiError(
                     "configuration_error", "PAR is enabled but pushed_authorization_request_endpoint is missing in metadata")
