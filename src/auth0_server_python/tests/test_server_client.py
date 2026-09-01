@@ -2455,6 +2455,33 @@ async def test_backchannel_authentication_grant_json_decode_error(mocker):
     assert "Failed to parse token response as JSON" in str(exc.value)
 
 @pytest.mark.asyncio
+async def test_backchannel_authentication_grant_uses_mtls_token_endpoint(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        secret="some-secret",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "token_endpoint": "https://auth0.local/oauth/token",
+            "mtls_endpoint_aliases": {"token_endpoint": "https://mtls.auth0.local/oauth/token"},
+        },
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={"access_token": "at", "expires_in": 3600})
+    mock_post.return_value = mock_response
+
+    await client.backchannel_authentication_grant("auth_req_123")
+
+    assert mock_post.call_args[0][0] == "https://mtls.auth0.local/oauth/token"
+
+@pytest.mark.asyncio
 async def test_get_token_for_connection_success(mocker):
     client = ServerClient(
         domain="auth0.local",
@@ -2538,6 +2565,34 @@ async def test_get_token_for_connection_exchange_failed(mocker):
     assert "Failed to get token for connection: 400" in str(exc.value)
 
     mock_post.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_get_token_for_connection_uses_mtls_token_endpoint(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        secret="some-secret",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "token_endpoint": "https://auth0.local/oauth/token",
+            "mtls_endpoint_aliases": {"token_endpoint": "https://mtls.auth0.local/oauth/token"},
+        },
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    success_response = AsyncMock()
+    success_response.status_code = 200
+    success_response.json = MagicMock(return_value={"access_token": "at", "expires_in": 3600})
+    success_response.headers = {}
+    mock_post.return_value = success_response
+
+    await client.get_token_for_connection({"connection": "github", "refresh_token": "rt"})
+
+    assert mock_post.call_args[0][0] == "https://mtls.auth0.local/oauth/token"
 
 @pytest.mark.asyncio
 async def test_get_token_by_refresh_token_success(mocker):
@@ -2651,6 +2706,33 @@ async def test_get_token_by_refresh_token_mfa_required_raises_api_error_with_raw
     assert exc.value.code == "mfa_required"
     assert exc.value.mfa_token == "raw_server_mfa_token"
     assert exc.value.mfa_requirements is None
+
+@pytest.mark.asyncio
+async def test_get_token_by_refresh_token_uses_mtls_token_endpoint(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        secret="some-secret",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "token_endpoint": "https://auth0.local/oauth/token",
+            "mtls_endpoint_aliases": {"token_endpoint": "https://mtls.auth0.local/oauth/token"},
+        },
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    success_response = AsyncMock()
+    success_response.status_code = 200
+    success_response.json = MagicMock(return_value={"access_token": "at", "expires_in": 3600})
+    mock_post.return_value = success_response
+
+    await client.get_token_by_refresh_token({"refresh_token": "abc"})
+
+    assert mock_post.call_args[0][0] == "https://mtls.auth0.local/oauth/token"
 
 
 # =============================================================================
@@ -4300,6 +4382,46 @@ async def test_custom_token_exchange_act_dropped_on_issuer_mismatch(mocker):
     ))
 
     assert result.act is None
+
+@pytest.mark.asyncio
+async def test_custom_token_exchange_uses_mtls_token_endpoint(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        secret="some-secret",
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "token_endpoint": "https://auth0.local/oauth/token",
+            "mtls_endpoint_aliases": {"token_endpoint": "https://mtls.auth0.local/oauth/token"},
+        },
+    )
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "access_token": "at",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    }
+    mock_response.headers.get.return_value = "application/json"
+    mock_httpx_client = AsyncMock()
+    mock_httpx_client.__aenter__.return_value = mock_httpx_client
+    mock_httpx_client.__aexit__.return_value = None
+    mock_httpx_client.post.return_value = mock_response
+    mocker.patch("httpx.AsyncClient", return_value=mock_httpx_client)
+
+    await client.custom_token_exchange(CustomTokenExchangeOptions(
+        subject_token="custom-token",
+        subject_token_type="urn:acme:token",
+        audience="https://api.example.com",
+    ))
+
+    assert mock_httpx_client.post.call_args[0][0] == "https://mtls.auth0.local/oauth/token"
 
 
 # =============================================================================
