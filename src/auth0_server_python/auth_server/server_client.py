@@ -161,6 +161,12 @@ class ServerClient(Generic[TStoreOptions]):
                 `mfa.verify()`/`mfa.challenge_authenticator()` reject it as expired.
                 Defaults to 300 (5 minutes). Increase for authenticator flows that
                 need more time (e.g. OOB push approval on a slow connection).
+            use_mtls: Enable mTLS (RFC 8705) client authentication. When True, the
+                client certificate in ssl_context is the sole credential - no
+                client_secret or client_assertion is sent in the request body.
+            ssl_context: TLS context carrying the client certificate and key.
+                Required when use_mtls=True. Build with ssl.create_default_context()
+                and load_cert_chain().
 
         Raises:
             ConfigurationError: If `mfa_token_ttl` is not a positive number of seconds.
