@@ -151,6 +151,7 @@ class TransactionData(BaseModel):
     redirect_uri: Optional[str] = None
     domain: Optional[str] = None
     organization: Optional[str] = None
+    session_token: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
@@ -224,6 +225,16 @@ class LogoutOptions(BaseModel):
     """
 
     return_to: Optional[str] = None
+
+
+class CreateAnonymousSessionOptions(BaseModel):
+    """Options bundle for create_session(): audience, scope, and metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    audience: Optional[str] = None
+    scope: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
 
 
 class AuthorizationParameters(BaseModel):
@@ -859,6 +870,66 @@ class PasskeyTokenResponse(BaseModel):
     id_token: Optional[str] = None
     refresh_token: Optional[str] = None
 
+
+# =============================================================================
+# Anonymous Session Types
+# =============================================================================
+
+
+class AnonymousSession(BaseModel):
+    """Public result of create_session() and the renewal ladder."""
+
+    access_token: str
+    session_token: str
+    expires_at: int
+    session_expires_at: Optional[int] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+class AnonymousSessionIntrospection(BaseModel):
+    """Result of introspect(), lenient to unrecognized response fields."""
+
+    model_config = ConfigDict(extra="ignore")
+    sub: str
+    session_id: Optional[str] = None
+    expires_at: Optional[int] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+class AnonymousTokenResponse(BaseModel):
+    """Raw response from POST /anonymous/token."""
+
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    session_expires_in: int
+    session_token: Optional[str] = None
+
+
+class AnonymousCreateTokenResponse(AnonymousTokenResponse):
+    """Raw response from POST /anonymous/token on the create path.
+
+    session_token is always present on creation, unlike on re-mint.
+    """
+
+    session_token: str
+
+
+class AnonymousSessionContext(BaseModel):
+    """Internal context stored inside the encrypted anonymous session record.
+
+    Rejects extra fields so a tampered payload fails closed on decrypt.
+    """
+
+    session_token: str
+    access_token: str
+    expires_at: int
+    session_expires_at: Optional[int] = None
+    metadata: Optional[dict[str, Any]] = None
+    created_at: int
+    domain: Optional[str] = None
+    audience: Optional[str] = None
+    scope: Optional[str] = None
 
 
 # =============================================================================

@@ -233,6 +233,10 @@ Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rf
 
 Sign users in with a one-time code sent by email or SMS, or with a magic link sent by email, via [Auth0 embedded passwordless login](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints). OTP verification and the magic-link callback each establish a server-side session like every other login path. For prerequisites, both flows, custom scopes/audiences, step-up MFA, and error handling, see [examples/Passwordless.md](examples/Passwordless.md).
 
+### 11. Anonymous Sessions
+
+Give a visitor an Auth0 `anon@<uuid>` identity before they log in, so cart/preference metadata attached pre-login is available to Post-Login Actions once they do. Requires a separate `anonymous_store` instance — never the same instance as `state_store` — and a tenant-level paid add-on flag. For setup, the token renewal ladder, login injection, and the store-isolation requirement, see [examples/AnonymousSessions.md](examples/AnonymousSessions.md).
+
 ## Feedback
 
 ### Contributing
