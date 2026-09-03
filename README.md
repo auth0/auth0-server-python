@@ -135,7 +135,7 @@ async def callback(request: Request):
 
 #### Organizations
 
-The SDK supports [Auth0 Organizations](https://auth0.com/docs/organizations) with first-class `organization` and `invitation` parameters on `ServerClient` and `StartInteractiveLoginOptions`. Token claim validation is enforced automatically at callback. For setup, invitation flows, error handling, and reading org data from the session, see [examples/InteractiveLogin.md](examples/InteractiveLogin.md#8-organizations).
+The SDK supports [Auth0 Organizations](https://auth0.com/docs/organizations) with first-class `organization` and `invitation` parameters on `ServerClient` and `StartInteractiveLoginOptions`. Token claim validation is enforced automatically at callback. For dedicated-org and multi-org patterns, invitation flows, error handling, and reading org data from the session, see [examples/OrganizationLogin.md](examples/OrganizationLogin.md).
 
 ### 4. Login with Custom Token Exchange
 
