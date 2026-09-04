@@ -59,18 +59,13 @@ All three raise `ConfigurationError` immediately (constructor for the first two,
 
 ## Token sender-constraining
 
-When the target API has **Token Sender-Constraining (mTLS)** enabled, issued access tokens carry a `cnf.x5t#S256` claim binding the token to the certificate thumbprint. If your tokens do not contain this claim, enable **Token Sender-Constraining (mTLS)** on the API resource server in the Auth0 dashboard.
+When the target API has **Token Sender-Constraining (mTLS)** enabled, issued access tokens carry a `cnf.x5t#S256` claim binding the token to the certificate thumbprint.
 
-To verify the thumbprint yourself:
-
-```bash
-openssl x509 -in client.crt -outform DER | openssl dgst -sha256 -binary | openssl enc -base64 | tr '+/' '-_' | tr -d '='
-# Compare the output to the cnf.x5t#S256 claim in the decoded access token.
-```
+The SDK logs a warning at the `auth0_server_python.auth_server.server_client` logger whenever an access token returned by the authorization-code or refresh-token flow does not contain `cnf.x5t#S256`. If you see that warning, enable **Token Sender-Constraining (mTLS)** on the API resource server in the Auth0 Dashboard.
 
 ## MFA under mTLS
 
-The client certificate is presented on all MFA API calls. The token-endpoint call inside `mfa.verify` is routed through the mTLS alias automatically. Challenge and enrollment calls stay on the standard host, which does not request a client certificate.
+The client certificate is presented on all MFA API calls. The token-endpoint call inside `mfa.verify` is routed through the mTLS alias automatically. Challenge and enrollment calls (`/mfa/challenge`, `/mfa/associate`) go to the standard host. The certificate is still included in the TLS handshake, but whether it reaches the Auth0 backend depends on the proxy configuration.
 
 ```python
 await auth0.mfa.verify(
@@ -85,3 +80,9 @@ await auth0.mfa.verify(
 Because `use_mtls=True` forbids `client_secret` at construction time, an mTLS-configured client has no valid credential for `passkey_login_challenge` and `passkey_signup_challenge`. Those calls will be rejected by Auth0 if the application is registered as a confidential client.
 
 `signin_with_passkey` (the token-exchange step) is not affected - it calls the token endpoint, which is served on the mTLS alias and routed correctly.
+
+## Passwordless under mTLS
+
+By default, Auth0 does not require client authentication on `/passwordless/start`. If the `enforce_client_authentication_on_passwordless_start` tenant flag is enabled on your tenant, the call will fail because `/passwordless/start` does not support certificate-based client authentication.
+
+The verify step (`passwordless_client.verify`) calls the token endpoint, which is served on the mTLS alias and routed correctly.
