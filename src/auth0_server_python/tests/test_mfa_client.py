@@ -3,6 +3,7 @@ Tests for MfaClient — MFA API operations.
 """
 
 import json
+import ssl
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -1093,3 +1094,66 @@ class TestVerify:
         result = await client.verify({"mfa_token": _enc(), "otp": "123456"})
         assert result.token_type == "Bearer"
         assert "DPoP" not in captured_request["kwargs"]["headers"]
+
+
+# ============================================================================
+# mTLS — MfaClient SSLContext threading + DPoP exclusion + endpoint override
+# ============================================================================
+
+
+def _mtls_mfa_client() -> MfaClient:
+    return MfaClient(
+        domain=DOMAIN,
+        client_id=CLIENT_ID,
+        client_secret=None,
+        secret=SECRET,
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_mfa_get_http_client_passes_ssl_context(mocker):
+    mfa = _mtls_mfa_client()
+    spy = mocker.patch("auth0_server_python.auth_server.mfa_client.httpx.AsyncClient")
+    mfa._get_http_client()
+    _, kwargs = spy.call_args
+    assert kwargs.get("verify") is mfa._ssl_context
+
+
+@pytest.mark.asyncio
+async def test_mfa_verify_rejects_dpop_under_mtls():
+    mfa = _mtls_mfa_client()
+    with pytest.raises(ConfigurationError):
+        await mfa.verify({"mfa_token": _enc(), "otp": "123456"}, dpop_key=object())
+
+
+@pytest.mark.asyncio
+async def test_mfa_verify_uses_token_endpoint_resolver_under_mtls(mocker):
+    async def resolver(store_options):
+        return "https://mtls.auth0.local/oauth/token"
+
+    mfa = MfaClient(
+        domain=DOMAIN,
+        client_id=CLIENT_ID,
+        client_secret=None,
+        secret=SECRET,
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        token_endpoint_resolver=resolver,
+    )
+    response = AsyncMock()
+    response.status_code = 200
+    response.json = MagicMock(return_value={
+        "access_token": "at", "token_type": "Bearer", "expires_in": 3600
+    })
+    captured = {}
+
+    async def mock_post(self_client, url, **kwargs):
+        captured["url"] = url
+        return response
+
+    mocker.patch("httpx.AsyncClient.post", new=mock_post)
+
+    await mfa.verify({"mfa_token": _enc(), "otp": "123456"})
+    assert captured["url"] == "https://mtls.auth0.local/oauth/token"
