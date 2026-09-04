@@ -5,6 +5,7 @@ Handles authentication flows, token management, and user sessions.
 
 import asyncio
 import json
+import logging
 import ssl
 import time
 from collections import OrderedDict
@@ -101,6 +102,8 @@ SESSION_TRANSFER_TOKEN_TYPE = "urn:auth0:params:oauth:token-type:session_transfe
 
 # actor_token_type URN when the actor is sourced from the agent session's ID token.
 ID_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token"
+
+logger = logging.getLogger(__name__)
 
 
 class ServerClient(Generic[TStoreOptions]):
@@ -620,6 +623,27 @@ class ServerClient(Generic[TStoreOptions]):
 
         return jwks
 
+    def _warn_if_not_cert_bound(self, token_response: dict) -> None:
+        """Warn if the access token lacks a cnf.x5t#S256 claim."""
+        access_token = token_response.get("access_token")
+        if not access_token:
+            return
+        try:
+            claims = jwt.decode(
+                access_token,
+                options={"verify_signature": False},
+                algorithms=["RS256", "ES256"],
+            )
+        except jwt.InvalidTokenError:
+            return  # opaque or unparseable token - nothing to assert
+        cnf = claims.get("cnf") if isinstance(claims, dict) else None
+        if not (isinstance(cnf, dict) and cnf.get("x5t#S256")):
+            logger.warning(
+                "mTLS is enabled but the access token does not contain a cnf.x5t#S256 "
+                "claim. The token is not certificate-bound. Configure Token "
+                "Sender-Constraining (mTLS) on the API resource server."
+            )
+
     # ============================================================================
     # INTERACTIVE LOGIN FLOW
     # Handles browser-based authentication using the Authorization Code flow
@@ -848,6 +872,9 @@ class ServerClient(Generic[TStoreOptions]):
             # Raise a custom error (or handle it as appropriate)
             raise ApiError(
                 "token_error", f"Token exchange failed: {str(e)}", e)
+
+        if self._use_mtls:
+            self._warn_if_not_cert_bound(token_response)
 
         # Use the userinfo field from the token_response for user claims
         user_info = token_response.get("userinfo")
@@ -1531,6 +1558,9 @@ class ServerClient(Generic[TStoreOptions]):
                 if "expires_in" in token_response and "expires_at" not in token_response:
                     token_response["expires_at"] = int(
                         time.time()) + token_response["expires_in"]
+
+                if self._use_mtls:
+                    self._warn_if_not_cert_bound(token_response)
 
                 return token_response
 
