@@ -2735,6 +2735,39 @@ async def test_get_token_by_refresh_token_uses_mtls_token_endpoint(mocker):
     assert mock_post.call_args[0][0] == "https://mtls.auth0.local/oauth/token"
 
 
+@pytest.mark.asyncio
+async def test_get_token_by_refresh_token_warns_when_token_not_cert_bound(mocker):
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        secret="<secret>",
+    )
+    mocker.patch.object(
+        client, "_get_oidc_metadata_cached",
+        return_value={
+            "token_endpoint": "https://auth0.local/oauth/token",
+            "mtls_endpoint_aliases": {"token_endpoint": "https://mtls.auth0.local/oauth/token"},
+        },
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    response = AsyncMock()
+    response.status_code = 200
+    response.json = MagicMock(
+        return_value={
+            "access_token": jwt.encode({"sub": "user123"}, "s", algorithm="HS256"),
+            "expires_in": 3600,
+        }
+    )
+    mock_post.return_value = response
+    mock_logger = mocker.patch("auth0_server_python.auth_server.server_client.logger")
+
+    await client.get_token_by_refresh_token({"refresh_token": "abc"})
+
+    mock_logger.warning.assert_called_once()
+
+
 # =============================================================================
 # Private Key JWT (client assertion) Client Authentication
 # =============================================================================
@@ -9896,6 +9929,48 @@ async def test_complete_interactive_login_uses_mtls_token_endpoint(mocker):
     assert called_endpoint == "https://mtls.auth0.local/oauth/token"
 
 
+@pytest.mark.asyncio
+async def test_complete_interactive_login_warns_when_token_not_cert_bound(mocker):
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="cv", domain="auth0.local", app_state=None
+    )
+    mock_tx_store.delete = AsyncMock()
+    mock_state_store = AsyncMock()
+    mock_state_store.get = AsyncMock(return_value=None)
+    mock_state_store.set = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ssl.create_default_context(),
+        secret="<secret>",
+        redirect_uri="https://app/cb",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+    )
+    mtls_metadata = {
+        "issuer": "https://auth0.local/",
+        "token_endpoint": "https://auth0.local/oauth/token",
+        "mtls_endpoint_aliases": {"token_endpoint": "https://mtls.auth0.local/oauth/token"},
+    }
+    mocker.patch.object(client, "_get_oidc_metadata_cached", AsyncMock(return_value=mtls_metadata))
+    mocker.patch.object(client._oauth, "metadata", mtls_metadata)
+    mocker.patch.object(
+        client._oauth, "fetch_token",
+        AsyncMock(return_value={
+            "access_token": jwt.encode({"sub": "user123"}, "s", algorithm="HS256"),
+            "expires_in": 3600,
+        })
+    )
+    mock_logger = mocker.patch("auth0_server_python.auth_server.server_client.logger")
+
+    await client.complete_interactive_login("https://app/cb?code=abc&state=xyz")
+
+    mock_logger.warning.assert_called_once()
+
+
 # ============================================================================
 # mTLS CLIENT AUTHENTICATION
 # ============================================================================
@@ -10045,6 +10120,41 @@ async def test_apply_client_auth_mtls_returns_none_and_strips_creds():
     assert "client_secret" not in params
     assert "client_assertion" not in params
     assert "client_assertion_type" not in params
+
+
+def _make_access_token(cnf=None):
+    payload = {"sub": "user123"}
+    if cnf is not None:
+        payload["cnf"] = cnf
+    return jwt.encode(payload, "test-secret", algorithm="HS256")
+
+
+def test_warn_if_not_cert_bound_warns_when_cnf_absent(mocker):
+    client = _mtls_client()
+    mock_logger = mocker.patch("auth0_server_python.auth_server.server_client.logger")
+    client._warn_if_not_cert_bound({"access_token": _make_access_token()})
+    mock_logger.warning.assert_called_once()
+
+
+def test_warn_if_not_cert_bound_no_warn_when_cert_bound(mocker):
+    client = _mtls_client()
+    mock_logger = mocker.patch("auth0_server_python.auth_server.server_client.logger")
+    client._warn_if_not_cert_bound({"access_token": _make_access_token(cnf={"x5t#S256": "abc123"})})
+    mock_logger.warning.assert_not_called()
+
+
+def test_warn_if_not_cert_bound_silent_on_opaque_token(mocker):
+    client = _mtls_client()
+    mock_logger = mocker.patch("auth0_server_python.auth_server.server_client.logger")
+    client._warn_if_not_cert_bound({"access_token": "opaque-token"})
+    mock_logger.warning.assert_not_called()
+
+
+def test_warn_if_not_cert_bound_silent_when_no_access_token(mocker):
+    client = _mtls_client()
+    mock_logger = mocker.patch("auth0_server_python.auth_server.server_client.logger")
+    client._warn_if_not_cert_bound({})
+    mock_logger.warning.assert_not_called()
 
 
 
