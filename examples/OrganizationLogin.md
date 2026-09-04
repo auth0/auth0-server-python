@@ -217,37 +217,3 @@ async def handle_dashboard(request, response):
 
     return {"user": user, "org_id": org_id, "org_name": org_name}
 ```
-
-## Wiring the Redirect (FastAPI)
-
-The handlers above return the URL to redirect to. Your framework issues the redirect. In FastAPI:
-
-```python
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse
-
-app = FastAPI()
-
-
-@app.get("/auth/login")
-async def login(request: Request, response: Response):
-    authorization_url = await handle_login(request, response)
-    return RedirectResponse(authorization_url, 303)
-
-
-@app.get("/auth/callback")
-async def callback(request: Request, response: Response):
-    return_to = await handle_callback(str(request.url), request, response)
-    return RedirectResponse(return_to, 303)
-
-
-@app.get("/dashboard")
-async def dashboard(request: Request, response: Response):
-    data = await handle_dashboard(request, response)
-    if data is None:
-        return RedirectResponse("/auth/login", 303)
-    return JSONResponse(data)
-```
-
-> [!NOTE]
-> The invitation flow wires in the same way - add a `/auth/login` handler that reads `organization` and `invitation` from the query string and passes them to `start_interactive_login` via `StartInteractiveLoginOptions`.
