@@ -57,6 +57,9 @@ server_client = ServerClient(
 
 For apps using request/response-backed stores or multiple custom domains, pass `store_options={"request": request, "response": response}` to each method that reads or writes transaction state.
 
+> [!IMPORTANT]
+> The SDK writes its transaction cookie onto the `response` you pass in `store_options`: the `state` and PKCE values when a login starts, and a deletion of that cookie when the callback completes. Return that same `response` object, with your own redirect and session cookie set on it. Do not return a fresh `redirect(url)` built after the SDK call. A new response object carries none of the SDK's `Set-Cookie` headers, so the transaction cookie never reaches the browser and the callback finds no transaction to match. The examples below create the response first, thread it through `store_options`, then set its `Location` last. The pattern is framework-neutral: `redirect(...)`, `.set_cookie(...)`, and `.headers["Location"]` map onto the equivalent calls in your web framework.
+
 ## 2. Discover and start the login
 
 Your app must serve a login page that collects the user's work email. Pass it to `start_enterprise_login()`, which runs WebFinger discovery and returns the authorization URL when the domain is managed, or `None` when it is not.
@@ -64,6 +67,8 @@ Your app must serve a login page that collects the user's work email. Pass it to
 ```python
 from auth0_server_python.auth_types import StartEnterpriseLoginOptions
 from auth0_server_python.error import MissingRequiredArgumentError, InvalidArgumentError
+
+response = redirect("/")  # placeholder target, overwritten once discovery returns
 
 try:
     auth_url = await server_client.start_enterprise_login(
@@ -76,9 +81,8 @@ try:
 except (MissingRequiredArgumentError, InvalidArgumentError):
     auth_url = None
 
-if auth_url:
-    return redirect(auth_url)
-return redirect("/login/password")
+response.headers["Location"] = auth_url or "/login/password"
+return response
 ```
 
 > [!IMPORTANT]
@@ -97,6 +101,8 @@ managed = await is_federated_domain("YOUR_AUTH0_DOMAIN", "acme.example")
 When Auth0 redirects back, call `complete_interactive_login()`. In Enterprise Connect mode it returns the verified claims and an access token instead of a session record.
 
 ```python
+response = redirect("/")  # placeholder target, overwritten once app_state is known
+
 result = await server_client.complete_interactive_login(
     str(request.url),
     store_options={"request": request, "response": response},
@@ -107,34 +113,76 @@ access_token = result["token_set"]["access_token"]
 id_token = result["id_token"]
 domain = result["domain"]
 
-create_app_session(user_id=user.sub)
+response.set_cookie(
+    "app_session",
+    sign_session({"sub": user.get("sub"), "email": user.get("email"), "org_id": user.get("org_id") or ""}),
+    httponly=True,
+    secure=True,
+    samesite="lax",
+)
 
 app_state = result.get("app_state") or {}
-return redirect(app_state.get("return_to", "/"))
+response.headers["Location"] = app_state.get("return_to", "/")
+return response
 ```
 
 The returned dict contains:
 
-- `user` - the verified `UserClaims`, parsed from the ID token that Enterprise Connect returns
+- `user` - the verified claims from the ID token, as a dict
 - `token_set` - `audience`, `access_token`, `scope`, and `expires_at`
 - `id_token` - the raw ID token, for your own use
 - `domain` - the Auth0 domain the login came from
 - `app_state` - present only when you passed `app_state` at `start_enterprise_login()`
 
-`result` is a plain dict, so index it with `result["user"]`. `user` is a `UserClaims` model with no dict access, so read claims by attribute like `user.org_id`.
+`result` and `user` are both plain dicts. Read claims with `user.get("sub")` so a claim the connection did not return yields `None` instead of raising `KeyError`. `sub` is always present, the optional claims (`email`, `org_id`, `name`) may not be.
 
 The SDK verifies the ID token's signature and issuer, and derives the returned claims from it, before returning. It does not write a session store record and retains no refresh token.
+
+### Sign the session cookie
+
+The session cookie is your trust boundary now, not Auth0's. A signed-in user controls their own cookies, so an unsigned session lets them rewrite `sub`, `email`, or `org_id` to impersonate another user or forge membership in an organization they were denied. Sign the cookie with a server-side secret and verify the signature in constant time before trusting any claim in it.
+
+```python
+import base64
+import hashlib
+import hmac
+import json
+from typing import Optional
+
+_SESSION_SECRET = b"YOUR_SESSION_SECRET"
+
+def sign_session(claims: dict) -> str:
+    body = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+    sig = hmac.new(_SESSION_SECRET, body.encode(), hashlib.sha256).hexdigest()
+    return f"{body}.{sig}"
+
+def read_session(cookie: Optional[str]) -> Optional[dict]:
+    if not cookie or "." not in cookie:
+        return None
+    body, _, sig = cookie.partition(".")
+    expected = hmac.new(_SESSION_SECRET, body.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return None
+    padded = body + "=" * (-len(body) % 4)
+    try:
+        return json.loads(base64.urlsafe_b64decode(padded).decode())
+    except ValueError:
+        return None
+```
+
+> [!IMPORTANT]
+> Hold `_SESSION_SECRET` server-side only (Tier 0) and never ship it to the browser. Use a dedicated secret rather than reusing one for another purpose. The `hmac.compare_digest` check is what makes a forged cookie fail closed - a plain `==` comparison leaks the signature through timing.
 
 ## 4. Protect your routes
 
 Your app owns the session - the SDK holds nothing. Check your session store at the start of any route that requires authentication and redirect to your login page when the session is absent.
 
 ```python
-user = your_session.get("user")
-if not user:
+session = read_session(request.cookies.get("app_session"))
+if not session:
     return redirect("/login")
 
-your_template.render(user=user)
+your_template.render(user=session)
 ```
 
 > [!IMPORTANT]
@@ -149,7 +197,7 @@ Auth0 stamps the resolved organization into the token as `org_id`, available on 
 
 ```python
 user = result["user"]
-if user.org_id not in allowed_orgs_for(current_customer):
+if user.get("org_id") not in allowed_orgs_for(current_customer):
     raise Forbidden("user does not belong to this organization")
 ```
 
@@ -162,13 +210,16 @@ Clear your own application session first, then send the user to the Auth0 logout
 ```python
 from auth0_server_python.auth_types import LogoutOptions
 
-destroy_app_session()
+response = redirect("/")  # placeholder target, overwritten once logout returns
+clear_app_session(response)  # delete your session cookie on the response you return
 
 logout_url = await server_client.logout(
     LogoutOptions(return_to="https://app.example.com/login"),
     store_options={"request": request, "response": response},
 )
-return redirect(logout_url)
+
+response.headers["Location"] = logout_url
+return response
 ```
 
 By default this ends the Auth0 session but leaves the upstream identity provider session intact, so the user is not re-prompted at their IdP on the next login. To also terminate the IdP session, pass `federated=True`.
@@ -197,10 +248,7 @@ These members work in Enterprise Connect mode:
 | `custom_token_exchange()` | Works once, while the callback access token is valid. No refresh after it expires |
 | `handle_backchannel_logout()` | No-op. The SDK holds no session to revoke |
 
-Everything else raises `EnterpriseConnectError`. Branch on `code`:
-- `enterprise_connect_session_unavailable` - `get_session()` was called
-- `enterprise_connect_access_token_unavailable` - `get_access_token()` was called. Read the token from `complete_interactive_login()` instead
-- `enterprise_connect_method_unavailable` - any other session or refresh-dependent member was called
+Everything else raises `EnterpriseConnectError` with `code` `enterprise_connect_not_supported`. The message names the member that was called. For a session or access token, read them from `complete_interactive_login()` instead.
 
 Own the session and any token refresh in your app.
 
@@ -225,8 +273,5 @@ except EnterpriseConnectError as e:
 
 Errors you may see:
 
-- `EnterpriseConnectError` - a session or token method is unavailable in this mode. Branch on `code`:
-  - `enterprise_connect_session_unavailable` - `get_session()` was called
-  - `enterprise_connect_access_token_unavailable` - `get_access_token()` was called
-  - `enterprise_connect_method_unavailable` - any other session or refresh dependent member was called
+- `EnterpriseConnectError` - a session or refresh-dependent member is not available in this mode. Its `code` is always `enterprise_connect_not_supported`; the message names the member that was called
 - `ApiError` - the token exchange failed, or the login returned no verifiable claims (`invalid_response`)
