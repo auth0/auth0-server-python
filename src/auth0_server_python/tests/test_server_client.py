@@ -9825,6 +9825,29 @@ async def test_is_federated_domain_does_not_cache_403(mocker):
 
 
 @pytest.mark.asyncio
+async def test_is_federated_domain_fails_closed_on_bad_json(mocker):
+    client = _make_ec_client()
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(200, bad_json=True),
+    )
+    assert await client._is_federated_domain("managed.example") is False
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_warns_and_fails_closed_on_429(mocker):
+    client = _make_ec_client()
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(429),
+    )
+    with pytest.warns(UserWarning, match="rate-limited"):
+        assert await client._is_federated_domain("managed.example") is False
+
+
+@pytest.mark.asyncio
 async def test_standalone_is_federated_domain(mocker):
     mocker.patch(
         "httpx.AsyncClient.get",
