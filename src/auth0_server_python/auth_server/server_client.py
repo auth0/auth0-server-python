@@ -1103,7 +1103,7 @@ class ServerClient(Generic[TStoreOptions]):
             "expires_at": now + token_response.get("expires_in", 3600),
         }
         result = {
-            "user": user_claims,
+            "user": user_claims.dict(),
             "token_set": token_set,
             "id_token": id_token,
             "domain": origin_domain,

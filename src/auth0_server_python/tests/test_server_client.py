@@ -9951,8 +9951,8 @@ async def test_complete_interactive_login_enterprise_connect_returns_claims(mock
 
     result = await client.complete_interactive_login("https://myapp.com/callback?code=abc&state=xyz")
 
-    assert result["user"].sub == "user123"
-    assert result["user"].org_id == "org_xyz"
+    assert result["user"]["sub"] == "user123"
+    assert result["user"]["org_id"] == "org_xyz"
     assert result["id_token"] == "raw-id-token"
     assert result["domain"] == "auth0.local"
     assert result["token_set"]["access_token"] == "token123"
@@ -9968,6 +9968,43 @@ async def test_get_session_raises_in_enterprise_connect():
     with pytest.raises(EnterpriseConnectError) as exc:
         await client.get_session()
     assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_enterprise_connect_no_claims_raises(mocker):
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        app_state={"foo": "bar"},
+        domain="auth0.local",
+    )
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=mock_tx_store,
+        state_store=AsyncMock(),
+        secret="some-secret",
+        enterprise_connect=True,
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://auth0.local/", "token_endpoint": "https://auth0.local/token"},
+    )
+    mocker.patch.object(client._oauth, "metadata", {"token_endpoint": "https://auth0.local/token"})
+    mocker.patch.object(
+        client._oauth,
+        "fetch_token",
+        AsyncMock(return_value={"access_token": "token123", "expires_in": 3600, "scope": "openid"}),
+    )
+
+    with pytest.raises(ApiError) as exc:
+        await client.complete_interactive_login("https://myapp.com/callback?code=abc&state=xyz")
+
+    assert exc.value.code == "invalid_response"
+    mock_tx_store.delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio
