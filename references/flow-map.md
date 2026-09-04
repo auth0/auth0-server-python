@@ -17,6 +17,7 @@ Before working on a flow, read its entry points and supporting modules. Every fl
 | Passkeys | `passkey_signup_challenge`, `passkey_login_challenge`, `signin_with_passkey` | `auth_schemes/dpop_auth.py` — passkey sign-in is the DPoP-bound path | `examples/Passkeys.md` |
 | My Account | `MyAccountClient` (factors, authentication methods, enroll/verify) | `auth_schemes/dpop_auth.py`; stateless — every call takes a user token | `examples/MyAccountAuthenticationMethods.md` |
 | MCD | any flow — `domain` may be an async resolver | `_resolve_current_domain`, pitfall 5 in `references/pitfalls.md` | `examples/MultipleCustomDomains.md` |
+| Enterprise Connect | `start_enterprise_login`, `complete_interactive_login` (EC branch), `is_federated_domain` (standalone), `logout` (`federated`) | `auth_types/` (`StartEnterpriseLoginOptions`, `LogoutOptions.federated`), `error/` (`EnterpriseConnectError`); the SDK owns no session in this mode | `examples/EnterpriseConnect.md` |
 
 Two rules cut across every flow above, so check them on any change here: resolve the domain through
 `await self._resolve_current_domain(store_options)` rather than reading `self._domain`, and accept
