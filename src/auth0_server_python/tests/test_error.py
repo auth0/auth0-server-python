@@ -11,32 +11,26 @@ from auth0_server_python.error import (
 
 def test_enterprise_connect_error_is_auth0_error():
     err = EnterpriseConnectError(
-        EnterpriseConnectErrorCode.SESSION_UNAVAILABLE, "no session in enterprise connect mode"
+        EnterpriseConnectErrorCode.NOT_SUPPORTED, "no session in enterprise connect mode"
     )
     assert isinstance(err, Auth0Error)
 
 
 def test_enterprise_connect_error_sets_code_name_and_message():
-    err = EnterpriseConnectError(
-        EnterpriseConnectErrorCode.ACCESS_TOKEN_UNAVAILABLE, "no access token"
-    )
-    assert err.code == EnterpriseConnectErrorCode.ACCESS_TOKEN_UNAVAILABLE
+    err = EnterpriseConnectError(EnterpriseConnectErrorCode.NOT_SUPPORTED, "not supported")
+    assert err.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
     assert err.name == "EnterpriseConnectError"
-    assert err.message == "no access token"
+    assert err.message == "not supported"
     assert err.cause is None
 
 
 def test_enterprise_connect_error_preserves_cause():
     cause = ValueError("boom")
     err = EnterpriseConnectError(
-        EnterpriseConnectErrorCode.SESSION_UNAVAILABLE, "wrapped", cause=cause
+        EnterpriseConnectErrorCode.NOT_SUPPORTED, "wrapped", cause=cause
     )
     assert err.cause is cause
 
 
-def test_enterprise_connect_error_codes_are_stable():
-    assert EnterpriseConnectErrorCode.SESSION_UNAVAILABLE == "enterprise_connect_session_unavailable"
-    assert (
-        EnterpriseConnectErrorCode.ACCESS_TOKEN_UNAVAILABLE
-        == "enterprise_connect_access_token_unavailable"
-    )
+def test_enterprise_connect_error_code_is_stable():
+    assert EnterpriseConnectErrorCode.NOT_SUPPORTED == "enterprise_connect_not_supported"

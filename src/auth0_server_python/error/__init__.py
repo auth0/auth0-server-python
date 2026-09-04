@@ -448,8 +448,6 @@ class EnterpriseConnectError(Auth0Error):
 
 
 class EnterpriseConnectErrorCode:
-    """Error codes for Enterprise Connect misuse guards."""
+    """Error code for the Enterprise Connect misuse guard."""
 
-    SESSION_UNAVAILABLE = "enterprise_connect_session_unavailable"
-    ACCESS_TOKEN_UNAVAILABLE = "enterprise_connect_access_token_unavailable"
-    METHOD_UNAVAILABLE = "enterprise_connect_method_unavailable"
+    NOT_SUPPORTED = "enterprise_connect_not_supported"

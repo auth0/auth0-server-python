@@ -330,8 +330,8 @@ class ServerClient(Generic[TStoreOptions]):
         """
         if self._enterprise_connect:
             raise EnterpriseConnectError(
-                EnterpriseConnectErrorCode.METHOD_UNAVAILABLE,
-                f"{method} is unavailable in Enterprise Connect mode.",
+                EnterpriseConnectErrorCode.NOT_SUPPORTED,
+                f"{method} is not supported in Enterprise Connect mode.",
             )
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
@@ -1251,11 +1251,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
-        if self._enterprise_connect:
-            raise EnterpriseConnectError(
-                EnterpriseConnectErrorCode.SESSION_UNAVAILABLE,
-                "get_session is unavailable in Enterprise Connect mode.",
-            )
+        self._reject_in_enterprise_connect("get_session")
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if state_data:
@@ -1437,11 +1433,7 @@ class ServerClient(Generic[TStoreOptions]):
             AccessTokenError: If the token is expired and no refresh token is available.
             EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
-        if self._enterprise_connect:
-            raise EnterpriseConnectError(
-                EnterpriseConnectErrorCode.ACCESS_TOKEN_UNAVAILABLE,
-                "get_access_token is unavailable in Enterprise Connect mode.",
-            )
+        self._reject_in_enterprise_connect("get_access_token")
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         # Domain check should work for both Pydantic models and plain dicts

@@ -9967,7 +9967,7 @@ async def test_get_session_raises_in_enterprise_connect():
     client = _make_ec_client()
     with pytest.raises(EnterpriseConnectError) as exc:
         await client.get_session()
-    assert exc.value.code == EnterpriseConnectErrorCode.SESSION_UNAVAILABLE
+    assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
 
 
 @pytest.mark.asyncio
@@ -9975,7 +9975,7 @@ async def test_get_access_token_raises_in_enterprise_connect():
     client = _make_ec_client()
     with pytest.raises(EnterpriseConnectError) as exc:
         await client.get_access_token()
-    assert exc.value.code == EnterpriseConnectErrorCode.ACCESS_TOKEN_UNAVAILABLE
+    assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
 
 
 _EC_BLOCKED_ASYNC_MEMBERS = [
@@ -10008,14 +10008,14 @@ async def test_enterprise_connect_blocks_async_member(method_name, args):
     client = _make_ec_client()
     with pytest.raises(EnterpriseConnectError) as exc:
         await getattr(client, method_name)(*args)
-    assert exc.value.code == EnterpriseConnectErrorCode.METHOD_UNAVAILABLE
+    assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
 
 
 def test_enterprise_connect_blocks_build_session_transfer_redirect():
     client = _make_ec_client()
     with pytest.raises(EnterpriseConnectError) as exc:
         client.build_session_transfer_redirect("https://auth0.local/authorize", None)
-    assert exc.value.code == EnterpriseConnectErrorCode.METHOD_UNAVAILABLE
+    assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
 
 
 @pytest.mark.parametrize("property_name", ["mfa", "passwordless"])
@@ -10023,7 +10023,7 @@ def test_enterprise_connect_blocks_property_access(property_name):
     client = _make_ec_client()
     with pytest.raises(EnterpriseConnectError) as exc:
         getattr(client, property_name)
-    assert exc.value.code == EnterpriseConnectErrorCode.METHOD_UNAVAILABLE
+    assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
 
 
 def test_reject_in_enterprise_connect_is_noop_without_flag():
