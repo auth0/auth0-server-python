@@ -312,6 +312,7 @@ async def test_par_request_uses_mtls_alias_endpoint(mocker):
 
     called_url = mock_post.call_args[0][0]
     assert called_url == "https://mtls.auth0.local/oauth/par"
+    assert "client_secret" not in mock_post.call_args.kwargs["data"]
 
 
 @pytest.mark.asyncio
@@ -2480,6 +2481,7 @@ async def test_backchannel_authentication_grant_uses_mtls_token_endpoint(mocker)
     await client.backchannel_authentication_grant("auth_req_123")
 
     assert mock_post.call_args[0][0] == "https://mtls.auth0.local/oauth/token"
+    assert "client_secret" not in mock_post.call_args.kwargs["data"]
 
 @pytest.mark.asyncio
 async def test_get_token_for_connection_success(mocker):
@@ -2593,6 +2595,7 @@ async def test_get_token_for_connection_uses_mtls_token_endpoint(mocker):
     await client.get_token_for_connection({"connection": "github", "refresh_token": "rt"})
 
     assert mock_post.call_args[0][0] == "https://mtls.auth0.local/oauth/token"
+    assert "client_secret" not in mock_post.call_args.kwargs["data"]
 
 @pytest.mark.asyncio
 async def test_get_token_by_refresh_token_success(mocker):
@@ -2733,6 +2736,7 @@ async def test_get_token_by_refresh_token_uses_mtls_token_endpoint(mocker):
     await client.get_token_by_refresh_token({"refresh_token": "abc"})
 
     assert mock_post.call_args[0][0] == "https://mtls.auth0.local/oauth/token"
+    assert "client_secret" not in mock_post.call_args.kwargs["data"]
 
 
 @pytest.mark.asyncio
@@ -4455,6 +4459,7 @@ async def test_custom_token_exchange_uses_mtls_token_endpoint(mocker):
     ))
 
     assert mock_httpx_client.post.call_args[0][0] == "https://mtls.auth0.local/oauth/token"
+    assert "client_secret" not in mock_httpx_client.post.call_args.kwargs["data"]
 
 
 # =============================================================================
@@ -10028,6 +10033,22 @@ async def test_mtls_happy_path_constructs():
     )
     assert client._use_mtls is True
     assert client._ssl_context is not None
+
+
+@pytest.mark.asyncio
+async def test_mtls_oauth_client_constructed_with_no_credential_and_ssl_context(mocker):
+    ctx = _dummy_ssl_context()
+    spy = mocker.patch("auth0_server_python.auth_server.server_client.AsyncOAuth2Client")
+    ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        use_mtls=True,
+        ssl_context=ctx,
+        secret="<secret>",
+    )
+    _, kwargs = spy.call_args
+    assert kwargs.get("client_secret") is None
+    assert kwargs.get("verify") is ctx
 
 
 @pytest.mark.asyncio
