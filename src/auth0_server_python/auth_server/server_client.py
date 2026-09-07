@@ -636,7 +636,6 @@ class ServerClient(Generic[TStoreOptions]):
             claims = jwt.decode(
                 access_token,
                 options={"verify_signature": False},
-                algorithms=["RS256", "ES256"],
             )
         except jwt.InvalidTokenError:
             return  # opaque or unparseable token - nothing to assert
