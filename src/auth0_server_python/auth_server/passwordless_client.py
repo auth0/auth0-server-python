@@ -398,7 +398,7 @@ class PasswordlessClient:
         if not id_token:
             raise PasswordlessVerifyError(
                 PasswordlessErrorCode.VERIFY_FAILED,
-                "Token response did not include an ID token; ensure 'openid' scope is requested",
+                "Token response did not include an ID token. Ensure 'openid' scope is requested.",
             )
 
         jwks = await client._get_jwks_cached(origin_domain, metadata)
