@@ -75,11 +75,9 @@ await auth0.mfa.verify(
 
 ## Passkeys under mTLS
 
-`/passkey/challenge` and `/passkey/register` are not served on the mTLS endpoint aliases. Auth0 only accepts `client_secret` as the credential on those endpoints - the client certificate is not a valid credential there.
+The client certificate is presented on all passkey calls. The token-exchange step (`signin_with_passkey`) calls the token endpoint, which is served on the mTLS alias and routed correctly.
 
-Because `use_mtls=True` forbids `client_secret` at construction time, an mTLS-configured client has no valid credential for `passkey_login_challenge` and `passkey_signup_challenge`. Those calls will be rejected by Auth0 if the application is registered as a confidential client.
-
-`signin_with_passkey` (the token-exchange step) is not affected - it calls the token endpoint, which is served on the mTLS alias and routed correctly.
+Challenge and enrollment calls (`/passkey/challenge`, `/passkey/register`) go to the standard host - they are not listed in `mtls_endpoint_aliases`. The certificate is still included in the TLS handshake, but whether it reaches the Auth0 backend depends on the proxy configuration - the same behaviour as `/mfa/challenge`.
 
 ## Passwordless under mTLS
 

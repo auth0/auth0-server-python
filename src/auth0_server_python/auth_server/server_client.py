@@ -887,8 +887,6 @@ class ServerClient(Generic[TStoreOptions]):
         # ID token `iat`, used to detect a ceiling that is already past at login.
         issued_at = None
         id_token = token_response.get("id_token")
-        # Verified ID token claims, retained so the session `sid` can be sourced
-        # from them (back-channel logout matches on `sid`).
         id_token_claims = None
 
         expected_org = transaction_data.organization
