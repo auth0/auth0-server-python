@@ -298,8 +298,12 @@ class ServerClient(Generic[TStoreOptions]):
     def _resolve_token_endpoint(self, metadata: dict) -> Optional[str]:
         """Return the token endpoint, routed to the mTLS alias when mTLS is enabled.
 
-        Under mTLS, raises ConfigurationError immediately if the alias is absent.
-        Under standard auth, returns None if token_endpoint is missing (caller's guard handles it).
+        Returns:
+            The token endpoint URL, or None if not present and mTLS is not enabled.
+
+        Raises:
+            ConfigurationError: If mTLS is enabled but the discovery document does not
+                advertise mtls_endpoint_aliases.token_endpoint.
         """
         if self._use_mtls:
             aliases = metadata.get("mtls_endpoint_aliases") or {}
@@ -353,7 +357,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         if self._use_mtls:
             # The client certificate presented in the TLS handshake is the sole
-            # credential; no body credential or HTTP basic auth is sent.
+            # credential. No body credential or HTTP basic auth is sent.
             return None
 
         if self._client_assertion_signing_key:
@@ -1084,7 +1088,7 @@ class ServerClient(Generic[TStoreOptions]):
         id_token = token_response.get("id_token")
         if not id_token:
             raise MfaVerifyError(
-                "MFA verification response did not include an ID token; cannot create a session"
+                "MFA verification response did not include an ID token. Cannot create a session."
             )
 
         origin_domain = await self._resolve_current_domain(store_options)

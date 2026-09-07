@@ -1097,7 +1097,7 @@ class TestVerify:
 
 
 # ============================================================================
-# mTLS — MfaClient SSLContext threading + DPoP exclusion + endpoint override
+# mTLS - MfaClient SSLContext threading + DPoP exclusion + endpoint override
 # ============================================================================
 
 

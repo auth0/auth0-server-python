@@ -1,6 +1,6 @@
 # Mutual TLS (mTLS) Client Authentication
 
-Authenticate to Auth0 with a TLS client certificate instead of a client secret (RFC 8705). The certificate is presented during the TLS handshake; no credential travels in the request body.
+Authenticate to Auth0 with a TLS client certificate instead of a client secret (RFC 8705). The certificate is presented during the TLS handshake. No credential travels in the request body.
 
 ## Prerequisites
 
@@ -53,7 +53,7 @@ The SDK passes `ssl_context` as `verify=ssl_context` to every `httpx.AsyncClient
 |-----------|--------|
 | `client_secret` | One client-auth method only - Auth0 rejects requests carrying both. |
 | `client_assertion_signing_key` | Same - one method only. |
-| `dpop_key` (per-call on `signin_with_passkey` / `mfa.verify`) | DPoP binds to its own key (`cnf.jkt`) and suppresses `cnf.x5t#S256`; combining them silently defeats mTLS token binding. |
+| `dpop_key` (per-call on `signin_with_passkey` / `mfa.verify`) | DPoP binds to its own key (`cnf.jkt`) and suppresses `cnf.x5t#S256`. Combining them silently defeats mTLS token binding. |
 
 All three raise `ConfigurationError` immediately (constructor for the first two, at the call site for DPoP).
 
