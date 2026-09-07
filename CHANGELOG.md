@@ -1,5 +1,22 @@
 # Change Log
 
+## [1.0.0b15](https://github.com/auth0/auth0-server-python/tree/1.0.0b15) (2026-09-07)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b14...1.0.0b15)
+
+⚠️ **Breaking Changes**
+- feat!: add Private Key JWT (`private_key_jwt`) client authentication - clients with neither a `client_secret` nor a `client_assertion_signing_key` now raise `ConfigurationError` instead of proceeding as a public client. PAR requests now set `response_type=code` [\#154](https://github.com/auth0/auth0-server-python/pull/154) ([kishore7snehil](https://github.com/kishore7snehil))
+
+**Added**
+- feat: passwordless support - adds `ServerClient.passwordless` for Email OTP, SMS OTP, and Email Magic Link embedded flows [\#153](https://github.com/auth0/auth0-server-python/pull/153) ([rmad17](https://github.com/rmad17))
+- feat: Private JWT CA support for passwordless - extends passwordless start and verify to use `_apply_client_authentication` so `private_key_jwt` is supported [\#158](https://github.com/auth0/auth0-server-python/pull/158) ([rmad17](https://github.com/rmad17))
+
+**Fixed**
+- fix: reject blank organization before actor resolution in session transfer token request [\#150](https://github.com/auth0/auth0-server-python/pull/150) ([kishore7snehil](https://github.com/kishore7snehil))
+
+**Changed**
+- docs: add Step-up authentication example [\#161](https://github.com/auth0/auth0-server-python/pull/161) ([kailash-b](https://github.com/kailash-b))
+- docs: fix documentation drift in README and examples [\#144](https://github.com/auth0/auth0-server-python/pull/144) ([rmad17](https://github.com/rmad17))
+
 ## [1.0.0b14](https://github.com/auth0/auth0-server-python/tree/1.0.0b14) (2026-07-29)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b13...1.0.0b14)
 
