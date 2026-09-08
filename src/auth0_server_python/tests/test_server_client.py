@@ -9848,6 +9848,51 @@ async def test_is_federated_domain_warns_and_fails_closed_on_429(mocker):
 
 
 @pytest.mark.asyncio
+async def test_is_federated_domain_true_cached_for_60s(mocker):
+    client = _make_ec_client()
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(200, federated=True),
+    )
+    before = time.time()
+    await client._is_federated_domain("managed.example")
+    entry = client._webfinger_cache.get("auth0.local:managed.example")
+    assert entry is not None
+    assert 59 <= entry["expires_at"] - before <= 61
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_false_404_cached_for_15s(mocker):
+    client = _make_ec_client()
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(404),
+    )
+    before = time.time()
+    await client._is_federated_domain("managed.example")
+    entry = client._webfinger_cache.get("auth0.local:managed.example")
+    assert entry is not None
+    assert 14 <= entry["expires_at"] - before <= 16
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_error_responses_not_cached(mocker):
+    for status in (403, 429, 500):
+        client = _make_ec_client()
+        mocker.patch(
+            "httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=_webfinger_response(status),
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            await client._is_federated_domain("managed.example")
+        assert "auth0.local:managed.example" not in client._webfinger_cache
+
+
+@pytest.mark.asyncio
 async def test_standalone_is_federated_domain(mocker):
     mocker.patch(
         "httpx.AsyncClient.get",
