@@ -138,6 +138,9 @@ The returned dict contains:
 
 The SDK verifies the ID token's signature and issuer, and derives the returned claims from it, before returning. It does not write a session store record and retains no refresh token.
 
+> [!WARNING]
+> The access token expires and cannot be renewed. Enterprise Connect issues no refresh token, so when it expires the user must re-authenticate. Check `token_set["expires_at"]` before using the access token. For API authorization, issue your own tokens from the callback claims rather than relying on the Auth0 access token long-term.
+
 ### Sign the session cookie
 
 The session cookie is your trust boundary now, not Auth0's. A signed-in user controls their own cookies, so an unsigned session lets them rewrite `sub`, `email`, or `org_id` to impersonate another user or forge membership in an organization they were denied. Sign the cookie with a server-side secret and verify the signature in constant time before trusting any claim in it.
@@ -205,7 +208,7 @@ If you serve exactly one organization, this is a single check against your one k
 
 ## 6. Logout
 
-Clear your own application session first, then send the user to the Auth0 logout URL.
+Clear your own application session first, then send the user to the Auth0 logout URL. For Enterprise Connect, always request federated logout with `federated=True`.
 
 ```python
 from auth0_server_python.auth_types import LogoutOptions
@@ -214,7 +217,7 @@ response = redirect("/")  # placeholder target, overwritten once logout returns
 clear_app_session(response)  # delete your session cookie on the response you return
 
 logout_url = await server_client.logout(
-    LogoutOptions(return_to="https://app.example.com/login"),
+    LogoutOptions(return_to="https://app.example.com/login", federated=True),
     store_options={"request": request, "response": response},
 )
 
@@ -222,15 +225,10 @@ response.headers["Location"] = logout_url
 return response
 ```
 
-By default this ends the Auth0 session but leaves the upstream identity provider session intact, so the user is not re-prompted at their IdP on the next login. To also terminate the IdP session, pass `federated=True`.
+Enterprise Connect signs the user in through their enterprise identity provider and keeps no refresh token, so the identity provider session is the durable credential, not anything your app or Auth0 holds. A non-federated logout clears your app session and the Auth0 session but leaves that identity provider session alive, so the next `start_enterprise_login()` signs the user straight back in without a prompt. On a shared device that is not a real logout, which is why Enterprise Connect logout must be federated.
 
-Federated logout ends the corporate IdP session itself, which can also sign the user out of other applications that share that same enterprise SSO, not just yours. Weigh that against the shared-device benefit before enabling it by default.
-
-```python
-logout_url = await server_client.logout(
-    LogoutOptions(return_to="https://app.example.com/login", federated=True),
-)
-```
+> [!NOTE]
+> Federated logout also ends the user's session at other applications that share the same enterprise SSO, not just yours. That is the intended reach of an enterprise sign-out. It depends on the identity provider supporting federated logout, so confirm that on the connection.
 
 > [!NOTE]
 > `return_to` must be an absolute URL on your tenant's Allowed Logout URLs list. Auth0 rejects a URL that is not allow-listed.
@@ -273,5 +271,5 @@ except EnterpriseConnectError as e:
 
 Errors you may see:
 
-- `EnterpriseConnectError` - a session or refresh-dependent member is not available in this mode. Its `code` is always `enterprise_connect_not_supported`; the message names the member that was called
+- `EnterpriseConnectError` - a session or refresh-dependent member is not available in this mode. Its `code` is always `enterprise_connect_not_supported`. The message names the member that was called
 - `ApiError` - the token exchange failed, or the login returned no verifiable claims (`invalid_response`)
