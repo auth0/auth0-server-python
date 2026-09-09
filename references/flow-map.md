@@ -17,6 +17,7 @@ Before working on a flow, read its entry points and supporting modules. Every fl
 | Passkeys | `passkey_signup_challenge`, `passkey_login_challenge`, `signin_with_passkey` | `auth_schemes/dpop_auth.py` — passkey sign-in is the DPoP-bound path | `examples/Passkeys.md` |
 | My Account | `MyAccountClient` (factors, authentication methods, enroll/verify) | `auth_schemes/dpop_auth.py`; stateless — every call takes a user token | `examples/MyAccountAuthenticationMethods.md` |
 | MCD | any flow — `domain` may be an async resolver | `_resolve_current_domain`, pitfall 5 in `references/pitfalls.md` | `examples/MultipleCustomDomains.md` |
+| mTLS client auth | constructor `use_mtls` + `ssl_context` | `_resolve_token_endpoint`, `_apply_client_authentication`, `_warn_if_not_cert_bound`, `mfa_client.py` (`use_mtls`, `ssl_context`, `verify`, `token_endpoint_resolver`) | `examples/MutualTLS.md` |
 
 Two rules cut across every flow above, so check them on any change here: resolve the domain through
 `await self._resolve_current_domain(store_options)` rather than reading `self._domain`, and accept

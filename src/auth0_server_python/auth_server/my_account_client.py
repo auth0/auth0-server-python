@@ -1,4 +1,5 @@
 import json
+import ssl
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import quote, unquote, urlparse
 
@@ -46,20 +47,31 @@ class MyAccountClient:
     Client for interacting with the Auth0 MyAccount API.
     """
 
-    def __init__(self, domain: str, headers: Optional[dict[str, str]] = None):
+    def __init__(
+        self,
+        domain: str,
+        headers: Optional[dict[str, str]] = None,
+        ssl_context: Optional[ssl.SSLContext] = None,
+    ):
         """
         Initialize the MyAccount API client.
 
         Args:
             domain: Auth0 domain (e.g., '<tenant>.<locality>.auth0.com')
             headers: Optional default headers to include on every request
+            ssl_context: Optional SSL context for mTLS. When provided, the client
+                certificate is presented on every request so the My Account API can
+                verify cnf.x5t#S256 binding on cert-bound access tokens.
         """
         self._domain = domain
         self._headers = headers or {}
+        self._ssl_context = ssl_context
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with default headers injected."""
         headers = {**kwargs.pop("headers", {}), **self._headers}
+        if self._ssl_context is not None and "verify" not in kwargs:
+            kwargs["verify"] = self._ssl_context
         return httpx.AsyncClient(headers=headers, **kwargs)
 
     @property
