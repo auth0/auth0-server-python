@@ -123,30 +123,6 @@ def _webfinger_resource(email_domain: str) -> str:
     return f"urn:auth0:discovery:domain:{email_domain}"
 
 
-def _interpret_webfinger_response(status_code: int, body):
-    """
-    Map a WebFinger response to a routing decision. Fails closed to not-federated.
-
-    Args:
-        status_code: HTTP status of the WebFinger response.
-        body: Parsed JSON body for a 200 response, otherwise None.
-
-    Returns:
-        A `(is_federated, cache_ttl_seconds)` tuple. `cache_ttl_seconds` is None
-        when the result must not be cached (transient or ambiguous responses).
-    """
-    if status_code == 200:
-        links = body.get("links", []) if isinstance(body, dict) else []
-        if any(
-            isinstance(link, dict) and link.get("rel") == WEBFINGER_ISSUER_REL
-            for link in links
-        ):
-            return (True, WEBFINGER_CACHE_TTL_FOUND)
-        return (False, None)
-    if status_code == 404:
-        return (False, WEBFINGER_CACHE_TTL_NOT_FOUND)
-    return (False, None)
-
 
 class ServerClient(Generic[TStoreOptions]):
     """
@@ -3863,8 +3839,8 @@ class ServerClient(Generic[TStoreOptions]):
         Resolve whether an email domain is Auth0-managed for enterprise SSO.
 
         A routing hint only, backed by WebFinger. Fails closed to False on any
-        error, non-200, or ambiguous response. It is never an authorization
-        decision - org membership is still enforced after the callback.
+        error or non-200/non-404 response. It is never an authorization decision
+        - org membership is still enforced after the callback.
 
         Args:
             email_domain: The email domain to check (case-insensitive).
@@ -3896,12 +3872,6 @@ class ServerClient(Generic[TStoreOptions]):
         except httpx.HTTPError:
             return False
 
-        body = None
-        if response.status_code == 200:
-            try:
-                body = response.json()
-            except ValueError:
-                return False
         if response.status_code == 429:
             warnings.warn(
                 "WebFinger discovery was rate-limited; treating the domain as "
@@ -3909,10 +3879,13 @@ class ServerClient(Generic[TStoreOptions]):
                 stacklevel=2,
             )
 
-        is_federated, ttl = _interpret_webfinger_response(response.status_code, body)
-        if ttl is not None:
-            self._cache_webfinger_result(cache_key, is_federated, now + ttl)
-        return is_federated
+        if response.status_code == 200:
+            self._cache_webfinger_result(cache_key, True, now + WEBFINGER_CACHE_TTL_FOUND)
+            return True
+        if response.status_code == 404:
+            self._cache_webfinger_result(cache_key, False, now + WEBFINGER_CACHE_TTL_NOT_FOUND)
+            return False
+        return False
 
     def _cache_webfinger_result(self, key: str, value: bool, expires_at: float) -> None:
         """Store a discovery result under a bounded FIFO cache."""
@@ -3974,7 +3947,7 @@ async def is_federated_domain(domain: str, email_domain: str, timeout: float = 5
     Check whether an email domain is Auth0-managed for enterprise SSO via WebFinger.
 
     A stateless routing hint, not an authorization decision. Fails closed to False
-    on any error, non-200, or ambiguous response. Prefer `ServerClient` in normal
+    on any error or non-200/non-404 response. Prefer `ServerClient` in normal
     use, which caches results and resolves the domain per request. This standalone
     form is for callers that need a one-off check without a client instance.
 
@@ -4003,17 +3976,10 @@ async def is_federated_domain(domain: str, email_domain: str, timeout: float = 5
     except httpx.HTTPError:
         return False
 
-    body = None
-    if response.status_code == 200:
-        try:
-            body = response.json()
-        except ValueError:
-            return False
     if response.status_code == 429:
         warnings.warn(
             "WebFinger discovery was rate-limited; treating the domain as not "
             "federated for this request.",
             stacklevel=2,
         )
-    is_federated, _ttl = _interpret_webfinger_response(response.status_code, body)
-    return is_federated
+    return response.status_code == 200

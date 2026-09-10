@@ -9899,9 +9899,6 @@ async def test_complete_interactive_login_milliseconds_ceiling_fails_open(mocker
 
 # === Enterprise Connect ===
 
-WEBFINGER_ISSUER_REL = "http://openid.net/specs/connect/1.0/issuer"
-
-
 def _make_ec_client(**overrides):
     kwargs = {
         "domain": "auth0.local",
@@ -9915,14 +9912,9 @@ def _make_ec_client(**overrides):
     return ServerClient(**kwargs)
 
 
-def _webfinger_response(status_code, *, federated=False, bad_json=False):
+def _webfinger_response(status_code):
     response = MagicMock()
     response.status_code = status_code
-    if bad_json:
-        response.json.side_effect = ValueError("no json")
-    else:
-        links = [{"rel": WEBFINGER_ISSUER_REL, "href": "https://auth0.local"}] if federated else []
-        response.json.return_value = {"links": links}
     return response
 
 
@@ -10064,25 +10056,14 @@ async def test_mtls_requires_ssl_context():
 
 
 @pytest.mark.asyncio
-async def test_is_federated_domain_true_when_issuer_rel_present(mocker):
+async def test_is_federated_domain_true_on_200(mocker):
     client = _make_ec_client()
     mocker.patch(
         "httpx.AsyncClient.get",
         new_callable=AsyncMock,
-        return_value=_webfinger_response(200, federated=True),
+        return_value=_webfinger_response(200),
     )
     assert await client._is_federated_domain("managed.example") is True
-
-
-@pytest.mark.asyncio
-async def test_is_federated_domain_false_on_200_without_rel(mocker):
-    client = _make_ec_client()
-    mocker.patch(
-        "httpx.AsyncClient.get",
-        new_callable=AsyncMock,
-        return_value=_webfinger_response(200, federated=False),
-    )
-    assert await client._is_federated_domain("managed.example") is False
 
 
 @pytest.mark.asyncio
@@ -10121,7 +10102,7 @@ async def test_is_federated_domain_caches_positive_result(mocker):
     get = mocker.patch(
         "httpx.AsyncClient.get",
         new_callable=AsyncMock,
-        return_value=_webfinger_response(200, federated=True),
+        return_value=_webfinger_response(200),
     )
     assert await client._is_federated_domain("managed.example") is True
     assert await client._is_federated_domain("managed.example") is True
@@ -10142,17 +10123,6 @@ async def test_is_federated_domain_does_not_cache_403(mocker):
 
 
 @pytest.mark.asyncio
-async def test_is_federated_domain_fails_closed_on_bad_json(mocker):
-    client = _make_ec_client()
-    mocker.patch(
-        "httpx.AsyncClient.get",
-        new_callable=AsyncMock,
-        return_value=_webfinger_response(200, bad_json=True),
-    )
-    assert await client._is_federated_domain("managed.example") is False
-
-
-@pytest.mark.asyncio
 async def test_is_federated_domain_warns_and_fails_closed_on_429(mocker):
     client = _make_ec_client()
     mocker.patch(
@@ -10170,7 +10140,7 @@ async def test_is_federated_domain_true_cached_for_60s(mocker):
     mocker.patch(
         "httpx.AsyncClient.get",
         new_callable=AsyncMock,
-        return_value=_webfinger_response(200, federated=True),
+        return_value=_webfinger_response(200),
     )
     before = time.time()
     await client._is_federated_domain("managed.example")
@@ -10214,7 +10184,7 @@ async def test_standalone_is_federated_domain(mocker):
     mocker.patch(
         "httpx.AsyncClient.get",
         new_callable=AsyncMock,
-        return_value=_webfinger_response(200, federated=True),
+        return_value=_webfinger_response(200),
     )
     assert await is_federated_domain("auth0.local", "managed.example") is True
 
