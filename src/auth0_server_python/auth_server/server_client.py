@@ -1372,6 +1372,13 @@ class ServerClient(Generic[TStoreOptions]):
     ) -> str:
         options = options or LogoutOptions()
 
+        if self._enterprise_connect and not options.federated:
+            warnings.warn(
+                "Enterprise Connect logout without federated=True leaves the IdP session "
+                "active. Pass LogoutOptions(federated=True) to end it.",
+                stacklevel=2,
+            )
+
         if not self._domain_resolver:
             # No domain resolver means one fixed domain. Delete the session when a
             # state store exists. Enterprise Connect has none, so nothing to delete.

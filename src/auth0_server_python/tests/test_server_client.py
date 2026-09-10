@@ -10441,7 +10441,8 @@ async def test_handle_backchannel_logout_is_noop_in_enterprise_connect():
 @pytest.mark.asyncio
 async def test_logout_without_state_store_does_not_crash_in_enterprise_connect():
     client = _make_ec_client()
-    url = await client.logout(LogoutOptions(return_to="https://app.example/login"))
+    with pytest.warns(UserWarning, match="federated=True"):
+        url = await client.logout(LogoutOptions(return_to="https://app.example/login"))
     assert url.startswith("https://auth0.local/v2/logout")
     assert "returnTo=https" in url
 
@@ -10451,6 +10452,21 @@ async def test_logout_federated_appends_flag():
     client = _make_ec_client()
     url = await client.logout(LogoutOptions(return_to="https://app.example/login", federated=True))
     assert "federated=true" in url
+
+
+@pytest.mark.asyncio
+async def test_logout_warns_in_enterprise_connect_without_federated():
+    client = _make_ec_client()
+    with pytest.warns(UserWarning, match="federated=True"):
+        await client.logout(LogoutOptions(return_to="https://app.example/login"))
+
+
+@pytest.mark.asyncio
+async def test_logout_no_warn_in_enterprise_connect_with_federated():
+    client = _make_ec_client()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        await client.logout(LogoutOptions(return_to="https://app.example/login", federated=True))
 
 
 @pytest.mark.asyncio
