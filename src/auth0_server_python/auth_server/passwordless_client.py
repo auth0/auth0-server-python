@@ -209,7 +209,12 @@ class PasswordlessClient:
                 e,
             )
 
-        token_endpoint = metadata["token_endpoint"]
+        token_endpoint = client._resolve_token_endpoint(metadata)
+        if not token_endpoint:
+            raise PasswordlessVerifyError(
+                PasswordlessErrorCode.DISCOVERY_ERROR,
+                "Token endpoint missing in OIDC metadata",
+            )
         origin_issuer = metadata.get("issuer")
 
         default_scope = (
@@ -393,7 +398,7 @@ class PasswordlessClient:
         if not id_token:
             raise PasswordlessVerifyError(
                 PasswordlessErrorCode.VERIFY_FAILED,
-                "Token response did not include an ID token; ensure 'openid' scope is requested",
+                "Token response did not include an ID token. Ensure 'openid' scope is requested.",
             )
 
         jwks = await client._get_jwks_cached(origin_domain, metadata)

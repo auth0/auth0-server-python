@@ -2,6 +2,7 @@
 Tests for PasswordlessClient embedded passwordless (OTP + magic link).
 """
 
+import ssl
 from unittest.mock import AsyncMock, MagicMock
 
 import jwt
@@ -1182,3 +1183,118 @@ class TestPrivateKeyJwt:
                     connection="email", email="user@example.com", verification_code="123456"
                 )
             )
+
+
+# ── mTLS ─────────────────────────────────────────────────────────────────────
+
+MTLS_METADATA = {
+    "token_endpoint": f"https://{DOMAIN}/oauth/token",
+    "issuer": ISSUER,
+    "mtls_endpoint_aliases": {"token_endpoint": f"https://mtls.{DOMAIN}/oauth/token"},
+}
+
+
+def _make_mtls_client(**overrides) -> ServerClient:
+    kwargs = {
+        "domain": DOMAIN,
+        "client_id": CLIENT_ID,
+        "use_mtls": True,
+        "ssl_context": ssl.create_default_context(),
+        "secret": SECRET,
+        "redirect_uri": REDIRECT_URI,
+        "transaction_store": AsyncMock(),
+        "state_store": AsyncMock(),
+    }
+    kwargs.update(overrides)
+    return ServerClient(**kwargs)
+
+
+def _mock_http_via_httpx(mocker, mock_response):
+    """Patch httpx.AsyncClient directly and return (spy, mock_http)."""
+    mock_http = AsyncMock()
+    mock_http.post = AsyncMock(return_value=mock_response)
+    mock_ctx_mgr = MagicMock()
+    mock_ctx_mgr.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_ctx_mgr.__aexit__ = AsyncMock(return_value=False)
+    spy = mocker.patch("httpx.AsyncClient", return_value=mock_ctx_mgr)
+    return spy, mock_http
+
+
+class TestMtls:
+    def _patch_verify_deps(self, client, mocker, claims):
+        mocker.patch.object(client, "_get_oidc_metadata_cached", return_value=MTLS_METADATA)
+        mocker.patch.object(
+            client, "_get_jwks_cached", return_value={"keys": [{"kty": "RSA", "kid": "k1"}]}
+        )
+        mocker.patch.object(client, "_verify_and_decode_jwt", return_value=claims)
+
+    def _token_response(self):
+        return MagicMock(
+            status_code=200,
+            json=MagicMock(
+                return_value={"access_token": "at", "id_token": "idt", "expires_in": 3600, "scope": "openid"}
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_verify_routes_token_endpoint_through_mtls_alias(self, mocker):
+        client = _make_mtls_client()
+        claims = {"iss": ISSUER, "sub": "auth0|1", "sid": "s1", "iat": 1_000}
+        self._patch_verify_deps(client, mocker, claims)
+        http = _mock_http(client, 200, {"access_token": "at", "id_token": "idt", "expires_in": 3600, "scope": "openid"})
+
+        await client.passwordless.verify(
+            VerifyPasswordlessOtpOptions(
+                connection="email", email="user@example.com", verification_code="123456"
+            )
+        )
+
+        assert http.post.call_args.args[0] == f"https://mtls.{DOMAIN}/oauth/token"
+
+    @pytest.mark.asyncio
+    async def test_start_omits_client_secret_and_uses_ssl_context_under_mtls(self, mocker):
+        ctx = ssl.create_default_context()
+        client = _make_mtls_client(ssl_context=ctx)
+        spy, mock_http = _mock_http_via_httpx(mocker, MagicMock(status_code=200, json=MagicMock(return_value={"_id": "req_1"})))
+
+        await client.passwordless.start(
+            StartPasswordlessEmailOptions(email="user@example.com", send="code")
+        )
+
+        _, kwargs = spy.call_args
+        assert kwargs.get("verify") is ctx
+        body = mock_http.post.call_args.kwargs["json"]
+        assert "client_secret" not in body
+
+    @pytest.mark.asyncio
+    async def test_verify_omits_client_secret_under_mtls(self, mocker):
+        client = _make_mtls_client()
+        claims = {"iss": ISSUER, "sub": "auth0|1", "sid": "s1", "iat": 1_000}
+        self._patch_verify_deps(client, mocker, claims)
+        http = _mock_http(client, 200, {"access_token": "at", "id_token": "idt", "expires_in": 3600, "scope": "openid"})
+
+        await client.passwordless.verify(
+            VerifyPasswordlessOtpOptions(
+                connection="email", email="user@example.com", verification_code="123456"
+            )
+        )
+
+        body = http.post.call_args.kwargs["data"]
+        assert "client_secret" not in body
+
+    @pytest.mark.asyncio
+    async def test_verify_presents_ssl_context_under_mtls(self, mocker):
+        ctx = ssl.create_default_context()
+        client = _make_mtls_client(ssl_context=ctx)
+        claims = {"iss": ISSUER, "sub": "auth0|1", "sid": "s1", "iat": 1_000}
+        self._patch_verify_deps(client, mocker, claims)
+        spy, _ = _mock_http_via_httpx(mocker, self._token_response())
+
+        await client.passwordless.verify(
+            VerifyPasswordlessOtpOptions(
+                connection="email", email="user@example.com", verification_code="123456"
+            )
+        )
+
+        _, kwargs = spy.call_args
+        assert kwargs.get("verify") is ctx
