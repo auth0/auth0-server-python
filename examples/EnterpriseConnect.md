@@ -18,7 +18,7 @@ Enterprise Connect lets your application sign users in through their company's i
 - [4. Protect your routes](#4-protect-your-routes)
 - [5. Organizations and multi-tenant apps](#5-organizations-and-multi-tenant-apps)
 - [6. Logout](#6-logout)
-- [What is not available in Enterprise Connect](#what-is-not-available-in-enterprise-connect)
+- [Available and blocked methods](#available-and-blocked-methods)
 - [Error Handling](#error-handling)
 
 ## How the flow works
@@ -190,18 +190,7 @@ your_template.render(user=session)
 
 ## 5. Organizations and multi-tenant apps
 
-Auth0 stamps the resolved organization into the token as `org_id`, available on `result["user"]`. The SDK surfaces it but does not enforce it. It cannot know which organization *your* app expected for this user.
-
-> [!WARNING]
-> Validate `org_id` after every callback, regardless of routing. WebFinger discovery and `login_hint` are routing mechanisms, not security controls. On their own they do not prove the user belongs to a customer you serve. Read `org_id` from the returned claims and check it against your own record of known organizations before creating the session. Without this check, a user who authenticates through any managed connection could obtain a session in a context you did not intend. This is an authorization decision your app owns.
-
-```python
-user = result["user"]
-if user.get("org_id") not in allowed_orgs_for(current_customer):
-    raise Forbidden("user does not belong to this organization")
-```
-
-If you serve exactly one organization, this is a single check against your one known org, not a reason to skip it. An app that skips it today can silently let users in from other tenants the day it onboards a second customer.
+Auth0 stamps the resolved organization into the token as `org_id`, available on `result["user"]`. The SDK surfaces it but does not enforce it.
 
 ## 6. Logout
 
@@ -230,7 +219,7 @@ Enterprise Connect signs the user in through their enterprise identity provider 
 > [!NOTE]
 > `return_to` must be an absolute URL on your tenant's Allowed Logout URLs list. Auth0 rejects a URL that is not allow-listed.
 
-## What is not available in Enterprise Connect
+## Available and blocked methods
 
 These members work in Enterprise Connect mode:
 
