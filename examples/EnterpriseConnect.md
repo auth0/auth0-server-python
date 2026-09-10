@@ -109,9 +109,6 @@ result = await server_client.complete_interactive_login(
 )
 
 user = result["user"]
-access_token = result["token_set"]["access_token"]
-id_token = result["id_token"]
-domain = result["domain"]
 
 response.set_cookie(
     "app_session",
