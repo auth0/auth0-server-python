@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import ssl
@@ -18,7 +19,11 @@ from jwcrypto import jwk
 from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
-from auth0_server_python.auth_server.server_client import ServerClient, is_federated_domain
+from auth0_server_python.auth_server.server_client import (
+    _EC_ALLOWED_METHODS,
+    ServerClient,
+    is_federated_domain,
+)
 from auth0_server_python.auth_types import (
     CompleteConnectAccountRequest,
     ConnectAccountOptions,
@@ -10370,44 +10375,36 @@ async def test_get_access_token_raises_in_enterprise_connect():
     assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
 
 
-_EC_BLOCKED_ASYNC_MEMBERS = [
-    ("get_user", ()),
-    ("get_token_by_refresh_token", ({},)),
-    ("login_backchannel", ({},)),
-    ("backchannel_authentication", ({},)),
-    ("start_link_user", ({},)),
-    ("complete_link_user", ("https://app.example/callback",)),
-    ("start_unlink_user", ({},)),
-    ("complete_unlink_user", ("https://app.example/callback",)),
-    ("get_access_token_for_connection", ({},)),
-    ("get_token_for_connection", ({},)),
-    ("start_connect_account", (None,)),
-    ("complete_connect_account", ("https://app.example/callback",)),
-    ("list_connected_accounts", ()),
-    ("delete_connected_account", ("acc_1",)),
-    ("list_connected_account_connections", ()),
-    ("login_with_custom_token_exchange", (None,)),
-    ("request_session_transfer_token", ("subject-token", "urn:token-type")),
-    ("passkey_signup_challenge", ()),
-    ("passkey_login_challenge", ()),
-    ("signin_with_passkey", ("auth-session", None)),
-]
+def test_ec_allowed_methods_set():
+    assert _EC_ALLOWED_METHODS == frozenset({
+        "start_interactive_login",
+        "start_enterprise_login",
+        "complete_interactive_login",
+        "logout",
+        "custom_token_exchange",
+        "handle_backchannel_logout",
+    })
 
 
-@pytest.mark.parametrize("method_name, args", _EC_BLOCKED_ASYNC_MEMBERS)
 @pytest.mark.asyncio
-async def test_enterprise_connect_blocks_async_member(method_name, args):
+async def test_enterprise_connect_blocks_non_allowed_async_methods():
     client = _make_ec_client()
-    with pytest.raises(EnterpriseConnectError) as exc:
-        await getattr(client, method_name)(*args)
-    assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
+    for name, attr in vars(client).items():
+        if name.startswith("_") or not callable(attr) or not asyncio.iscoroutinefunction(attr):
+            continue
+        with pytest.raises(EnterpriseConnectError) as exc:
+            await attr()
+        assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
 
 
-def test_enterprise_connect_blocks_build_session_transfer_redirect():
+def test_enterprise_connect_blocks_non_allowed_sync_methods():
     client = _make_ec_client()
-    with pytest.raises(EnterpriseConnectError) as exc:
-        client.build_session_transfer_redirect("https://auth0.local/authorize", None)
-    assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
+    for name, attr in vars(client).items():
+        if name.startswith("_") or not callable(attr) or asyncio.iscoroutinefunction(attr):
+            continue
+        with pytest.raises(EnterpriseConnectError) as exc:
+            attr()
+        assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
 
 
 @pytest.mark.parametrize("property_name", ["mfa", "passwordless"])
@@ -10418,7 +10415,7 @@ def test_enterprise_connect_blocks_property_access(property_name):
     assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
 
 
-def test_reject_in_enterprise_connect_is_noop_without_flag():
+def test_non_ec_client_has_no_method_stubs():
     client = ServerClient(
         domain="auth0.local",
         client_id="client_id",
@@ -10427,7 +10424,11 @@ def test_reject_in_enterprise_connect_is_noop_without_flag():
         transaction_store=AsyncMock(),
         state_store=AsyncMock(),
     )
-    client._reject_in_enterprise_connect("get_user")
+    public_callables = {
+        name for name, attr in vars(client).items()
+        if not name.startswith("_") and callable(attr)
+    }
+    assert not public_callables
     assert client.mfa is not None
     assert client.passwordless is not None
 
