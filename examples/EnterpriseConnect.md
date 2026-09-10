@@ -39,7 +39,7 @@ Do not request `offline_access` and do not set a static `organization` on the cl
 
 ## 1. Configure the client
 
-Opt in with `enterprise_connect=True`. Supply a `transaction_store` (used to protect the callback with `state` and PKCE); a `state_store` is not needed, because the SDK persists no session.
+Opt in with `enterprise_connect=True`. Supply a `transaction_store` (used to protect the callback with `state` and PKCE). A `state_store` is not needed because the SDK persists no session.
 
 ```python
 from auth0_server_python.auth_server.server_client import ServerClient
@@ -136,7 +136,7 @@ The returned dict contains:
 The SDK verifies the ID token's signature and issuer, and derives the returned claims from it, before returning. It does not write a session store record and retains no refresh token.
 
 > [!WARNING]
-> The access token expires and cannot be renewed. Enterprise Connect issues no refresh token, so when it expires the user must re-authenticate. Check `token_set["expires_at"]` before using the access token. For API authorization, issue your own tokens from the callback claims rather than relying on the Auth0 access token long-term.
+> The access token expires and cannot be renewed. Enterprise Connect issues no refresh token, so when it expires the user must re-authenticate. `token_set["expires_at"]` is a Unix timestamp in seconds. Compare it with `time.time()` before using the access token. For API authorization, issue your own tokens from the callback claims rather than relying on the Auth0 access token long-term.
 
 ### Sign the session cookie
 
@@ -228,7 +228,7 @@ These members work in Enterprise Connect mode:
 | `start_enterprise_login()` | EC login entry point |
 | `start_interactive_login()` | Writes the transaction store only |
 | `complete_interactive_login()` | Returns verified claims without persisting a session |
-| `logout()` | Clears transaction state and returns the Auth0 logout URL |
+| `logout()` | Returns the Auth0 logout URL. No session or transaction state to clear in this mode |
 | `custom_token_exchange()` | Works once, while the callback access token is valid. No refresh after it expires |
 | `handle_backchannel_logout()` | No-op. The SDK holds no session to revoke |
 
