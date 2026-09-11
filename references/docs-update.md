@@ -52,7 +52,8 @@ it from `README.md`'s section for the feature. Name the file after the flow, mat
 
 | Feature | Guide |
 |---------|-------|
-| Redirect login, callback, organizations | `examples/InteractiveLogin.md` |
+| Redirect login, callback | `examples/InteractiveLogin.md` |
+| Organizations login | `examples/OrganizationLogin.md` |
 | Store implementations, `store_options` | `examples/ConfigureStore.md` |
 | `get_user` / `get_session` / `get_access_token`, session expiry | `examples/RetrievingData.md` |
 | MFA (`ServerClient.mfa`, `MfaClient`) | `examples/MFA.md` |
