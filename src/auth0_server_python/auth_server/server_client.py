@@ -130,12 +130,6 @@ _EC_ALLOWED_METHODS: frozenset[str] = frozenset({
 })
 
 
-def _webfinger_resource(email_domain: str) -> str:
-    """Build the WebFinger `resource` value for an email domain."""
-    return f"urn:auth0:discovery:domain:{email_domain}"
-
-
-
 class ServerClient(Generic[TStoreOptions]):
     """
     Main client for Auth0 server SDK. Handles authentication flows, session management,
@@ -3859,7 +3853,7 @@ class ServerClient(Generic[TStoreOptions]):
             return cached["value"]
 
         params = {
-            "resource": _webfinger_resource(email_domain),
+            "resource": f"urn:auth0:discovery:domain:{email_domain}",
             "rel": WEBFINGER_ISSUER_REL,
         }
         try:
@@ -3961,7 +3955,7 @@ async def is_federated_domain(domain: str, email_domain: str, timeout: float = 5
         return False
     email_domain = email_domain.strip().lower()
     params = {
-        "resource": _webfinger_resource(email_domain),
+        "resource": f"urn:auth0:discovery:domain:{email_domain}",
         "rel": WEBFINGER_ISSUER_REL,
     }
     try:
