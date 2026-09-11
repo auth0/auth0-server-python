@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.0.0b16](https://github.com/auth0/auth0-server-python/tree/1.0.0b16) (2026-09-10)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b15...1.0.0b16)
+
+**Added**
+- feat: add mTLS (RFC 8705) client authentication - new `use_mtls` and `ssl_context` params let `ServerClient` present a TLS client certificate at the token endpoint instead of sending a client secret [\#159](https://github.com/auth0/auth0-server-python/pull/159) ([cschetan77](https://github.com/cschetan77))
+
 ## [1.0.0b15](https://github.com/auth0/auth0-server-python/tree/1.0.0b15) (2026-09-07)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b14...1.0.0b15)
 
