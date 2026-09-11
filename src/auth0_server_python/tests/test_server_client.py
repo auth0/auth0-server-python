@@ -1,8 +1,10 @@
+import asyncio
 import base64
 import json
 import ssl
 import time
 import unicodedata
+import warnings
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -17,7 +19,11 @@ from jwcrypto import jwk
 from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
-from auth0_server_python.auth_server.server_client import ServerClient
+from auth0_server_python.auth_server.server_client import (
+    _EC_ALLOWED_METHODS,
+    ServerClient,
+    is_federated_domain,
+)
 from auth0_server_python.auth_types import (
     CompleteConnectAccountRequest,
     ConnectAccountOptions,
@@ -39,6 +45,7 @@ from auth0_server_python.auth_types import (
     PasskeySignupChallengeResponse,
     PasskeyUserProfile,
     SessionTransferTokenResult,
+    StartEnterpriseLoginOptions,
     StartInteractiveLoginOptions,
     StateData,
     TransactionData,
@@ -55,6 +62,8 @@ from auth0_server_python.error import (
     CustomTokenExchangeError,
     CustomTokenExchangeErrorCode,
     DomainResolverError,
+    EnterpriseConnectError,
+    EnterpriseConnectErrorCode,
     InvalidArgumentError,
     IssuerValidationError,
     MfaRequiredError,
@@ -9893,6 +9902,61 @@ async def test_complete_interactive_login_milliseconds_ceiling_fails_open(mocker
     assert stored_state.internal.session_expires_at is None
 
 
+# === Enterprise Connect ===
+
+def _make_ec_client(**overrides):
+    kwargs = {
+        "domain": "auth0.local",
+        "client_id": "client_id",
+        "client_secret": "client_secret",
+        "secret": "some-secret",
+        "transaction_store": AsyncMock(),
+        "enterprise_connect": True,
+    }
+    kwargs.update(overrides)
+    return ServerClient(**kwargs)
+
+
+def _webfinger_response(status_code):
+    response = MagicMock()
+    response.status_code = status_code
+    return response
+
+
+@pytest.mark.asyncio
+async def test_enterprise_connect_warns_on_offline_access_scope():
+    with pytest.warns(UserWarning, match="offline_access"):
+        _make_ec_client(authorization_params={"scope": "openid profile offline_access"})
+
+
+@pytest.mark.asyncio
+async def test_enterprise_connect_warns_on_static_organization():
+    with pytest.warns(UserWarning, match="organization"):
+        _make_ec_client(organization="org_static")
+
+
+@pytest.mark.asyncio
+async def test_enterprise_connect_clean_config_does_not_warn():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _make_ec_client(authorization_params={"scope": "openid profile email"})
+
+
+@pytest.mark.asyncio
+async def test_offline_access_without_enterprise_connect_does_not_warn():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ServerClient(
+            domain="auth0.local",
+            client_id="client_id",
+            client_secret="client_secret",
+            secret="some-secret",
+            transaction_store=AsyncMock(),
+            organization="org_static",
+            authorization_params={"scope": "openid offline_access"},
+        )
+
+
 @pytest.mark.asyncio
 async def test_complete_interactive_login_uses_mtls_token_endpoint(mocker):
     mock_tx_store = AsyncMock()
@@ -9994,6 +10058,431 @@ async def test_mtls_requires_ssl_context():
             use_mtls=True,
             secret="<secret>",
         )
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_true_on_200(mocker):
+    client = _make_ec_client()
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(200),
+    )
+    assert await client._is_federated_domain("managed.example") is True
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_fails_closed_on_403(mocker):
+    client = _make_ec_client()
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(403),
+    )
+    assert await client._is_federated_domain("managed.example") is False
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_fails_closed_on_network_error(mocker):
+    client = _make_ec_client()
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        side_effect=httpx.ConnectError("boom"),
+    )
+    assert await client._is_federated_domain("managed.example") is False
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_empty_input_returns_false(mocker):
+    client = _make_ec_client()
+    get = mocker.patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+    assert await client._is_federated_domain("") is False
+    get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_caches_positive_result(mocker):
+    client = _make_ec_client()
+    get = mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(200),
+    )
+    assert await client._is_federated_domain("managed.example") is True
+    assert await client._is_federated_domain("managed.example") is True
+    assert get.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_does_not_cache_403(mocker):
+    client = _make_ec_client()
+    get = mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(403),
+    )
+    assert await client._is_federated_domain("managed.example") is False
+    assert await client._is_federated_domain("managed.example") is False
+    assert get.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_warns_and_fails_closed_on_429(mocker):
+    client = _make_ec_client()
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(429),
+    )
+    with pytest.warns(UserWarning, match="rate-limited"):
+        assert await client._is_federated_domain("managed.example") is False
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_true_cached_for_60s(mocker):
+    client = _make_ec_client()
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(200),
+    )
+    before = time.time()
+    await client._is_federated_domain("managed.example")
+    entry = client._webfinger_cache.get("auth0.local:managed.example")
+    assert entry is not None
+    assert 59 <= entry["expires_at"] - before <= 61
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_false_404_cached_for_15s(mocker):
+    client = _make_ec_client()
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(404),
+    )
+    before = time.time()
+    await client._is_federated_domain("managed.example")
+    entry = client._webfinger_cache.get("auth0.local:managed.example")
+    assert entry is not None
+    assert 14 <= entry["expires_at"] - before <= 16
+
+
+@pytest.mark.asyncio
+async def test_is_federated_domain_error_responses_not_cached(mocker):
+    for status in (403, 429, 500):
+        client = _make_ec_client()
+        mocker.patch(
+            "httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=_webfinger_response(status),
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            await client._is_federated_domain("managed.example")
+        assert "auth0.local:managed.example" not in client._webfinger_cache
+
+
+@pytest.mark.asyncio
+async def test_standalone_is_federated_domain(mocker):
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_webfinger_response(200),
+    )
+    assert await is_federated_domain("auth0.local", "managed.example") is True
+
+
+@pytest.mark.asyncio
+async def test_standalone_is_federated_domain_fails_closed(mocker):
+    mocker.patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        side_effect=httpx.ConnectError("boom"),
+    )
+    assert await is_federated_domain("auth0.local", "managed.example") is False
+
+
+@pytest.mark.asyncio
+async def test_start_enterprise_login_returns_none_for_unmanaged_domain(mocker):
+    client = _make_ec_client()
+    mocker.patch.object(client, "_is_federated_domain", AsyncMock(return_value=False))
+    delegate = mocker.patch.object(client, "start_interactive_login", AsyncMock())
+
+    result = await client.start_enterprise_login(
+        StartEnterpriseLoginOptions(email="user@gmail.com")
+    )
+
+    assert result is None
+    delegate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_enterprise_login_injects_login_hint_for_managed_domain(mocker):
+    client = _make_ec_client()
+    mocker.patch.object(client, "_is_federated_domain", AsyncMock(return_value=True))
+    delegate = mocker.patch.object(
+        client, "start_interactive_login", AsyncMock(return_value="https://auth0.local/authorize?x=1")
+    )
+
+    result = await client.start_enterprise_login(
+        StartEnterpriseLoginOptions(email="user@managed.example")
+    )
+
+    assert result == "https://auth0.local/authorize?x=1"
+    login_options = delegate.await_args.args[0]
+    assert login_options.authorization_params["login_hint"] == "user@managed.example"
+    assert login_options.organization is None
+
+
+@pytest.mark.asyncio
+async def test_start_enterprise_login_missing_email_raises():
+    client = _make_ec_client()
+    with pytest.raises(MissingRequiredArgumentError):
+        await client.start_enterprise_login(StartEnterpriseLoginOptions(email=""))
+
+
+@pytest.mark.asyncio
+async def test_start_enterprise_login_invalid_email_raises(mocker):
+    client = _make_ec_client()
+    mocker.patch.object(client, "_is_federated_domain", AsyncMock(return_value=True))
+    with pytest.raises(InvalidArgumentError):
+        await client.start_enterprise_login(StartEnterpriseLoginOptions(email="not-an-email"))
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_ignores_static_org_in_enterprise_connect(mocker):
+    client = _make_ec_client(organization="org_static", redirect_uri="https://app.example/cb")
+    client._organization = "org_static"
+    mock_tx = client._transaction_store
+    mock_tx.set = AsyncMock()
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "authorization_endpoint": "https://auth0.local/authorize",
+        },
+    )
+
+    options = StartInteractiveLoginOptions(authorization_params={"login_hint": "user@managed.example"})
+    url = await client.start_interactive_login(options)
+
+    query = parse_qs(urlparse(url).query)
+    assert "organization" not in query
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_enterprise_connect_returns_claims(mocker):
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        app_state={"foo": "bar"},
+        domain="auth0.local",
+    )
+    mock_state_store = AsyncMock()
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=mock_tx_store,
+        state_store=mock_state_store,
+        secret="some-secret",
+        enterprise_connect=True,
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://auth0.local/", "token_endpoint": "https://auth0.local/token"},
+    )
+    mocker.patch.object(client._oauth, "metadata", {"token_endpoint": "https://auth0.local/token"})
+    async_fetch_token = AsyncMock(
+        return_value={
+            "access_token": "token123",
+            "id_token": "raw-id-token",
+            "expires_in": 3600,
+            "scope": "openid profile",
+            "userinfo": {"sub": "user123", "org_id": "org_xyz"},
+        }
+    )
+    mocker.patch.object(client._oauth, "fetch_token", async_fetch_token)
+
+    result = await client.complete_interactive_login("https://myapp.com/callback?code=abc&state=xyz")
+
+    assert result["user"]["sub"] == "user123"
+    assert result["user"]["org_id"] == "org_xyz"
+    assert result["id_token"] == "raw-id-token"
+    assert result["domain"] == "auth0.local"
+    assert result["token_set"]["access_token"] == "token123"
+    assert result["app_state"] == {"foo": "bar"}
+    assert "state_data" not in result
+    mock_state_store.set.assert_not_awaited()
+    mock_tx_store.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_session_raises_in_enterprise_connect():
+    client = _make_ec_client()
+    with pytest.raises(EnterpriseConnectError) as exc:
+        await client.get_session()
+    assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_enterprise_connect_no_claims_raises(mocker):
+    mock_tx_store = AsyncMock()
+    mock_tx_store.get.return_value = TransactionData(
+        code_verifier="123",
+        app_state={"foo": "bar"},
+        domain="auth0.local",
+    )
+
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        transaction_store=mock_tx_store,
+        state_store=AsyncMock(),
+        secret="some-secret",
+        enterprise_connect=True,
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://auth0.local/", "token_endpoint": "https://auth0.local/token"},
+    )
+    mocker.patch.object(client._oauth, "metadata", {"token_endpoint": "https://auth0.local/token"})
+    mocker.patch.object(
+        client._oauth,
+        "fetch_token",
+        AsyncMock(return_value={"access_token": "token123", "expires_in": 3600, "scope": "openid"}),
+    )
+
+    with pytest.raises(ApiError) as exc:
+        await client.complete_interactive_login("https://myapp.com/callback?code=abc&state=xyz")
+
+    assert exc.value.code == "invalid_response"
+    mock_tx_store.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_raises_in_enterprise_connect():
+    client = _make_ec_client()
+    with pytest.raises(EnterpriseConnectError) as exc:
+        await client.get_access_token()
+    assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
+
+
+def test_ec_allowed_methods_set():
+    assert _EC_ALLOWED_METHODS == frozenset({
+        "start_interactive_login",
+        "start_enterprise_login",
+        "complete_interactive_login",
+        "logout",
+        "custom_token_exchange",
+        "handle_backchannel_logout",
+    })
+
+
+@pytest.mark.asyncio
+async def test_enterprise_connect_blocks_non_allowed_async_methods():
+    client = _make_ec_client()
+    for name, attr in vars(client).items():
+        if name.startswith("_") or not callable(attr) or not asyncio.iscoroutinefunction(attr):
+            continue
+        with pytest.raises(EnterpriseConnectError) as exc:
+            await attr()
+        assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
+
+
+def test_enterprise_connect_blocks_non_allowed_sync_methods():
+    client = _make_ec_client()
+    for name, attr in vars(client).items():
+        if name.startswith("_") or not callable(attr) or asyncio.iscoroutinefunction(attr):
+            continue
+        with pytest.raises(EnterpriseConnectError) as exc:
+            attr()
+        assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
+
+
+@pytest.mark.parametrize("property_name", ["mfa", "passwordless"])
+def test_enterprise_connect_blocks_property_access(property_name):
+    client = _make_ec_client()
+    with pytest.raises(EnterpriseConnectError) as exc:
+        getattr(client, property_name)
+    assert exc.value.code == EnterpriseConnectErrorCode.NOT_SUPPORTED
+
+
+def test_non_ec_client_has_no_method_stubs():
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret",
+        transaction_store=AsyncMock(),
+        state_store=AsyncMock(),
+    )
+    public_callables = {
+        name for name, attr in vars(client).items()
+        if not name.startswith("_") and callable(attr)
+    }
+    assert not public_callables
+    assert client.mfa is not None
+    assert client.passwordless is not None
+
+
+@pytest.mark.asyncio
+async def test_handle_backchannel_logout_is_noop_in_enterprise_connect():
+    client = _make_ec_client()
+    assert await client.handle_backchannel_logout("") is None
+
+
+@pytest.mark.asyncio
+async def test_logout_without_state_store_does_not_crash_in_enterprise_connect():
+    client = _make_ec_client()
+    with pytest.warns(UserWarning, match="federated=True"):
+        url = await client.logout(LogoutOptions(return_to="https://app.example/login"))
+    assert url.startswith("https://auth0.local/v2/logout")
+    assert "returnTo=https" in url
+
+
+@pytest.mark.asyncio
+async def test_logout_federated_appends_flag():
+    client = _make_ec_client()
+    url = await client.logout(LogoutOptions(return_to="https://app.example/login", federated=True))
+    assert "federated=true" in url
+
+
+@pytest.mark.asyncio
+async def test_logout_warns_in_enterprise_connect_without_federated():
+    client = _make_ec_client()
+    with pytest.warns(UserWarning, match="federated=True"):
+        await client.logout(LogoutOptions(return_to="https://app.example/login"))
+
+
+@pytest.mark.asyncio
+async def test_logout_no_warn_in_enterprise_connect_with_federated():
+    client = _make_ec_client()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        await client.logout(LogoutOptions(return_to="https://app.example/login", federated=True))
+
+
+@pytest.mark.asyncio
+async def test_logout_non_federated_omits_flag():
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="client_id",
+        client_secret="client_secret",
+        secret="some-secret",
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+    )
+    url = await client.logout(LogoutOptions(return_to="https://app.example/login"))
+    assert "federated" not in url
 
 
 @pytest.mark.asyncio
@@ -10176,6 +10665,4 @@ def test_warn_if_not_cert_bound_silent_when_no_access_token(mocker):
     mock_logger = mocker.patch("auth0_server_python.auth_server.server_client.logger")
     client._warn_if_not_cert_bound({})
     mock_logger.warning.assert_not_called()
-
-
 

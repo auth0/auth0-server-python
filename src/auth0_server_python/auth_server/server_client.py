@@ -8,6 +8,7 @@ import json
 import logging
 import ssl
 import time
+import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Callable, Generic, Optional, TypeVar, Union
 
@@ -51,6 +52,7 @@ from auth0_server_python.auth_types import (
     PasskeyTokenResponse,
     PasskeyUserProfile,
     SessionTransferTokenResult,
+    StartEnterpriseLoginOptions,
     StartInteractiveLoginOptions,
     StateData,
     TokenExchangeResponse,
@@ -69,6 +71,8 @@ from auth0_server_python.error import (
     CustomTokenExchangeError,
     CustomTokenExchangeErrorCode,
     DomainResolverError,
+    EnterpriseConnectError,
+    EnterpriseConnectErrorCode,
     InvalidArgumentError,
     IssuerValidationError,
     MfaRequiredError,
@@ -105,6 +109,26 @@ ID_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token"
 
 logger = logging.getLogger(__name__)
 
+# WebFinger rel identifying an OIDC issuer, per the OIDC Discovery spec.
+WEBFINGER_ISSUER_REL = "http://openid.net/specs/connect/1.0/issuer"
+# TTLs for the Enterprise Connect discovery cache. A managed domain rarely
+# flips to unmanaged, so a positive result is held longer than a negative one.
+WEBFINGER_CACHE_TTL_FOUND = 60
+WEBFINGER_CACHE_TTL_NOT_FOUND = 15
+WEBFINGER_CACHE_MAX_ENTRIES = 1000
+
+# Public methods available on an Enterprise Connect client. Every other public
+# callable is replaced with a throwing stub at construction time so new methods
+# added to ServerClient are blocked in EC mode by default (fail-closed).
+_EC_ALLOWED_METHODS: frozenset[str] = frozenset({
+    "start_interactive_login",
+    "start_enterprise_login",
+    "complete_interactive_login",
+    "logout",
+    "custom_token_exchange",
+    "handle_backchannel_logout",
+})
+
 
 class ServerClient(Generic[TStoreOptions]):
     """
@@ -137,6 +161,7 @@ class ServerClient(Generic[TStoreOptions]):
         pushed_authorization_requests: bool = False,
         organization: Optional[str] = None,
         mfa_token_ttl: int = DEFAULT_MFA_TOKEN_TTL,
+        enterprise_connect: bool = False,
         use_mtls: bool = False,
         ssl_context: Optional[ssl.SSLContext] = None,
     ):
@@ -164,6 +189,9 @@ class ServerClient(Generic[TStoreOptions]):
                 `mfa.verify()`/`mfa.challenge_authenticator()` reject it as expired.
                 Defaults to 300 (5 minutes). Increase for authenticator flows that
                 need more time (e.g. OOB push approval on a slow connection).
+            enterprise_connect: Opt into Enterprise Connect mode, where Auth0 acts
+                as a pure SSO relay and the integrator's app owns the session. The
+                SDK persists no session and issues no refresh token. Off by default.
             use_mtls: Enable mTLS (RFC 8705) client authentication. When True, the
                 client certificate in ssl_context is the sole credential - no
                 client_secret or client_assertion is sent in the request body.
@@ -233,6 +261,8 @@ class ServerClient(Generic[TStoreOptions]):
         self._default_authorization_params = authorization_params or {}
         self._pushed_authorization_requests = pushed_authorization_requests  # store the flag
         self._organization = organization
+        self._enterprise_connect = enterprise_connect
+        self._webfinger_cache: OrderedDict[str, dict] = OrderedDict()
 
         # Initialize stores
         self._transaction_store = transaction_store
@@ -281,6 +311,58 @@ class ServerClient(Generic[TStoreOptions]):
         )
 
         self._passwordless_client = PasswordlessClient(self)
+
+        if enterprise_connect:
+            self._warn_on_enterprise_connect_config()
+            self._apply_enterprise_connect_restrictions()
+
+    def _warn_on_enterprise_connect_config(self) -> None:
+        """
+        Warn when Enterprise Connect is combined with settings it ignores.
+
+        Enterprise Connect issues no refresh token and resolves the organization
+        from the login email at Auth0, so a requested `offline_access` scope or a
+        static `organization` is misleading configuration rather than an error.
+        """
+        default_scope = str(self._default_authorization_params.get("scope", ""))
+        if "offline_access" in default_scope.split():
+            warnings.warn(
+                "enterprise_connect is enabled but 'offline_access' is in the default "
+                "scope. Enterprise Connect issues no refresh token, so it has no effect.",
+                stacklevel=2,
+            )
+        if self._organization:
+            warnings.warn(
+                "enterprise_connect is enabled but a static 'organization' is set. "
+                "Enterprise Connect resolves the organization from the login email at "
+                "Auth0, so the static value is ignored for enterprise logins.",
+                stacklevel=2,
+            )
+
+    def _apply_enterprise_connect_restrictions(self) -> None:
+        for name in dir(type(self)):
+            if name.startswith("_"):
+                continue
+            cls_attr = getattr(type(self), name, None)
+            if cls_attr is None or isinstance(cls_attr, property):
+                continue
+            if not callable(cls_attr) or name in _EC_ALLOWED_METHODS:
+                continue
+            _n = name
+            if asyncio.iscoroutinefunction(cls_attr):
+                async def _stub(*args, _method=_n, **kwargs):
+                    raise EnterpriseConnectError(
+                        EnterpriseConnectErrorCode.NOT_SUPPORTED,
+                        f"{_method} is not supported in Enterprise Connect mode.",
+                    )
+                setattr(self, name, _stub)
+            else:
+                def _stub(*args, _method=_n, **kwargs):
+                    raise EnterpriseConnectError(
+                        EnterpriseConnectErrorCode.NOT_SUPPORTED,
+                        f"{_method} is not supported in Enterprise Connect mode.",
+                    )
+                setattr(self, name, _stub)
 
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with telemetry headers injected."""
@@ -718,7 +800,11 @@ class ServerClient(Generic[TStoreOptions]):
         auth_params["scope"] = merged_scope
 
         # Typed org/invitation fields win over anything already in auth_params from authorization_params.
-        resolved_org = options.organization or self._organization
+        # In Enterprise Connect the org is resolved from the login email at Auth0, so the
+        # static client-level organization is never auto-applied - only an explicit per-login value.
+        resolved_org = options.organization
+        if not resolved_org and not self._enterprise_connect:
+            resolved_org = self._organization
         if resolved_org and not resolved_org.strip():
             raise InvalidArgumentError("organization", "organization must not be blank")
         if resolved_org:
@@ -961,6 +1047,17 @@ class ServerClient(Generic[TStoreOptions]):
                 )
 
 
+        if self._enterprise_connect:
+            return await self._complete_enterprise_login(
+                transaction_identifier=transaction_identifier,
+                transaction_data=transaction_data,
+                token_response=token_response,
+                user_claims=user_claims,
+                id_token=id_token,
+                origin_domain=origin_domain,
+                store_options=store_options,
+            )
+
         try:
             state_data = await self._persist_session_from_token_response(
                 token_response=token_response,
@@ -1060,6 +1157,66 @@ class ServerClient(Generic[TStoreOptions]):
         )
         return state_data
 
+    async def _complete_enterprise_login(
+        self,
+        *,
+        transaction_identifier: str,
+        transaction_data: "TransactionData",
+        token_response: dict[str, Any],
+        user_claims: Optional["UserClaims"],
+        id_token: Optional[str],
+        origin_domain: str,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """
+        Finish an Enterprise Connect login without persisting a session.
+
+        The token has already passed issuer and signature validation. Enterprise
+        Connect hands the verified claims back to the integrator, which owns the
+        session, so nothing is written to a state store and no refresh token is
+        retained. The transaction is consumed on success.
+
+        Args:
+            transaction_identifier: Store key of the login transaction to consume.
+            transaction_data: The login transaction, source of the token audience.
+            token_response: The verified token endpoint response.
+            user_claims: Claims parsed from the verified ID token or userinfo.
+            id_token: The raw ID token, returned for the integrator's own use.
+            origin_domain: Resolved Auth0 domain the login came from.
+            store_options: Options passed to the transaction store.
+
+        Returns:
+            A dict with the verified `user` claims, an access-token `token_set`,
+            the raw `id_token`, and the `domain`, plus `app_state` when present.
+
+        Raises:
+            ApiError: If the login returned no verifiable user claims.
+        """
+        if user_claims is None:
+            raise ApiError(
+                "invalid_response",
+                "Enterprise Connect login returned no verifiable user claims",
+            )
+
+        await self._transaction_store.delete(transaction_identifier, options=store_options)
+
+        now = int(time.time())
+        token_set = {
+            "audience": transaction_data.audience or self.DEFAULT_AUDIENCE_STATE_KEY,
+            "access_token": token_response.get("access_token", ""),
+            "scope": token_response.get("scope", ""),
+            "expires_at": now + token_response.get("expires_in", 3600),
+        }
+        result = {
+            "user": user_claims.dict(),
+            "token_set": token_set,
+            "id_token": id_token,
+            "domain": origin_domain,
+        }
+        if transaction_data.app_state:
+            result["app_state"] = transaction_data.app_state
+        return result
+
     async def _establish_session_from_mfa_verify_response(
         self,
         *,
@@ -1157,6 +1314,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             The user, or None if no user found in the store.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
@@ -1190,6 +1350,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             The session, or None if no session found in the store.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
@@ -1223,24 +1386,35 @@ class ServerClient(Generic[TStoreOptions]):
     ) -> str:
         options = options or LogoutOptions()
 
+        if self._enterprise_connect and not options.federated:
+            warnings.warn(
+                "Enterprise Connect logout without federated=True leaves the IdP session "
+                "active. Pass LogoutOptions(federated=True) to end it.",
+                stacklevel=2,
+            )
+
         if not self._domain_resolver:
-            await self._state_store.delete(self._state_identifier, store_options)
+            # No domain resolver means one fixed domain. Delete the session when a
+            # state store exists. Enterprise Connect has none, so nothing to delete.
+            if self._state_store is not None:
+                await self._state_store.delete(self._state_identifier, store_options)
             domain = self._domain
         else:
             # Resolver mode: delete session if domains match
             domain = await self._resolve_current_domain(store_options)
-            state_data = await self._state_store.get(self._state_identifier, store_options)
+            if self._state_store is not None:
+                state_data = await self._state_store.get(self._state_identifier, store_options)
 
-            if state_data:
-                if hasattr(state_data, "dict") and callable(state_data.dict):
-                    state_data = state_data.dict()
-                session_domain = self._get_session_domain(state_data)
-                if session_domain and self._normalize_url(session_domain) == self._normalize_url(domain):
-                    await self._state_store.delete(self._state_identifier, store_options)
+                if state_data:
+                    if hasattr(state_data, "dict") and callable(state_data.dict):
+                        state_data = state_data.dict()
+                    session_domain = self._get_session_domain(state_data)
+                    if session_domain and self._normalize_url(session_domain) == self._normalize_url(domain):
+                        await self._state_store.delete(self._state_identifier, store_options)
 
         # Return logout URL for the current resolved domain
         logout_url = URL.create_logout_url(
-            domain, self._client_id, options.return_to)
+            domain, self._client_id, options.return_to, federated=bool(options.federated))
 
         return logout_url
 
@@ -1256,6 +1430,10 @@ class ServerClient(Generic[TStoreOptions]):
             logout_token: The logout token sent by Auth0
             store_options: Options to pass to the state store
         """
+        # Enterprise Connect keeps no session to revoke, so back-channel logout is a no-op.
+        if self._enterprise_connect:
+            return
+
         if not logout_token:
             raise BackchannelLogoutError("Missing logout token")
 
@@ -1362,6 +1540,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             AccessTokenError: If the token is expired and no refresh token is available.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
@@ -1479,6 +1658,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             AccessTokenError: If there was an issue requesting the access token.
             ConfigurationError: If no client authentication is configured.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
 
         Returns:
             A dictionary containing the token response from Auth0.
@@ -1647,6 +1827,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             A dictionary containing the authorizationDetails (when RAR was used).
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         token_endpoint_response = await self.backchannel_authentication({
             "binding_message": options.get("binding_message"),
@@ -1703,6 +1886,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             ApiError: If the backchannel authentication fails
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         backchannel_data = await self.initiate_backchannel_authentication(options, store_options=store_options)
         auth_req_id = backchannel_data.get("auth_req_id")
@@ -1985,7 +2169,12 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             URL to redirect the user to for authentication.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+
+
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if not state_data or not state_data.get("id_token"):
@@ -2054,8 +2243,10 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             Dictionary containing the original app state
-        """
 
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
+        """
         # We can reuse the interactive login completion since the flow is similar
         result = await self.complete_interactive_login(url, store_options)
 
@@ -2078,6 +2269,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             URL to redirect the user to for authentication.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
@@ -2146,8 +2340,10 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             Dictionary containing the original app state
-        """
 
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
+        """
         # We can reuse the interactive login completion since the flow is similar
         result = await self.complete_interactive_login(url, store_options)
 
@@ -2269,7 +2465,10 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             AccessTokenForConnectionError: If the access token was not found or
                 there was an issue requesting the access token.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+
+
         state_data = await self._state_store.get(self._state_identifier, store_options)
 
         if state_data and hasattr(state_data, "dict") and callable(state_data.dict):
@@ -2341,6 +2540,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             AccessTokenForConnectionError: If there was an issue requesting the access token.
             ConfigurationError: If no client authentication is configured.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
 
         Returns:
             Dictionary containing the token response with accessToken, expiresAt, and scope.
@@ -2440,6 +2640,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             The a connect URL containing a ticket to redirect the user to.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         # Use the default redirect_uri if none is specified
         redirect_uri = options.redirect_uri or self._redirect_uri
@@ -2510,6 +2713,9 @@ class ServerClient(Generic[TStoreOptions]):
 
         Returns:
             A response from the connect account flow.
+
+        Raises:
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         # Parse the URL to get query parameters
         parsed_url = urlparse(url)
@@ -2577,6 +2783,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             Auth0Error: If there is an error retrieving the access token.
             MyAccountApiError: If the My Account API returns an error response.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         if take is not None and (not isinstance(take, int) or take < 1):
             raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
@@ -2604,6 +2811,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             Auth0Error: If there is an error retrieving the access token.
             MyAccountApiError: If the My Account API returns an error response.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         if not connected_account_id:
             raise MissingRequiredArgumentError("connected_account_id")
@@ -2636,6 +2844,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             Auth0Error: If there is an error retrieving the access token.
             MyAccountApiError: If the My Account API returns an error response.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         if take is not None and (not isinstance(take, int) or take < 1):
             raise InvalidArgumentError("take", "The 'take' parameter must be a positive integer.")
@@ -2856,6 +3065,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             CustomTokenExchangeError: If token exchange fails
             ApiError: If session management fails
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
 
         Example:
             ```python
@@ -3109,6 +3319,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             CustomTokenExchangeError: If no actor can be resolved or the exchange fails
             InvalidArgumentError: If organization is provided but blank
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         try:
             # Validate the subject up front - before any session read/refresh/network.
@@ -3187,6 +3398,7 @@ class ServerClient(Generic[TStoreOptions]):
         Raises:
             MissingRequiredArgumentError: If target_login_url is missing or blank
             InvalidArgumentError: If target_login_url is not an absolute https URL, or organization is blank
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         URL.validate_https_redirect_target(target_login_url, "target_login_url")
 
@@ -3205,6 +3417,11 @@ class ServerClient(Generic[TStoreOptions]):
     @property
     def mfa(self) -> MfaClient:
         """Access the MFA client for multi-factor authentication operations."""
+        if self._enterprise_connect:
+            raise EnterpriseConnectError(
+                EnterpriseConnectErrorCode.NOT_SUPPORTED,
+                "mfa is not supported in Enterprise Connect mode.",
+            )
         return self._mfa_client
 
     # ============================================================================
@@ -3239,6 +3456,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             PasskeyError: If the challenge request fails.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         try:
             domain = await self._resolve_current_domain(store_options)
@@ -3312,6 +3530,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         Raises:
             PasskeyError: If the challenge request fails.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         try:
             domain = await self._resolve_current_domain(store_options)
@@ -3402,6 +3621,7 @@ class ServerClient(Generic[TStoreOptions]):
             OrganizationTokenValidationError: If an organization was requested but the
                 token response included no ID token, or the ID token's org claim does
                 not match.
+            EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         if not auth_session:
             raise MissingRequiredArgumentError("auth_session")
@@ -3593,4 +3813,165 @@ class ServerClient(Generic[TStoreOptions]):
     @property
     def passwordless(self) -> PasswordlessClient:
         """Access the passwordless client for embedded passwordless operations."""
+        if self._enterprise_connect:
+            raise EnterpriseConnectError(
+                EnterpriseConnectErrorCode.NOT_SUPPORTED,
+                "passwordless is not supported in Enterprise Connect mode.",
+            )
         return self._passwordless_client
+
+    # ============================================================================
+    # Enterprise Connect (embedded login)
+    # ============================================================================
+
+    async def _is_federated_domain(
+        self, email_domain: str, store_options: Optional[dict[str, Any]] = None
+    ) -> bool:
+        """
+        Resolve whether an email domain is Auth0-managed for enterprise SSO.
+
+        A routing hint only, backed by WebFinger. Fails closed to False on any
+        error or non-200/non-404 response. It is never an authorization decision
+        - org membership is still enforced after the callback.
+
+        Args:
+            email_domain: The email domain to check (case-insensitive).
+            store_options: Per-request store options threaded to domain resolution.
+
+        Returns:
+            True only when Auth0 reports the domain as a managed OIDC issuer.
+        """
+        if not email_domain or not email_domain.strip():
+            return False
+        email_domain = email_domain.strip().lower()
+        domain = await self._resolve_current_domain(store_options)
+        cache_key = f"{domain}:{email_domain}"
+        now = time.time()
+
+        cached = self._webfinger_cache.get(cache_key)
+        if cached and cached["expires_at"] > now:
+            return cached["value"]
+
+        params = {
+            "resource": f"urn:auth0:discovery:domain:{email_domain}",
+            "rel": WEBFINGER_ISSUER_REL,
+        }
+        try:
+            async with self._get_http_client(timeout=5.0) as client:
+                response = await client.get(
+                    f"https://{domain}/.well-known/webfinger", params=params
+                )
+        except httpx.HTTPError:
+            return False
+
+        if response.status_code == 429:
+            warnings.warn(
+                "WebFinger discovery was rate-limited; treating the domain as "
+                "not federated for this request.",
+                stacklevel=2,
+            )
+
+        if response.status_code == 200:
+            self._cache_webfinger_result(cache_key, True, now + WEBFINGER_CACHE_TTL_FOUND)
+            return True
+        if response.status_code == 404:
+            self._cache_webfinger_result(cache_key, False, now + WEBFINGER_CACHE_TTL_NOT_FOUND)
+            return False
+        return False
+
+    def _cache_webfinger_result(self, key: str, value: bool, expires_at: float) -> None:
+        """Store a discovery result under a bounded FIFO cache."""
+        self._webfinger_cache[key] = {"value": value, "expires_at": expires_at}
+        self._webfinger_cache.move_to_end(key)
+        while len(self._webfinger_cache) > WEBFINGER_CACHE_MAX_ENTRIES:
+            self._webfinger_cache.popitem(last=False)
+
+    async def start_enterprise_login(
+        self,
+        options: StartEnterpriseLoginOptions,
+        store_options: Optional[dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """
+        Begin an Enterprise Connect login from an email address.
+
+        Runs WebFinger discovery on the email domain. When the domain is managed,
+        builds an authorization URL with the email as `login_hint` so Auth0 can
+        resolve the connection and organization. When it is not managed, returns
+        None so the caller can fall back to its own login. A static client-level
+        organization is never forwarded - Auth0 resolves it from the email.
+
+        Args:
+            options: Enterprise login options carrying the user's email.
+            store_options: Per-request store options threaded through the flow.
+
+        Returns:
+            The authorization URL to redirect to, or None when the domain is not
+            managed by Auth0.
+
+        Raises:
+            MissingRequiredArgumentError: If no email is provided.
+            InvalidArgumentError: If the email is not a valid address.
+        """
+        if options is None or not getattr(options, "email", None):
+            raise MissingRequiredArgumentError("email")
+        email = options.email.strip()
+        if "@" not in email or email.startswith("@") or email.endswith("@"):
+            raise InvalidArgumentError("email", "A valid email address is required.")
+        email_domain = email.rsplit("@", 1)[1].lower()
+
+        if not await self._is_federated_domain(email_domain, store_options):
+            return None
+
+        auth_params = dict(options.authorization_params or {})
+        auth_params["login_hint"] = email
+        login_options = StartInteractiveLoginOptions(
+            pushed_authorization_requests=options.pushed_authorization_requests,
+            app_state=options.app_state,
+            authorization_params=auth_params,
+            organization=options.organization,
+            invitation=options.invitation,
+        )
+        return await self.start_interactive_login(login_options, store_options)
+
+
+async def is_federated_domain(domain: str, email_domain: str, timeout: float = 5.0) -> bool:
+    """
+    Check whether an email domain is Auth0-managed for enterprise SSO via WebFinger.
+
+    A stateless routing hint, not an authorization decision. Fails closed to False
+    on any error or non-200/non-404 response. Prefer `ServerClient` in normal
+    use, which caches results and resolves the domain per request. This standalone
+    form is for callers that need a one-off check without a client instance.
+
+    Args:
+        domain: The Auth0 domain to query.
+        email_domain: The email domain to check (case-insensitive).
+        timeout: Per-request timeout in seconds.
+
+    Returns:
+        True only when Auth0 reports the domain as a managed OIDC issuer.
+    """
+    if not domain or not email_domain or not email_domain.strip():
+        return False
+    email_domain = email_domain.strip().lower()
+    params = {
+        "resource": f"urn:auth0:discovery:domain:{email_domain}",
+        "rel": WEBFINGER_ISSUER_REL,
+    }
+    try:
+        async with httpx.AsyncClient(
+            headers=Telemetry.default().headers, timeout=timeout
+        ) as client:
+            response = await client.get(
+                f"https://{domain}/.well-known/webfinger", params=params
+            )
+    except httpx.HTTPError:
+        return False
+
+    if response.status_code == 429:
+        warnings.warn(
+            "WebFinger discovery was rate-limited; treating the domain as not "
+            "federated for this request.",
+            stacklevel=2,
+        )
+    return response.status_code == 200

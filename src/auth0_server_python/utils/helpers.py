@@ -276,7 +276,12 @@ class URL:
         return {k: v[0] if v and len(v) > 0 else '' for k, v in query_params.items()}
 
     @staticmethod
-    def create_logout_url(domain: str, client_id: str, return_to: Optional[str] = None) -> str:
+    def create_logout_url(
+        domain: str,
+        client_id: str,
+        return_to: Optional[str] = None,
+        federated: bool = False,
+    ) -> str:
         """
         Create an Auth0 logout URL.
 
@@ -284,6 +289,8 @@ class URL:
             domain: Auth0 domain.
             client_id: Auth0 client ID.
             return_to: Optional URL to redirect to after logout.
+            federated: When True, add `federated` so Auth0 also ends the upstream
+                IdP session. Its presence is the signal; the value is ignored.
 
         Returns:
             The complete logout URL.
@@ -292,6 +299,8 @@ class URL:
         params = {"client_id": client_id}
         if return_to:
             params["returnTo"] = return_to
+        if federated:
+            params["federated"] = "true"
         return URL.build_url(base_url, params)
 
 
