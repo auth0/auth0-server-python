@@ -8,9 +8,6 @@
 
 **Changed**
 - docs: Extracts organizations example to a dedicated markdown file [\#166](https://github.com/auth0/auth0-server-python/pull/166) ([kailash-b](https://github.com/kailash-b))
-- chore(deps): bump pydantic from 2.13.4 to 2.13.5 [\#165](https://github.com/auth0/auth0-server-python/pull/165) ([dependabot[bot]](https://github.com/apps/dependabot))
-- chore(deps): bump pyjwt from 2.13.0 to 2.14.0 [\#171](https://github.com/auth0/auth0-server-python/pull/171) ([dependabot[bot]](https://github.com/apps/dependabot))
-- chore(deps-dev): bump ruff from 0.15.19 to 0.16.7 [\#172](https://github.com/auth0/auth0-server-python/pull/172) ([dependabot[bot]](https://github.com/apps/dependabot))
 
 ## [1.0.0b16](https://github.com/auth0/auth0-server-python/tree/1.0.0b16) (2026-09-10)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b15...1.0.0b16)
