@@ -1,5 +1,14 @@
 # Change Log
 
+## [1.0.0b17](https://github.com/auth0/auth0-server-python/tree/1.0.0b17) (2026-09-16)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b16...1.0.0b17)
+
+**Added**
+- feat: add support for enterprise connect [\#167](https://github.com/auth0/auth0-server-python/pull/167) ([rmad17](https://github.com/rmad17))
+
+**Changed**
+- docs: Extracts organizations example to a dedicated markdown file [\#166](https://github.com/auth0/auth0-server-python/pull/166) ([kailash-b](https://github.com/kailash-b))
+
 ## [1.0.0b16](https://github.com/auth0/auth0-server-python/tree/1.0.0b16) (2026-09-10)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b15...1.0.0b16)
 
