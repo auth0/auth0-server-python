@@ -52,7 +52,8 @@ it from `README.md`'s section for the feature. Name the file after the flow, mat
 
 | Feature | Guide |
 |---------|-------|
-| Redirect login, callback, organizations | `examples/InteractiveLogin.md` |
+| Redirect login, callback | `examples/InteractiveLogin.md` |
+| Organizations login | `examples/OrganizationLogin.md` |
 | Store implementations, `store_options` | `examples/ConfigureStore.md` |
 | `get_user` / `get_session` / `get_access_token`, session expiry | `examples/RetrievingData.md` |
 | MFA (`ServerClient.mfa`, `MfaClient`) | `examples/MFA.md` |
@@ -64,3 +65,4 @@ it from `README.md`'s section for the feature. Name the file after the flow, mat
 | MCD domain resolver | `examples/MultipleCustomDomains.md` |
 | Account linking / unlinking | `examples/UserLinking.md` |
 | Passwordless email/SMS OTP + magic link | `examples/Passwordless.md` |
+| Enterprise Connect embedded login (`enterprise_connect`, `start_enterprise_login`, `is_federated_domain`) | `examples/EnterpriseConnect.md` |

@@ -84,6 +84,29 @@ The key must be a PKCS8 PEM private key. Register its public key on your Auth0 a
 > [!IMPORTANT]
 > Private keys must not be committed to source control. Load them from a secure secret store or an environment-provided file.
 
+#### Authenticating with Mutual TLS (mTLS)
+
+The SDK supports mTLS client authentication (RFC 8705): the client presents a TLS certificate during the handshake instead of a client secret. Pass `use_mtls=True` and a caller-built `ssl.SSLContext` that already has the certificate loaded:
+
+```python
+import ssl
+
+ssl_context = ssl.create_default_context()
+ssl_context.load_cert_chain("client.crt", "client.key")
+
+auth0 = ServerClient(
+    domain="login.example.com",   # self_managed_certs custom domain
+    client_id="<AUTH0_CLIENT_ID>",
+    use_mtls=True,
+    ssl_context=ssl_context,
+    secret="<AUTH0_SECRET>",
+)
+```
+
+`use_mtls=True` requires an Enterprise tenant with the Highly Regulated Identity add-on, a `self_managed_certs` custom domain, and mTLS endpoint aliases enabled. It cannot be combined with `client_secret`, `client_assertion_signing_key`, or a per-call `dpop_key`. Each raises `ConfigurationError`. See the [Auth0 mTLS configuration docs](https://auth0.com/docs/get-started/applications/configure-mtls) for tenant-side setup steps.
+
+See [examples/MutualTLS.md](examples/MutualTLS.md) for the full setup guide, certificate generation, and token sender-constraining details.
+
 ### 3. Add login to your Application (interactive)
 
 Before using redirect-based login, ensure the `redirect_uri` is configured when initializing the SDK:
@@ -135,7 +158,7 @@ async def callback(request: Request):
 
 #### Organizations
 
-The SDK supports [Auth0 Organizations](https://auth0.com/docs/organizations) with first-class `organization` and `invitation` parameters on `ServerClient` and `StartInteractiveLoginOptions`. Token claim validation is enforced automatically at callback. For setup, invitation flows, error handling, and reading org data from the session, see [examples/InteractiveLogin.md](examples/InteractiveLogin.md#8-organizations).
+The SDK supports [Auth0 Organizations](https://auth0.com/docs/organizations) with first-class `organization` and `invitation` parameters on `ServerClient` and `StartInteractiveLoginOptions`. Token claim validation is enforced automatically at callback. For dedicated-org and multi-org patterns, invitation flows, error handling, and reading org data from the session, see [examples/OrganizationLogin.md](examples/OrganizationLogin.md).
 
 ### 4. Login with Custom Token Exchange
 
@@ -236,6 +259,10 @@ Sign users in with a one-time code sent by email or SMS, or with a magic link se
 ### 11. Anonymous Sessions
 
 Give a visitor an Auth0 `anon@<uuid>` identity before they log in, so cart/preference metadata attached pre-login is available to Post-Login Actions once they do. Requires a separate `anonymous_store` instance — never the same instance as `state_store` — and a tenant-level paid add-on flag. For setup, the token renewal ladder, login injection, and the store-isolation requirement, see [examples/AnonymousSessions.md](examples/AnonymousSessions.md).
+
+### 12. Enterprise Connect (Embedded Login)
+
+Sign users in through their company's identity provider while **your application owns the session**. Opt in with `enterprise_connect=True`; Auth0 acts as a pure SSO relay and issues no refresh token. `start_enterprise_login()` discovers whether an email domain is managed and returns an authorization URL or `None`, and `complete_interactive_login()` returns the verified claims and access token for your app to build its own session from. Early Access. For discovery, the callback contract, multi-tenant `org_id` checks, and federated logout, see [examples/EnterpriseConnect.md](examples/EnterpriseConnect.md).
 
 ## Feedback
 

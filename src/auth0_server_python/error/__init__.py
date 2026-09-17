@@ -364,35 +364,22 @@ class MfaTokenInvalidError(Auth0Error):
 # =============================================================================
 
 
-class PasswordlessError(ApiError):
-    """
-    Base class for passwordless (embedded login) errors.
-
-    Carries the Auth0 ``error`` / ``error_description`` from the API response
-    body so integrators can branch on a typed exception rather than parsing
-    strings.
-    """
-
-    def __init__(self, code: str, message: str, cause=None, retry_after: Optional[int] = None):
-        super().__init__(code, message, cause)
-        self.name = "PasswordlessError"
-        self.retry_after = retry_after
-
-
-class PasswordlessStartError(PasswordlessError):
+class PasswordlessStartError(ApiError):
     """Error raised when POST /passwordless/start fails."""
 
     def __init__(self, code: str, message: str, cause=None, retry_after: Optional[int] = None):
-        super().__init__(code, message, cause, retry_after)
+        super().__init__(code, message, cause)
         self.name = "PasswordlessStartError"
+        self.retry_after = retry_after  # seconds
 
 
-class PasswordlessVerifyError(PasswordlessError):
+class PasswordlessVerifyError(ApiError):
     """Error raised when the passwordless OTP token exchange fails."""
 
     def __init__(self, code: str, message: str, cause=None, retry_after: Optional[int] = None):
-        super().__init__(code, message, cause, retry_after)
+        super().__init__(code, message, cause)
         self.name = "PasswordlessVerifyError"
+        self.retry_after = retry_after  # seconds
 
 
 class PasswordlessErrorCode:
@@ -529,3 +516,28 @@ class _AnonymousSessionExpired(Auth0Error):
     def __init__(self, message: str = "The anonymous session token is expired or invalid."):
         super().__init__(message)
         self.name = "_AnonymousSessionExpired"
+
+# Enterprise Connect Error Classes
+# =============================================================================
+
+
+class EnterpriseConnectError(Auth0Error):
+    """
+    Error raised when a session or token method is called on a client
+    configured for Enterprise Connect, where the SDK owns no session.
+
+    Parents Auth0Error rather than ApiError because the refusal makes no
+    request to Auth0, so there is no upstream error body to carry.
+    """
+
+    def __init__(self, code: str, message: str, cause=None):
+        super().__init__(message)
+        self.code = code
+        self.name = "EnterpriseConnectError"
+        self.cause = cause
+
+
+class EnterpriseConnectErrorCode:
+    """Error code for the Enterprise Connect misuse guard."""
+
+    NOT_SUPPORTED = "enterprise_connect_not_supported"
