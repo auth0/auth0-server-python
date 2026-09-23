@@ -151,7 +151,6 @@ class TransactionData(BaseModel):
     redirect_uri: Optional[str] = None
     domain: Optional[str] = None
     organization: Optional[str] = None
-    session_token: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional fields not defined in the model
@@ -923,6 +922,19 @@ class AnonymousCreateTokenResponse(AnonymousTokenResponse):
     """
 
     session_token: str
+
+
+class AnonymousTransferTokenResponse(BaseModel):
+    """Raw response from POST /anonymous/token on the transfer-ticket path.
+
+    The exchange returns a short-lived ticket (token_type "N_A") carried on
+    the /authorize URL, not a bearer token. Lenient to unrecognized fields.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    anon_transfer_token: str
+    token_type: Optional[str] = None
+    expires_in: Optional[int] = None
 
 
 class AnonymousSessionContext(BaseModel):

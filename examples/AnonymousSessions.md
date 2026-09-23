@@ -1,6 +1,6 @@
 # Anonymous Sessions
 
-Anonymous Sessions give a visitor an Auth0 identity **before they log in**. Each visitor gets a persistent `anon@<uuid>` subject plus an access token, with up to 1 KB of key/value metadata (cart, preferences) attached at creation. At login, the session token rides into `/authorize` so Post-Login / Pre-User-Registration Actions can read the anonymous data via `event.anonymous_session` — nothing migrates onto the real user profile automatically; the Action author decides what to persist.
+Anonymous Sessions give a visitor an Auth0 identity **before they log in**. Each visitor gets a persistent `anon@<uuid>` subject plus an access token, with up to 1 KB of key/value metadata (cart, preferences) attached at creation. At login, the SDK carries the session to Auth0 as a short-lived transfer ticket so Post-Login / Pre-User-Registration Actions can read the anonymous data via `event.anonymous_session` — nothing migrates onto the real user profile automatically; the Action author decides what to persist.
 
 > [!NOTE]
 > Anonymous Sessions support for server SDKs is in Early Access, gated by a tenant-level, paid add-on feature flag (`anonymous_sessions_enabled`). `auth0-server-python` mounts no routes and sets no cookies — this guide covers the framework-agnostic core only.
@@ -87,13 +87,17 @@ await server_client.anonymous.logout(store_options=store_options)
 
 Local state is always cleared, even if the remote call fails. If the remote `/anonymous/logout` call itself fails, `logout()` raises `AnonymousSessionLogoutError` after clearing local state, so the failure isn't swallowed.
 
+Authenticated (OIDC) logout also ends an active anonymous session. When you call `ServerClient.logout()` and an anonymous store is configured, the SDK clears the locally-held anonymous session before returning the logout URL. This is a local clear only, with no remote call (consistent with `anonymous.logout()`, which also does not revoke server-side). It prevents the next visitor on a shared device from having the previous visitor's anonymous identity re-linked at their login. If no anonymous session is active, nothing is cleared, and any failure ending the anonymous session is best-effort and never breaks the authenticated logout.
+
 ## Login Injection
 
-When an anonymous session is active, `start_interactive_login()` automatically includes the session token in the `/authorize` request, no code change needed at your call site. If no anonymous session exists, behavior is same as today.
+When an anonymous session is active, `start_interactive_login()` automatically links it to the login, no code change needed at your call site. If no anonymous session exists, behavior is the same as today.
 
-The token travels as a query parameter to `/authorize`, which means it lands in browser history, `Referer` headers, and access logs. This is because the token grants no authorization on its own and the request is a browser-to-Auth0 HTTPS redirect, but you should still set `Referrer-Policy: no-referrer` on your login pages, and never log the authorize URL.
+The raw session token never goes on the URL. At the moment the `/authorize` URL is built, the SDK exchanges the stored session token for a short-lived (30s) transfer ticket (`anon_transfer_token`) via `POST /anonymous/token`, and forwards only that ticket as the `anon_transfer_token` query parameter. The raw session token stays inside the SDK's encrypted store and the ticket is never persisted. The ticket is short-lived and grants no authorization on its own, but you should still set `Referrer-Policy: no-referrer` on your login pages and never log the authorize URL.
 
-Pushed Authorization Requests (PAR) are not supported for anonymous sessions — injection is suppressed entirely on that code path.
+The exchange fails open: if it errors (network failure, a non-200, or an unparseable response), login proceeds with no ticket and no linking, and never aborts the login. Under Multiple Custom Domains it fails closed: a ticket is only minted for the domain the session was created against, so a domain mismatch mints nothing (see [MultipleCustomDomains.md](MultipleCustomDomains.md)).
+
+Pushed Authorization Requests (PAR) and Enterprise Connect are not supported for anonymous-session linking, so injection is suppressed entirely on those code paths.
 
 ## Rate-Limiting `get_token()`
 

@@ -173,11 +173,6 @@ class TestStoreIsolation:
                 await client.create_session(audience="aud", scope="s")
             mock_http.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_get_session_token_for_injection_returns_none_without_store(self):
-        client = _make_client(anonymous_store=None)
-        assert await client.get_session_token_for_injection() is None
-
 
 # ── create_session ────────────────────────────────────────────────────────────
 
@@ -560,8 +555,9 @@ class TestGetToken:
         ])
         with patch("httpx.AsyncClient", fake_http):
             await client.get_token()
-        token = await client.get_session_token_for_injection()
-        assert token == ""
+        stored = await store.get(ANON_IDENTIFIER)
+        context = client._decrypt_context(stored)
+        assert context.session_token == ""
 
     @pytest.mark.asyncio
     async def test_expired_session_token_triggers_silent_new_session(self):
@@ -695,6 +691,27 @@ class TestMcdIsolation:
             await client.get_token()
         _, url, _ = fake_http.calls[0]
         assert "tenant-a.auth0.local" not in url
+
+    @pytest.mark.asyncio
+    async def test_domain_mismatch_remint_preserves_metadata(self):
+        """A domain-mismatch re-mint must carry the stored metadata, not drop the cart."""
+        store = OneSlotStore()
+        _stored_context(
+            store,
+            expires_at=int(time.time()) + 3600,
+            domain="tenant-a.auth0.local",
+            metadata={"cart": ["sku-1"]},
+        )
+        resolver = AsyncMock(return_value="tenant-b.auth0.local")
+        client = _make_client(anonymous_store=store)
+        client._domain_resolver = resolver
+        client._domain = None
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
+        with patch("httpx.AsyncClient", fake_http):
+            await client.get_token()
+        _, url, kwargs = fake_http.calls[0]
+        assert url.startswith("https://tenant-b.auth0.local")
+        assert kwargs["json"]["metadata"] == {"cart": ["sku-1"]}
 
     @pytest.mark.asyncio
     async def test_domain_resolver_failure_propagates(self):
@@ -920,34 +937,190 @@ class TestLogout:
         assert store.slot is None
 
 
-# ── get_session_token_for_injection (login-injection support) ───────────────
+# ── exchange_transfer_token_for_injection (transfer ticket) ─────────────────────
 
-class TestGetSessionTokenForInjection:
+_TRANSFER_OK = {"token_type": "N_A", "anon_transfer_token": "TICKET", "expires_in": 30}
+
+
+class TestExchangeTransferTokenForInjection:
     @pytest.mark.asyncio
-    async def test_returns_token_when_active_session_exists(self):
+    async def test_success_returns_ticket_with_correct_request_body(self):
         store = OneSlotStore()
-        _stored_context(store, session_token="REAL_TOKEN")
+        _stored_context(store, session_token="REAL_TOKEN", domain="auth0.local")
         client = _make_client(anonymous_store=store)
-        token = await client.get_session_token_for_injection()
-        assert token == "REAL_TOKEN"
+        fake_http = _FakeAsyncClient([_fake_response(200, _TRANSFER_OK)])
+        with patch("httpx.AsyncClient", fake_http):
+            ticket = await client.exchange_transfer_token_for_injection("auth0.local")
+        assert ticket == "TICKET"
+        method, url, kwargs = fake_http.calls[0]
+        assert method == "POST"
+        assert url == "https://auth0.local/anonymous/token"
+        body = kwargs["json"]
+        assert body["audience"] == "urn:auth0:anon_transfer"
+        assert body["session_token"] == "REAL_TOKEN"
+        assert body["client_id"] == CLIENT_ID
+        assert body["client_secret"] == CLIENT_SECRET
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_no_session(self):
+    async def test_missing_context_domain_mints_against_origin(self):
+        """A stored context with no domain is not an MCD mismatch; mint against origin."""
+        store = OneSlotStore()
+        _stored_context(store, session_token="REAL_TOKEN")  # domain defaults to None
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient([_fake_response(200, _TRANSFER_OK)])
+        with patch("httpx.AsyncClient", fake_http):
+            ticket = await client.exchange_transfer_token_for_injection("auth0.local")
+        assert ticket == "TICKET"
+        _, url, _ = fake_http.calls[0]
+        assert url.startswith("https://auth0.local")
+
+    @pytest.mark.asyncio
+    async def test_returns_none_without_store(self):
+        client = _make_client(anonymous_store=None)
+        assert await client.exchange_transfer_token_for_injection("auth0.local") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_session_no_http(self):
         store = OneSlotStore()
         client = _make_client(anonymous_store=store)
-        assert await client.get_session_token_for_injection() is None
+        with patch("httpx.AsyncClient") as mock_http:
+            assert await client.exchange_transfer_token_for_injection("auth0.local") is None
+            mock_http.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_returns_none_never_raises_on_corrupted_token(self):
-        """Malformed stored token must deny the link, never abort the caller."""
+    async def test_returns_none_on_corrupted_context(self):
         store = OneSlotStore()
         store.slot = (ANON_IDENTIFIER, {"context": "garbage"})
         client = _make_client(anonymous_store=store)
-        assert await client.get_session_token_for_injection() is None
+        assert await client.exchange_transfer_token_for_injection("auth0.local") is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_store_exception_never_raises(self):
+    async def test_domain_mismatch_fails_closed_no_mint(self):
+        """MCD fail-closed: never mint a ticket for a host the session was not created against."""
+        store = OneSlotStore()
+        _stored_context(store, domain="tenant-a.auth0.local")
+        client = _make_client(anonymous_store=store)
+        with patch("httpx.AsyncClient") as mock_http:
+            result = await client.exchange_transfer_token_for_injection("tenant-b.auth0.local")
+            assert result is None
+            mock_http.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_non_200(self):
+        store = OneSlotStore()
+        _stored_context(store, domain="auth0.local")
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient([_fake_response(400, {"error": "invalid_request"})])
+        with patch("httpx.AsyncClient", fake_http):
+            assert await client.exchange_transfer_token_for_injection("auth0.local") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_network_error(self):
+        store = OneSlotStore()
+        _stored_context(store, domain="auth0.local")
+        client = _make_client(anonymous_store=store)
+
+        class _Boom:
+            def __call__(self, *a, **k):
+                return self
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def post(self, *a, **k):
+                raise httpx.ConnectError("boom")
+
+        with patch("httpx.AsyncClient", _Boom()):
+            assert await client.exchange_transfer_token_for_injection("auth0.local") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_invalid_response_shape(self):
+        store = OneSlotStore()
+        _stored_context(store, domain="auth0.local")
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient([_fake_response(200, {"token_type": "N_A", "expires_in": 30})])
+        with patch("httpx.AsyncClient", fake_http):
+            assert await client.exchange_transfer_token_for_injection("auth0.local") is None
+
+    @pytest.mark.asyncio
+    async def test_never_persists_ticket(self):
+        store = OneSlotStore()
+        _stored_context(store, session_token="REAL_TOKEN", domain="auth0.local")
+        client = _make_client(anonymous_store=store)
+        before = store.slot
+        fake_http = _FakeAsyncClient([_fake_response(200, _TRANSFER_OK)])
+        with patch("httpx.AsyncClient", fake_http):
+            await client.exchange_transfer_token_for_injection("auth0.local")
+        assert store.slot is before  # the ticket was never written to the store
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_store_exception(self):
         store = AsyncMock()
         store.get = AsyncMock(side_effect=RuntimeError("store unavailable"))
         client = _make_client(anonymous_store=store)
-        assert await client.get_session_token_for_injection() is None
+        assert await client.exchange_transfer_token_for_injection("auth0.local") is None
+
+    @pytest.mark.asyncio
+    async def test_forwards_configured_headers(self):
+        """The exchange goes through _get_http_client, so telemetry/config headers are attached."""
+        store = OneSlotStore()
+        _stored_context(store, domain="auth0.local")
+        captured = {}
+
+        class _Cap:
+            def __call__(self, *a, **k):
+                captured.update(k.get("headers", {}))
+                return self
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def post(self, *a, **k):
+                return _fake_response(200, _TRANSFER_OK)
+
+        client = _make_client(anonymous_store=store, headers={"Auth0-Client": "abc"})
+        with patch("httpx.AsyncClient", _Cap()):
+            await client.exchange_transfer_token_for_injection("auth0.local")
+        assert captured.get("Auth0-Client") == "abc"
+
+
+# ── end_session_if_active (end anon session on authenticated logout) ────────────
+
+class TestEndSessionIfActive:
+    @pytest.mark.asyncio
+    async def test_no_store_is_noop(self):
+        client = _make_client(anonymous_store=None)
+        with patch("httpx.AsyncClient") as mock_http:
+            await client.end_session_if_active()
+            mock_http.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_session_makes_no_remote_call(self):
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        with patch("httpx.AsyncClient") as mock_http:
+            await client.end_session_if_active()
+            mock_http.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_active_session_clears_local_without_remote_call(self):
+        store = OneSlotStore()
+        _stored_context(store, domain="auth0.local")
+        client = _make_client(anonymous_store=store)
+        with patch("httpx.AsyncClient") as mock_http:
+            await client.end_session_if_active()
+            mock_http.assert_not_called()
+        assert store.slot is None
+
+    @pytest.mark.asyncio
+    async def test_store_exception_is_swallowed(self):
+        store = AsyncMock()
+        store.get = AsyncMock(side_effect=RuntimeError("store unavailable"))
+        client = _make_client(anonymous_store=store)
+        await client.end_session_if_active()  # must not raise

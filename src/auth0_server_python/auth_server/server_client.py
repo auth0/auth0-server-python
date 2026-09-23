@@ -101,7 +101,7 @@ TStoreOptions = TypeVar('TStoreOptions')
 # dynamically from the resolved domain at login time.
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
                              "code_challenge", "code_challenge_method", "state", "nonce", "scope",
-                             "session_token"]
+                             "session_token", "anon_transfer_token"]
 
 # issued_token_type URN for a Session Transfer Token (STT).
 SESSION_TRANSFER_TOKEN_TYPE = "urn:auth0:params:oauth:token-type:session_transfer_token"
@@ -837,17 +837,20 @@ class ServerClient(Generic[TStoreOptions]):
         if options.invitation:
             auth_params["invitation"] = options.invitation
 
-        # session_token comes only from the SDK's own encrypted anonymous
-        # store, never a caller. The pop strips any value seeded from the
-        # constructor defaults, closing a session-fixation vector.
+        # The anonymous transfer ticket is minted late from the SDK's own
+        # encrypted anonymous store, never a caller. The pops strip any value
+        # seeded from the constructor defaults, closing a session-fixation
+        # vector. PAR and Enterprise Connect suppress injection entirely. The
+        # ticket rides the query string but is short-lived (30s) and single-use
+        # in effect; the raw session_token is never placed on the URL.
         auth_params.pop("session_token", None)
-        anonymous_session_token = None
-        if not self._pushed_authorization_requests:
-            anonymous_session_token = await self._anonymous_client.get_session_token_for_injection(
-                store_options
+        auth_params.pop("anon_transfer_token", None)
+        if not self._pushed_authorization_requests and not self._enterprise_connect:
+            anon_transfer_token = await self._anonymous_client.exchange_transfer_token_for_injection(
+                origin_domain, store_options
             )
-            if anonymous_session_token:
-                auth_params["session_token"] = anonymous_session_token
+            if anon_transfer_token:
+                auth_params["anon_transfer_token"] = anon_transfer_token
 
         # Build the transaction data to store with domain
         transaction_data = TransactionData(
@@ -857,7 +860,6 @@ class ServerClient(Generic[TStoreOptions]):
             domain=origin_domain,
             redirect_uri=auth_params.get("redirect_uri"),
             organization=resolved_org,
-            session_token=anonymous_session_token,
         )
 
         # Store the transaction data
@@ -1448,6 +1450,17 @@ class ServerClient(Generic[TStoreOptions]):
                     session_domain = self._get_session_domain(state_data)
                     if session_domain and self._normalize_url(session_domain) == self._normalize_url(domain):
                         await self._state_store.delete(self._state_identifier, store_options)
+
+        # End any active anonymous session on authenticated logout, closing the
+        # shared-device re-injection path. Best-effort: anonymous cleanup must
+        # never break the authenticated logout, so any failure is swallowed.
+        if self._anonymous_store is not None:
+            try:
+                await self._anonymous_client.end_session_if_active(store_options)
+            except Exception as e:
+                # Best-effort: anonymous cleanup must never break the
+                # authenticated logout. The anon errors carry no token.
+                logger.debug("Anonymous session cleanup on logout failed: %s", e)
 
         # Return logout URL for the current resolved domain
         logout_url = URL.create_logout_url(
