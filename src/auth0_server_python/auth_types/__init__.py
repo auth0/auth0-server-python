@@ -893,6 +893,21 @@ class AnonymousSession(BaseModel):
     expires_at: int
     session_expires_at: Optional[int] = None
     metadata: Optional[dict[str, Any]] = None
+    sub: Optional[str] = None
+
+
+class AnonymousSessionData(BaseModel):
+    """Local session state returned by AnonymousClient.get_session().
+
+    Contains identity and metadata fields only. session_token is never
+    included; use get_token() when a bearer token is needed.
+    """
+
+    sub: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+    created_at: int
+    session_expires_at: Optional[int] = None
+    domain: Optional[str] = None
 
 
 class AnonymousSessionIntrospection(BaseModel):
@@ -916,25 +931,29 @@ class AnonymousTokenResponse(BaseModel):
 
 
 class AnonymousCreateTokenResponse(AnonymousTokenResponse):
-    """Raw response from POST /anonymous/token on the create path.
-
-    session_token is always present on creation, unlike on re-mint.
-    """
+    """Raw response from POST /anonymous/token on the create path."""
 
     session_token: str
 
 
 class AnonymousTransferTokenResponse(BaseModel):
-    """Raw response from POST /anonymous/token on the transfer-ticket path.
-
-    The exchange returns a short-lived ticket (token_type "N_A") carried on
-    the /authorize URL, not a bearer token. Lenient to unrecognized fields.
-    """
+    """Raw response from POST /anonymous/token on the transfer-ticket path."""
 
     model_config = ConfigDict(extra="ignore")
     anon_transfer_token: str
     token_type: Optional[str] = None
     expires_in: Optional[int] = None
+
+
+class AnonymousTokenSetEntry(BaseModel):
+    """One cached access token for a specific audience/scope pair."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    access_token: str
+    expires_at: int
+    audience: Optional[str] = None
+    scope: Optional[str] = None
 
 
 class AnonymousSessionContext(BaseModel):
@@ -943,15 +962,15 @@ class AnonymousSessionContext(BaseModel):
     Rejects extra fields so a tampered payload fails closed on decrypt.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     session_token: str
-    access_token: str
-    expires_at: int
+    token_sets: list[AnonymousTokenSetEntry] = Field(default_factory=list)
     session_expires_at: Optional[int] = None
     metadata: Optional[dict[str, Any]] = None
     created_at: int
     domain: Optional[str] = None
-    audience: Optional[str] = None
-    scope: Optional[str] = None
+    sub: Optional[str] = None
 
 
 # =============================================================================

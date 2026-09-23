@@ -3,6 +3,7 @@ Anonymous Sessions client for auth0-server-python SDK.
 Handles pre-login anon@ identity operations against the Auth0 anonymous session API.
 """
 
+import base64
 import json
 import time
 from typing import Any, Callable, Optional, Union
@@ -15,8 +16,10 @@ from auth0_server_python.auth_types import (
     AnonymousCreateTokenResponse,
     AnonymousSession,
     AnonymousSessionContext,
+    AnonymousSessionData,
     AnonymousSessionIntrospection,
     AnonymousTokenResponse,
+    AnonymousTokenSetEntry,
     AnonymousTransferTokenResponse,
     CreateAnonymousSessionOptions,
 )
@@ -28,7 +31,6 @@ from auth0_server_python.error import (
     AnonymousSessionCreateError,
     AnonymousSessionFeatureNotEnabledError,
     AnonymousSessionIntrospectError,
-    AnonymousSessionLogoutError,
     AnonymousSessionResourceServerError,
     AnonymousSessionScopeError,
     AnonymousSessionTokenError,
@@ -53,12 +55,7 @@ _DANGEROUS_METADATA_KEYS = frozenset({"__proto__", "constructor", "prototype"})
 
 
 class AnonymousClient:
-    """
-    Client for Auth0 anonymous session operations.
-
-    Requires its own store instance, distinct from ServerClient's state_store.
-    DPoP is not supported with Anonymous Sessions.
-    """
+    """Client for Auth0 anonymous session operations."""
 
     def __init__(
         self,
@@ -160,6 +157,51 @@ class AnonymousClient:
         return value.rstrip("/")
 
     # ============================================================================
+    # TOKEN SET CACHE HELPERS
+    # ============================================================================
+
+    @staticmethod
+    def _decode_sub(access_token: str) -> Optional[str]:
+        """Extract the sub claim from a JWT access token without verifying the signature.
+
+        Returns None for opaque tokens (JWE has 5 dot-separated parts), non-JWT
+        strings, or tokens that carry no sub claim.
+        """
+        try:
+            parts = access_token.split(".")
+            if len(parts) != 3:
+                return None
+            padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded))
+            sub = payload.get("sub")
+            return str(sub) if sub else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _find_token_set(
+        token_sets: list,
+        audience: Optional[str],
+        scope: Optional[str],
+    ) -> Optional[AnonymousTokenSetEntry]:
+        for ts in token_sets:
+            if ts.audience == audience and ts.scope == scope:
+                return ts
+        return None
+
+    @staticmethod
+    def _upsert_token_set(
+        context: AnonymousSessionContext,
+        entry: AnonymousTokenSetEntry,
+    ) -> AnonymousSessionContext:
+        new_sets = [
+            ts for ts in context.token_sets
+            if not (ts.audience == entry.audience and ts.scope == entry.scope)
+        ]
+        new_sets.append(entry)
+        return context.model_copy(update={"token_sets": new_sets})
+
+    # ============================================================================
     # ERROR HANDLING
     # ============================================================================
 
@@ -195,7 +237,7 @@ class AnonymousClient:
         Args:
             status_code: The HTTP status code of the response.
             error_data: The parsed error response body.
-            operation: One of 'create', 'token', 'logout', 'introspect'.
+            operation: One of 'create', 'token', 'introspect'.
 
         Returns:
             The exception instance. Does not raise it.
@@ -220,8 +262,6 @@ class AnonymousClient:
             return AnonymousSessionCreateError(description, cause=error_data)
         if operation == "token":
             return AnonymousSessionTokenError(description, error_data)
-        if operation == "logout":
-            return AnonymousSessionLogoutError(description, error_data)
         if operation == "introspect":
             return AnonymousSessionIntrospectError(description, error_data)
         return AnonymousSessionApiError(code or "anonymous_error", description, error_data)
@@ -294,7 +334,7 @@ class AnonymousClient:
             if not encrypted:
                 raise ValueError("Malformed anonymous session record")
             payload = decrypt(encrypted, self._secret, ANON_TOKEN_SALT)
-            return AnonymousSessionContext(**payload)
+            return AnonymousSessionContext.model_validate(payload)
         except Exception as e:
             raise _AnonymousSessionExpired(
                 "Stored anonymous session token is invalid or corrupted."
@@ -330,19 +370,19 @@ class AnonymousClient:
                 was invalid or missing required fields.
         """
         base_url = f"https://{domain}"
-        body: dict[str, Any] = {"client_id": self._client_id}
+        payload: dict[str, Any] = {"client_id": self._client_id}
         if self._client_secret:
-            body["client_secret"] = self._client_secret
+            payload["client_secret"] = self._client_secret
         if audience:
-            body["audience"] = audience
+            payload["audience"] = audience
         if scope:
-            body["scope"] = scope
+            payload["scope"] = scope
         if metadata:
-            body["metadata"] = metadata
+            payload["metadata"] = metadata
 
         async with self._get_http_client() as client:
             try:
-                response = await client.post(f"{base_url}/anonymous/token", json=body)
+                response = await client.post(f"{base_url}/anonymous/token", json=payload)
             except httpx.HTTPError as e:
                 raise AnonymousSessionCreateError("Failed to reach the anonymous token endpoint") from e
 
@@ -355,32 +395,37 @@ class AnonymousClient:
                 raise mapped
 
             try:
-                body = response.json()
+                data = response.json()
             except (json.JSONDecodeError, ValueError) as e:
                 raise AnonymousSessionCreateError("Failed to parse anonymous token response") from e
 
-            if isinstance(body, dict) and not body.get("session_token"):
+            if not isinstance(data, dict) or not data.get("session_token"):
                 raise AnonymousSessionCreateError(
                     "Anonymous token response contained no session_token. Enable session_token in the response for this tenant.",
                     code="missing_session_token",
                 )
 
             try:
-                token_response = AnonymousCreateTokenResponse.model_validate(body)
+                token_response = AnonymousCreateTokenResponse.model_validate(data)
             except (ValueError, ValidationError) as e:
                 raise AnonymousSessionCreateError("Failed to parse anonymous token response") from e
 
         now = int(time.time())
-        context = AnonymousSessionContext(
-            session_token=token_response.session_token,
+        sub = self._decode_sub(token_response.access_token)
+        token_set = AnonymousTokenSetEntry(
             access_token=token_response.access_token,
             expires_at=now + token_response.expires_in,
+            audience=audience,
+            scope=scope,
+        )
+        context = AnonymousSessionContext(
+            session_token=token_response.session_token,
+            token_sets=[token_set],
             session_expires_at=now + token_response.session_expires_in,
             metadata=metadata,
             created_at=now,
             domain=domain,
-            audience=audience,
-            scope=scope,
+            sub=sub,
         )
         await self._anonymous_store.set(
             ANON_IDENTIFIER,
@@ -388,11 +433,12 @@ class AnonymousClient:
             options=store_options,
         )
         return AnonymousSession(
-            access_token=context.access_token,
+            access_token=token_set.access_token,
             session_token=context.session_token,
-            expires_at=context.expires_at,
+            expires_at=token_set.expires_at,
             session_expires_at=context.session_expires_at,
             metadata=context.metadata,
+            sub=context.sub,
         )
 
     # ============================================================================
@@ -400,12 +446,18 @@ class AnonymousClient:
     # ============================================================================
 
     async def _remint(
-        self, context: AnonymousSessionContext, store_options: Optional[dict[str, Any]]
+        self,
+        context: AnonymousSessionContext,
+        audience: Optional[str],
+        scope: Optional[str],
+        store_options: Optional[dict[str, Any]],
     ) -> AnonymousSession:
         """Re-mint an access token using the stored session token.
 
         Args:
             context: The current decrypted session context.
+            audience: Audience to request for the new token.
+            scope: Scope to request for the new token.
             store_options: Options passed to the anonymous store.
 
         Returns:
@@ -416,22 +468,20 @@ class AnonymousClient:
                 invalid.
         """
         domain = context.domain or await self._resolve_domain(store_options)
-        base_url = f"https://{domain}"
         body: dict[str, Any] = {
             "client_id": self._client_id,
             "session_token": context.session_token,
         }
         if self._client_secret:
             body["client_secret"] = self._client_secret
-        # Re-mint must replay audience/scope. The endpoint doesn't remember them.
-        if context.audience:
-            body["audience"] = context.audience
-        if context.scope:
-            body["scope"] = context.scope
+        if audience:
+            body["audience"] = audience
+        if scope:
+            body["scope"] = scope
 
         async with self._get_http_client() as client:
             try:
-                response = await client.post(f"{base_url}/anonymous/token", json=body)
+                response = await client.post(f"https://{domain}/anonymous/token", json=body)
             except httpx.HTTPError as e:
                 raise AnonymousSessionTokenError("Failed to reach the anonymous token endpoint") from e
 
@@ -439,11 +489,11 @@ class AnonymousClient:
                 error_data = self._parse_anonymous_error_body(response)
                 mapped = self._map_anonymous_error(response.status_code, error_data, "token")
                 if isinstance(mapped, _AnonymousSessionExpired):
-                    # Retry-once: exactly one follow-up create call, never a loop.
+                    # One follow-up create call on expiry, never a loop.
                     return await self._create_session_at(
                         domain,
-                        audience=context.audience,
-                        scope=context.scope,
+                        audience=audience,
+                        scope=scope,
                         metadata=None,
                         store_options=store_options,
                     )
@@ -455,33 +505,55 @@ class AnonymousClient:
                 raise AnonymousSessionTokenError("Failed to parse anonymous token response") from e
 
         now = int(time.time())
-        new_context = AnonymousSessionContext(
-            session_token=(
-                token_response.session_token
-                if token_response.session_token is not None
-                else context.session_token
-            ),
+        new_session_token = (
+            token_response.session_token
+            if token_response.session_token is not None
+            else context.session_token
+        )
+        new_sub = self._decode_sub(token_response.access_token)
+        token_set = AnonymousTokenSetEntry(
             access_token=token_response.access_token,
             expires_at=now + token_response.expires_in,
+            audience=audience,
+            scope=scope,
+        )
+        result = AnonymousSession(
+            access_token=token_set.access_token,
+            session_token=new_session_token,
+            expires_at=token_set.expires_at,
             session_expires_at=now + token_response.session_expires_in,
             metadata=context.metadata,
-            created_at=context.created_at,
-            domain=domain,
-            audience=context.audience,
-            scope=context.scope,
+            sub=new_sub if new_sub is not None else context.sub,
+        )
+
+        # Re-read before writing back so concurrent remints for other audiences
+        # are preserved, and writes to a deleted or replaced session are skipped.
+        current_stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
+        if not current_stored:
+            return result
+        try:
+            current_context = self._decrypt_context(current_stored)
+        except _AnonymousSessionExpired:
+            current_context = context
+        if current_context.session_token != context.session_token:
+            return result
+
+        # Only update sub when it was not previously stored (token was initially JWE).
+        sub_update = {"sub": new_sub} if new_sub is not None and current_context.sub is None else {}
+        updated_context = self._upsert_token_set(
+            current_context.model_copy(update={
+                "session_token": new_session_token,
+                "session_expires_at": now + token_response.session_expires_in,
+                **sub_update,
+            }),
+            token_set,
         )
         await self._anonymous_store.set(
             ANON_IDENTIFIER,
-            {"context": self._encrypt_context(new_context)},
+            {"context": self._encrypt_context(updated_context)},
             options=store_options,
         )
-        return AnonymousSession(
-            access_token=new_context.access_token,
-            session_token=new_context.session_token,
-            expires_at=new_context.expires_at,
-            session_expires_at=new_context.session_expires_at,
-            metadata=new_context.metadata,
-        )
+        return result
 
     # ============================================================================
     # LOGIN INJECTION SUPPORT
@@ -491,13 +563,6 @@ class AnonymousClient:
         self, origin_domain: str, store_options: Optional[dict[str, Any]] = None
     ) -> Optional[str]:
         """Mint a short-lived transfer ticket from the active session for login injection.
-
-        Reads the stored session without renewing it, then exchanges it for a
-        30s ``anon_transfer_token``. Fails open (returns None) when there is no
-        store, no active session, the record cannot be decrypted, or the
-        exchange fails. Fails closed (returns None) on an MCD domain mismatch,
-        so a ticket is never minted for a host the session was not created
-        against. The ticket is never persisted.
 
         Args:
             origin_domain: The domain the /authorize URL is being built for.
@@ -518,8 +583,7 @@ class AnonymousClient:
             context = self._decrypt_context(stored)
         except _AnonymousSessionExpired:
             return None
-        # MCD fail-closed: never mint a ticket for a host the session was not
-        # created against.
+        # Domain mismatch rejects a session belonging to a different tenant.
         if context.domain and self._normalize_url(context.domain) != self._normalize_url(
             origin_domain
         ):
@@ -530,10 +594,6 @@ class AnonymousClient:
         self, session_token: str, origin_domain: str
     ) -> Optional[str]:
         """Exchange a session token for a transfer ticket. Fails open.
-
-        Posts to /anonymous/token with the transfer audience and returns the
-        ``anon_transfer_token``, or None on any HTTP, non-200, or parse error,
-        matching the platform's fail-open redemption. Never persists the ticket.
 
         Args:
             session_token: The stored anonymous session token.
@@ -603,7 +663,7 @@ class AnonymousClient:
         if options is not None:
             if isinstance(options, dict):
                 try:
-                    options = CreateAnonymousSessionOptions(**options)
+                    options = CreateAnonymousSessionOptions.model_validate(options)
                 except ValidationError as e:
                     raise AnonymousSessionCreateError(
                         "Invalid create_session options", code="invalid_options"
@@ -619,11 +679,21 @@ class AnonymousClient:
             domain, audience=audience, scope=scope, metadata=metadata, store_options=store_options
         )
 
-    async def get_token(self, store_options: Optional[dict[str, Any]] = None) -> AnonymousSession:
+    async def get_token(
+        self,
+        store_options: Optional[dict[str, Any]] = None,
+        *,
+        audience: Optional[str] = None,
+        scope: Optional[str] = None,
+    ) -> AnonymousSession:
         """Return a valid anonymous access token, renewing or re-minting as needed.
 
         Args:
             store_options: Options passed to the anonymous store.
+            audience: Audience to retrieve a token for. Falls back to the
+                client's configured default when omitted.
+            scope: Scope to retrieve a token for. Falls back to the client's
+                configured default when omitted.
 
         Returns:
             The current or refreshed AnonymousSession.
@@ -638,14 +708,17 @@ class AnonymousClient:
         if not stored:
             raise AnonymousSessionTokenError("No active anonymous session. Call create_session() first.")
 
+        eff_audience = audience or self._default_audience
+        eff_scope = scope or self._default_scope
+
         try:
             context = self._decrypt_context(stored)
         except _AnonymousSessionExpired:
             domain = await self._resolve_domain(store_options)
             return await self._create_session_at(
                 domain,
-                audience=self._default_audience,
-                scope=self._default_scope,
+                audience=eff_audience,
+                scope=eff_scope,
                 metadata=None,
                 store_options=store_options,
             )
@@ -656,23 +729,25 @@ class AnonymousClient:
         ):
             return await self._create_session_at(
                 current_domain,
-                audience=context.audience,
-                scope=context.scope,
+                audience=eff_audience,
+                scope=eff_scope,
                 metadata=context.metadata,
                 store_options=store_options,
             )
 
         now = int(time.time())
-        if context.expires_at > now:
+        token_set = self._find_token_set(context.token_sets, eff_audience, eff_scope)
+        if token_set and token_set.expires_at > now:
             return AnonymousSession(
-                access_token=context.access_token,
+                access_token=token_set.access_token,
                 session_token=context.session_token,
-                expires_at=context.expires_at,
+                expires_at=token_set.expires_at,
                 session_expires_at=context.session_expires_at,
                 metadata=context.metadata,
+                sub=context.sub,
             )
 
-        return await self._remint(context, store_options)
+        return await self._remint(context, eff_audience, eff_scope, store_options)
 
     async def introspect(
         self, store_options: Optional[dict[str, Any]] = None
@@ -709,7 +784,7 @@ class AnonymousClient:
             try:
                 response = await client.get(
                     f"{base_url}/anonymous/userinfo",
-                    auth=BearerAuth(context.access_token),
+                    auth=BearerAuth(context.session_token),
                 )
             except httpx.HTTPError as e:
                 raise AnonymousSessionIntrospectError(
@@ -733,69 +808,22 @@ class AnonymousClient:
     async def logout(self, store_options: Optional[dict[str, Any]] = None) -> None:
         """Clear the locally-held anonymous session without revoking issued tokens.
 
-        Local state is cleared unconditionally, even when the remote call
-        fails, since there is no server-side session to keep in sync with.
-
         Args:
             store_options: Options passed to the anonymous store.
 
         Raises:
             ConfigurationError: No anonymous_store configured.
-            AnonymousSessionLogoutError: The remote logout call failed for a
-                reason other than the session already being expired/invalid.
         """
         self._require_store()
         stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
         if not stored:
             return
-
-        try:
-            context = self._decrypt_context(stored)
-        except _AnonymousSessionExpired:
-            context = None
-
-        error_to_raise: Optional[Exception] = None
-        error_cause: Optional[BaseException] = None
-
-        if context is not None:
-            domain = context.domain or await self._resolve_domain(store_options)
-            base_url = f"https://{domain}"
-            auth = (
-                (self._client_id, self._client_secret) if self._client_secret else None
-            )
-            try:
-                async with self._get_http_client() as client:
-                    response = await client.post(
-                        f"{base_url}/anonymous/logout", json={}, auth=auth
-                    )
-            except httpx.HTTPError as e:
-                error_to_raise = AnonymousSessionLogoutError(
-                    "Failed to reach the anonymous logout endpoint"
-                )
-                error_cause = e
-            else:
-                if not 200 <= response.status_code < 300:
-                    error_data = self._parse_anonymous_error_body(response)
-                    mapped = self._map_anonymous_error(response.status_code, error_data, "logout")
-                    if not isinstance(mapped, _AnonymousSessionExpired):
-                        error_to_raise = mapped
-
         await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
 
-        if error_to_raise is not None:
-            raise error_to_raise from error_cause
-
-    async def end_session_if_active(
+    async def _end_session_if_active(
         self, store_options: Optional[dict[str, Any]] = None
     ) -> None:
         """Clear the local anonymous session on authenticated logout, if one is active.
-
-        Reads the anonymous store fail-soft and, when a session is present,
-        deletes only the locally-held encrypted context. Makes no remote call:
-        there is no server-side anonymous session store to revoke against, and
-        the local delete is what closes the shared-device re-injection path
-        (without it the next login through this store would re-inject the
-        previous visitor's anonymous identity).
 
         Args:
             store_options: Options passed to the anonymous store.
@@ -808,4 +836,47 @@ class AnonymousClient:
             return
         if not stored:
             return
-        await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
+        try:
+            await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
+        except Exception:
+            return
+
+    async def get_session(
+        self, store_options: Optional[dict[str, Any]] = None
+    ) -> Optional[AnonymousSessionData]:
+        """Return stored anonymous session identity without calling Auth0.
+
+        Args:
+            store_options: Options passed to the anonymous store.
+
+        Returns:
+            The stored AnonymousSessionData, or None when there is no session,
+            the session is corrupt, or (in resolver mode) the stored domain
+            does not match the current tenant.
+        """
+        if self._anonymous_store is None:
+            return None
+        try:
+            stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
+        except Exception:
+            return None
+        if not stored:
+            return None
+        try:
+            context = self._decrypt_context(stored)
+        except _AnonymousSessionExpired:
+            return None
+        if context.domain:
+            try:
+                current_domain = await self._resolve_domain(store_options)
+            except Exception:
+                return None
+            if self._normalize_url(context.domain) != self._normalize_url(current_domain):
+                return None
+        return AnonymousSessionData(
+            sub=context.sub,
+            metadata=context.metadata,
+            created_at=context.created_at,
+            session_expires_at=context.session_expires_at,
+            domain=context.domain,
+        )

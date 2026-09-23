@@ -167,6 +167,7 @@ class ServerClient(Generic[TStoreOptions]):
         enterprise_connect: bool = False,
         use_mtls: bool = False,
         ssl_context: Optional[ssl.SSLContext] = None,
+        clear_anonymous_session_on_login: bool = False,
     ):
         """
         Initialize the Auth0 server client.
@@ -208,6 +209,11 @@ class ServerClient(Generic[TStoreOptions]):
             ssl_context: TLS context carrying the client certificate and key.
                 Required when use_mtls=True. Build with ssl.create_default_context()
                 and load_cert_chain().
+            clear_anonymous_session_on_login: When True and an anonymous_store is
+                configured, the anonymous session is cleared via anonymous.logout()
+                after a successful interactive login (complete_interactive_login).
+                Defaults to False. The logout call is best-effort and never fails
+                an otherwise-successful login.
 
         Raises:
             ConfigurationError: If `mfa_token_ttl` is not a positive number of seconds.
@@ -257,6 +263,11 @@ class ServerClient(Generic[TStoreOptions]):
                     "use_mtls cannot be combined with client_assertion_signing_key. "
                     "The client certificate is the sole credential under mTLS."
                 )
+            if anonymous_store is not None:
+                raise ConfigurationError(
+                    "Anonymous Sessions do not support mTLS. The AnonymousClient has no "
+                    "client-certificate credential path."
+                )
 
         self._client_id = client_id
         self._client_secret = client_secret
@@ -272,6 +283,7 @@ class ServerClient(Generic[TStoreOptions]):
         self._pushed_authorization_requests = pushed_authorization_requests  # store the flag
         self._organization = organization
         self._enterprise_connect = enterprise_connect
+        self._clear_anonymous_session_on_login = clear_anonymous_session_on_login
         self._webfinger_cache: OrderedDict[str, dict] = OrderedDict()
 
         # Initialize stores
@@ -837,12 +849,7 @@ class ServerClient(Generic[TStoreOptions]):
         if options.invitation:
             auth_params["invitation"] = options.invitation
 
-        # The anonymous transfer ticket is minted late from the SDK's own
-        # encrypted anonymous store, never a caller. The pops strip any value
-        # seeded from the constructor defaults, closing a session-fixation
-        # vector. PAR and Enterprise Connect suppress injection entirely. The
-        # ticket rides the query string but is short-lived (30s) and single-use
-        # in effect; the raw session_token is never placed on the URL.
+        # Pops close the session-fixation vector from constructor-seeded defaults.
         auth_params.pop("session_token", None)
         auth_params.pop("anon_transfer_token", None)
         if not self._pushed_authorization_requests and not self._enterprise_connect:
@@ -1115,6 +1122,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Clean up transaction data after successful login
         await self._transaction_store.delete(transaction_identifier, options=store_options)
+        await self._clear_anonymous_session_after_login(store_options)
 
         result = {"state_data": state_data.dict()}
         if transaction_data.app_state:
@@ -1322,6 +1330,23 @@ class ServerClient(Generic[TStoreOptions]):
             store_options=store_options,
         )
 
+    async def _clear_anonymous_session_after_login(
+        self, store_options: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Clear the anonymous session after a successful interactive login.
+
+        Args:
+            store_options: Options passed to the anonymous store.
+        """
+        if not self._clear_anonymous_session_on_login:
+            return
+        if self._anonymous_store is None:
+            return
+        try:
+            await self._anonymous_client.logout(store_options)
+        except Exception as e:
+            logger.debug("Anonymous session cleanup after login failed: %s", e)
+
     # ============================================================================
     # USER SESSION MANAGEMENT
     # Methods for retrieving user information, session data, and logout operations.
@@ -1451,15 +1476,12 @@ class ServerClient(Generic[TStoreOptions]):
                     if session_domain and self._normalize_url(session_domain) == self._normalize_url(domain):
                         await self._state_store.delete(self._state_identifier, store_options)
 
-        # End any active anonymous session on authenticated logout, closing the
-        # shared-device re-injection path. Best-effort: anonymous cleanup must
-        # never break the authenticated logout, so any failure is swallowed.
+        # End any active anonymous session on authenticated logout to close the
+        # shared-device re-injection path. Failures are swallowed.
         if self._anonymous_store is not None:
             try:
-                await self._anonymous_client.end_session_if_active(store_options)
+                await self._anonymous_client._end_session_if_active(store_options)
             except Exception as e:
-                # Best-effort: anonymous cleanup must never break the
-                # authenticated logout. The anon errors carry no token.
                 logger.debug("Anonymous session cleanup on logout failed: %s", e)
 
         # Return logout URL for the current resolved domain

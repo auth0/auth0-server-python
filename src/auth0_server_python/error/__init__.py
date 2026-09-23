@@ -508,15 +508,13 @@ class AnonymousSessionScopeError(AnonymousSessionCreateError):
 
 
 class _AnonymousSessionExpired(Auth0Error):
-    """Internal-only signal that the stored session token is expired or invalid.
-
-    Never raised to SDK callers.
-    """
+    """Internal-only signal that the stored session token is expired or invalid."""
 
     def __init__(self, message: str = "The anonymous session token is expired or invalid."):
         super().__init__(message)
         self.name = "_AnonymousSessionExpired"
 
+# =============================================================================
 # Enterprise Connect Error Classes
 # =============================================================================
 

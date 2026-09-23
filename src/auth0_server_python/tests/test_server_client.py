@@ -28,6 +28,7 @@ from auth0_server_python.auth_server.server_client import (
 )
 from auth0_server_python.auth_types import (
     AnonymousSessionContext,
+    AnonymousTokenSetEntry,
     CompleteConnectAccountRequest,
     ConnectAccountOptions,
     ConnectAccountRequest,
@@ -9913,16 +9914,22 @@ async def test_complete_interactive_login_milliseconds_ceiling_fails_open(mocker
 
 
 def _make_anon_context(secret, **overrides):
-    defaults = {
-        "session_token": "ANON_TOKEN_1",
-        "sub": "anon@abc",
-        "session_id": "sid1",
+    ts_keys = {"access_token", "expires_at", "audience", "scope"}
+    ts_defaults = {
         "access_token": "anon_at1",
         "expires_at": int(time.time()) + 3600,
+    }
+    ctx_defaults = {
+        "session_token": "ANON_TOKEN_1",
         "created_at": int(time.time()),
     }
-    defaults.update(overrides)
-    context = AnonymousSessionContext(**defaults)
+    for k in list(overrides):
+        if k in ts_keys:
+            ts_defaults[k] = overrides.pop(k)
+        else:
+            ctx_defaults[k] = overrides.pop(k)
+    token_set = AnonymousTokenSetEntry(**ts_defaults)
+    context = AnonymousSessionContext(token_sets=[token_set], **ctx_defaults)
     return encrypt(context.model_dump(), secret, "anon_session")
 
 
@@ -10373,6 +10380,113 @@ async def test_start_interactive_login_fail_open_when_exchange_returns_none(mock
 
 
 # ── end anonymous session on authenticated logout ───────────────────────────────
+
+
+# ── clear_anonymous_session_on_login ────────────────────────────────────────────
+
+
+def _setup_complete_interactive_login(client, mocker):
+    """Patch the minimum set of collaborators needed for complete_interactive_login to succeed."""
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://auth0.local/", "token_endpoint": "https://auth0.local/token"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={"keys": [{"kty": "RSA", "kid": "k1"}]})
+    mocker.patch.object(
+        client._oauth,
+        "fetch_token",
+        AsyncMock(return_value={"access_token": "at1", "id_token": "id_jwt", "scope": "openid"}),
+    )
+    mocker.patch("jwt.get_unverified_header", return_value={"kid": "k1"})
+    mock_key = mocker.MagicMock()
+    mock_key.key = "pem"
+    mocker.patch("jwt.PyJWK.from_dict", return_value=mock_key)
+    mocker.patch(
+        "jwt.decode",
+        return_value={"sub": "u1", "iss": "https://auth0.local/", "aud": "cid"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_does_not_clear_anonymous_session_by_default(mocker):
+    """Default (clear_anonymous_session_on_login=False): anonymous session is not touched on login."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    tx_store = AsyncMock()
+    tx_store.get.return_value = TransactionData(code_verifier="cv1", domain="auth0.local")
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        transaction_store=tx_store,
+        state_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+    )
+    _setup_complete_interactive_login(client, mocker)
+    logout_spy = mocker.patch.object(client._anonymous_client, "logout", AsyncMock())
+
+    await client.complete_interactive_login("https://auth0.local/cb?code=c&state=s")
+
+    logout_spy.assert_not_awaited()
+    assert anon_store.slot is not None
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_clears_anonymous_session_when_enabled(mocker):
+    """clear_anonymous_session_on_login=True: anonymous.logout() is called after session is written."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    tx_store = AsyncMock()
+    tx_store.get.return_value = TransactionData(code_verifier="cv1", domain="auth0.local")
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        transaction_store=tx_store,
+        state_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+        clear_anonymous_session_on_login=True,
+    )
+    _setup_complete_interactive_login(client, mocker)
+    logout_spy = mocker.patch.object(client._anonymous_client, "logout", AsyncMock())
+
+    result = await client.complete_interactive_login("https://auth0.local/cb?code=c&state=s")
+
+    assert "state_data" in result
+    logout_spy.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_cleanup_failure_does_not_fail_login(mocker):
+    """A failing anonymous.logout() is swallowed and must never fail an otherwise-successful login."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    tx_store = AsyncMock()
+    tx_store.get.return_value = TransactionData(code_verifier="cv1", domain="auth0.local")
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        transaction_store=tx_store,
+        state_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+        clear_anonymous_session_on_login=True,
+    )
+    _setup_complete_interactive_login(client, mocker)
+    mocker.patch.object(
+        client._anonymous_client, "logout", AsyncMock(side_effect=Exception("store down"))
+    )
+
+    result = await client.complete_interactive_login("https://auth0.local/cb?code=c&state=s")
+
+    assert "state_data" in result
 
 
 class _CapturingHttpClient:
