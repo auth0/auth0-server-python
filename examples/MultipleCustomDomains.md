@@ -323,6 +323,10 @@ All domain mismatch errors use the message: **"Session domain does not match the
 
 > **Note:** If a login was started before the switch to resolver mode and completes after, the SDK falls back to the current resolved domain for token exchange. The resulting session will store the resolved domain and work normally going forward.
 
+### Anonymous-session linking
+
+Anonymous-session login linking is domain-bound and fails closed under MCD. When `start_interactive_login()` builds the `/authorize` URL, the SDK mints the anonymous transfer ticket (`anon_transfer_token`) only when the anonymous session's stored domain matches the resolved login domain. On a domain mismatch the SDK mints no ticket, so the anonymous session is never carried across custom domains. Linking then simply does not happen for that login; the login itself proceeds normally (fail-open on the linking, fail-closed on the domain).
+
 ## Legacy Sessions and Migration
 
 When moving from a static domain setup to resolver mode, existing sessions can continue

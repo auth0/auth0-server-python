@@ -17,6 +17,7 @@ from auth0_server_python.auth_types import (
     AnonymousSessionContext,
     AnonymousSessionIntrospection,
     AnonymousTokenResponse,
+    AnonymousTransferTokenResponse,
     CreateAnonymousSessionOptions,
 )
 from auth0_server_python.encryption.encrypt import decrypt, encrypt
@@ -42,6 +43,10 @@ from auth0_server_python.utils.helpers import (
 
 ANON_IDENTIFIER = "_a0_anon"
 ANON_TOKEN_SALT = "anon_session"
+
+# Audience for the /anonymous/token exchange that mints a short-lived transfer
+# ticket for login injection.
+TRANSFER_AUDIENCE = "urn:auth0:anon_transfer"
 
 _METADATA_MAX_BYTES = 1024
 _DANGEROUS_METADATA_KEYS = frozenset({"__proto__", "constructor", "prototype"})
@@ -482,17 +487,24 @@ class AnonymousClient:
     # LOGIN INJECTION SUPPORT
     # ============================================================================
 
-    async def get_session_token_for_injection(
-        self, store_options: Optional[dict[str, Any]] = None
+    async def exchange_transfer_token_for_injection(
+        self, origin_domain: str, store_options: Optional[dict[str, Any]] = None
     ) -> Optional[str]:
-        """Read the active session token for login injection without renewing.
+        """Mint a short-lived transfer ticket from the active session for login injection.
+
+        Reads the stored session without renewing it, then exchanges it for a
+        30s ``anon_transfer_token``. Fails open (returns None) when there is no
+        store, no active session, the record cannot be decrypted, or the
+        exchange fails. Fails closed (returns None) on an MCD domain mismatch,
+        so a ticket is never minted for a host the session was not created
+        against. The ticket is never persisted.
 
         Args:
+            origin_domain: The domain the /authorize URL is being built for.
             store_options: Options passed to the anonymous store.
 
         Returns:
-            The raw session token, or None when there is no store, no active
-            session, or the stored record cannot be decrypted.
+            The minted transfer ticket, or None.
         """
         if self._anonymous_store is None:
             return None
@@ -506,7 +518,51 @@ class AnonymousClient:
             context = self._decrypt_context(stored)
         except _AnonymousSessionExpired:
             return None
-        return context.session_token
+        # MCD fail-closed: never mint a ticket for a host the session was not
+        # created against.
+        if context.domain and self._normalize_url(context.domain) != self._normalize_url(
+            origin_domain
+        ):
+            return None
+        return await self._mint_transfer_token(context.session_token, origin_domain)
+
+    async def _mint_transfer_token(
+        self, session_token: str, origin_domain: str
+    ) -> Optional[str]:
+        """Exchange a session token for a transfer ticket. Fails open.
+
+        Posts to /anonymous/token with the transfer audience and returns the
+        ``anon_transfer_token``, or None on any HTTP, non-200, or parse error,
+        matching the platform's fail-open redemption. Never persists the ticket.
+
+        Args:
+            session_token: The stored anonymous session token.
+            origin_domain: The domain the /authorize URL is being built for.
+
+        Returns:
+            The minted transfer ticket, or None.
+        """
+        base_url = f"https://{origin_domain}"
+        body: dict[str, Any] = {
+            "client_id": self._client_id,
+            "session_token": session_token,
+            "audience": TRANSFER_AUDIENCE,
+        }
+        if self._client_secret:
+            body["client_secret"] = self._client_secret
+
+        try:
+            async with self._get_http_client() as client:
+                response = await client.post(f"{base_url}/anonymous/token", json=body)
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            token_response = AnonymousTransferTokenResponse.model_validate(response.json())
+        except (json.JSONDecodeError, ValueError, ValidationError):
+            return None
+        return token_response.anon_transfer_token
 
     # ============================================================================
     # PUBLIC API
@@ -602,7 +658,7 @@ class AnonymousClient:
                 current_domain,
                 audience=context.audience,
                 scope=context.scope,
-                metadata=None,
+                metadata=context.metadata,
                 store_options=store_options,
             )
 
@@ -728,3 +784,28 @@ class AnonymousClient:
 
         if error_to_raise is not None:
             raise error_to_raise from error_cause
+
+    async def end_session_if_active(
+        self, store_options: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Clear the local anonymous session on authenticated logout, if one is active.
+
+        Reads the anonymous store fail-soft and, when a session is present,
+        deletes only the locally-held encrypted context. Makes no remote call:
+        there is no server-side anonymous session store to revoke against, and
+        the local delete is what closes the shared-device re-injection path
+        (without it the next login through this store would re-inject the
+        previous visitor's anonymous identity).
+
+        Args:
+            store_options: Options passed to the anonymous store.
+        """
+        if self._anonymous_store is None:
+            return
+        try:
+            stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
+        except Exception:
+            return
+        if not stored:
+            return
+        await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
