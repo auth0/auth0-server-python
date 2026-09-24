@@ -587,7 +587,7 @@ class AnonymousClient:
             context = self._decrypt_context(stored)
         except _AnonymousSessionExpired:
             return None
-        # Domain mismatch rejects a session belonging to a different tenant.
+        # Prevents a tenant-A session token from minting a transfer ticket usable at tenant-B's login.
         if context.domain and self._normalize_url(context.domain) != self._normalize_url(
             origin_domain
         ):

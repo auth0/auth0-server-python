@@ -258,7 +258,7 @@ Sign users in with a one-time code sent by email or SMS, or with a magic link se
 
 ### 11. Anonymous Sessions
 
-Give a visitor an Auth0 `anon@<uuid>` identity before they log in, so cart/preference metadata attached pre-login is available to Post-Login Actions once they do. Requires a separate `anonymous_store` instance — never the same instance as `state_store` — and a tenant-level paid add-on flag. For setup, the token renewal ladder, login injection, and the store-isolation requirement, see [examples/AnonymousSessions.md](examples/AnonymousSessions.md).
+Give a visitor an Auth0 `anon@<uuid>` identity before they log in, so cart/preference metadata attached pre-login is available to Post-Login Actions once they do. Requires a separate `anonymous_store` instance, never the same instance as `state_store`, and a tenant-level paid add-on flag. For setup, the token renewal ladder, login injection, and the store-isolation requirement, see [examples/AnonymousSessions.md](examples/AnonymousSessions.md).
 
 ### 12. Enterprise Connect (Embedded Login)
 

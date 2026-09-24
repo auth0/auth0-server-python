@@ -1129,7 +1129,7 @@ class TestExchangeTransferTokenForInjection:
 
     @pytest.mark.asyncio
     async def test_missing_context_domain_mints_against_origin(self):
-        """A stored context with no domain is not an MCD mismatch; mint against origin."""
+        """A stored context with no domain is not an MCD mismatch, so mint against origin."""
         store = OneSlotStore()
         _stored_context(store, session_token="REAL_TOKEN")  # domain defaults to None
         client = _make_client(anonymous_store=store)

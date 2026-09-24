@@ -1,9 +1,9 @@
 # Anonymous Sessions
 
-Anonymous Sessions give a visitor an Auth0 identity **before they log in**. Each visitor gets a persistent `anon@<uuid>` subject plus an access token, with up to 1 KB of key/value metadata (cart, preferences) attached at creation. At login, the SDK carries the session to Auth0 as a short-lived transfer ticket so Post-Login / Pre-User-Registration Actions can read the anonymous data via `event.anonymous_session` — nothing migrates onto the real user profile automatically; the Action author decides what to persist.
+Anonymous Sessions give a visitor an Auth0 identity **before they log in**. Each visitor gets a persistent `anon@<uuid>` subject plus an access token, with up to 1 KB of key/value metadata (cart, preferences) attached at creation. At login, the SDK carries the session to Auth0 as a short-lived transfer ticket so Post-Login / Pre-User-Registration Actions can read the anonymous data via `event.anonymous_session`. Nothing migrates onto the real user profile automatically. The Action author decides what to persist.
 
 > [!NOTE]
-> Anonymous Sessions support for server SDKs is in Early Access, gated by a tenant-level, paid add-on feature flag (`anonymous_sessions_enabled`). `auth0-server-python` mounts no routes and sets no cookies — this guide covers the framework-agnostic core only.
+> Anonymous Sessions support for server SDKs is in Early Access, gated by a tenant-level, paid add-on feature flag (`anonymous_sessions_enabled`). `auth0-server-python` mounts no routes and sets no cookies. This guide covers the framework-agnostic core only.
 
 ## Table of Contents
 
@@ -50,7 +50,7 @@ session = await server_client.anonymous.create_session(
 )
 ```
 
-`metadata` is **set once, at creation, and never updated** — there is no platform update endpoint for anonymous sessions. Any JSON-serializable value is accepted, ≤1 KB total (UTF-8 JSON byte length); oversized, non-JSON-serializable, or dangerous-key (`__proto__`, `constructor`, `prototype`) metadata is rejected client-side before any network call.
+`metadata` is **set once, at creation, and never updated**. There is no platform update endpoint for anonymous sessions. Any JSON-serializable value is accepted, ≤1 KB total (UTF-8 JSON byte length). Oversized, non-JSON-serializable, or dangerous-key (`__proto__`, `constructor`, `prototype`) metadata is rejected client-side before any network call.
 
 `AnonymousSession` returns `session_token`, `access_token`, `expires_at`, `session_expires_at`, and `metadata`.
 
@@ -62,10 +62,10 @@ token = await server_client.anonymous.get_token(store_options=store_options)
 
 Renewal logic, in order:
 
-1. Cached access token still fresh → returned with no network call.
-2. Expired → re-minted using the stored session token (not a refresh-token grant — anonymous sessions never issue refresh tokens).
-3. Session token also expired or invalid → a **brand-new session is silently created, once**. Metadata from the old session is permanently lost, and `session_token` changes. This never raises — an anonymous pre-login session carries no authorization, so re-minting crosses no trust boundary.
-4. Any other error → raised as a typed exception. No swallow, no auto-retry beyond the one re-mint in step 3.
+1. Cached access token still fresh, returned with no network call.
+2. Expired, re-minted using the stored session token (not a refresh-token grant, since anonymous sessions never issue refresh tokens).
+3. Session token also expired or invalid, a **brand-new session is silently created, once**. Metadata from the old session is permanently lost, and `session_token` changes. This never raises. An anonymous pre-login session carries no authorization, so re-minting crosses no trust boundary.
+4. Any other error, raised as a typed exception. No swallow, no auto-retry beyond the one re-mint in step 3.
 
 ## Introspecting a Session
 

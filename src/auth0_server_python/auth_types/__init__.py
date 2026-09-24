@@ -953,10 +953,7 @@ class AnonymousTokenSetEntry(BaseModel):
 
 
 class AnonymousSessionContext(BaseModel):
-    """Internal context stored inside the encrypted anonymous session record.
-
-    Rejects extra fields so a tampered payload fails closed on decrypt.
-    """
+    """Internal context stored inside the encrypted anonymous session record, rejecting extra fields so a tampered payload fails closed on decrypt."""
 
     model_config = ConfigDict(extra="forbid")
 

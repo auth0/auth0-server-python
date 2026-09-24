@@ -10035,7 +10035,7 @@ async def test_start_interactive_login_injects_transfer_ticket_not_session_token
 
 @pytest.mark.asyncio
 async def test_start_interactive_login_does_not_persist_transfer_token_in_transaction_data(mocker):
-    """The short-lived ticket rides the URL only; it is never written to the transaction record."""
+    """The short-lived ticket rides the URL only and is never written to the transaction record."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
@@ -10191,12 +10191,7 @@ async def test_start_interactive_login_suppresses_injection_on_par_branch(mocker
 
 @pytest.mark.asyncio
 async def test_start_interactive_login_constructor_fixation_blocked_no_active_session():
-    """
-    The exact vector where a caller supplies session_token via constructor
-    authorization_params, with no active anonymous session. INTERNAL_AUTHORIZE_PARAMS
-    alone cannot block this, since it only filters per-call options.authorization_params.
-    The unconditional pop() at the injection site must.
-    """
+    """A caller-supplied session_token in constructor authorization_params is blocked by the unconditional pop() at the injection site, since INTERNAL_AUTHORIZE_PARAMS alone only filters per-call options."""
     assert "session_token" in INTERNAL_AUTHORIZE_PARAMS  # belt-and-braces still present
 
     anon_store = OneSlotStore()  # no session -> the vulnerable case
@@ -10545,7 +10540,7 @@ async def test_logout_ends_active_anonymous_session(mocker):
 @pytest.mark.asyncio
 async def test_logout_no_anonymous_session_makes_no_remote_call(mocker):
     """With no active anonymous session, authenticated logout makes no anonymous remote call."""
-    anon_store = OneSlotStore()  # empty
+    anon_store = OneSlotStore()
     client = ServerClient(
         domain="auth0.local",
         client_id="cid",
@@ -10616,11 +10611,7 @@ async def test_logout_survives_anonymous_session_cleanup_failure(mocker):
 
 @pytest.mark.asyncio
 async def test_anonymous_write_cannot_destroy_authenticated_session_on_shared_store():
-    """
-    When the anonymous client is configured with its own store instance,
-    the authenticated session on a separate store instance is provably
-    untouched. The separate-instance contract holds.
-    """
+    """A write to the anonymous store instance never touches the authenticated session on a separate store instance."""
     shared_store = OneSlotStore()
     shared_store.slot = ("_a0_session", {"user": {"sub": "real_user"}})
 
@@ -10646,10 +10637,7 @@ async def test_anonymous_write_cannot_destroy_authenticated_session_on_shared_st
 
 @pytest.mark.asyncio
 async def test_missing_anonymous_store_fails_closed_never_falls_back_to_state_store():
-    """
-    If an integrator forgets anonymous_store, the client must raise before any
-    write, never silently write anonymous state into ServerClient's state_store.
-    """
+    """A missing anonymous_store raises before any write, never silently falling back to state_store."""
     shared_store = OneSlotStore()
     shared_store.slot = ("_a0_session", {"user": {"sub": "real_user"}})
     client = ServerClient(

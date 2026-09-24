@@ -325,7 +325,7 @@ All domain mismatch errors use the message: **"Session domain does not match the
 
 ### Anonymous-session linking
 
-Anonymous-session login linking is domain-bound and fails closed under MCD. When `start_interactive_login()` builds the `/authorize` URL, the SDK mints the anonymous transfer ticket (`anon_transfer_token`) only when the anonymous session's stored domain matches the resolved login domain. On a domain mismatch the SDK mints no ticket, so the anonymous session is never carried across custom domains. Linking then simply does not happen for that login; the login itself proceeds normally (fail-open on the linking, fail-closed on the domain).
+Anonymous-session login linking is domain-bound and fails closed under MCD. When `start_interactive_login()` builds the `/authorize` URL, the SDK mints the anonymous transfer ticket (`anon_transfer_token`) only when the anonymous session's stored domain matches the resolved login domain. On a domain mismatch the SDK mints no ticket, so the anonymous session is never carried across custom domains. Linking then simply does not happen for that login, and the login itself proceeds normally (fail-open on the linking, fail-closed on the domain).
 
 ## Legacy Sessions and Migration
 

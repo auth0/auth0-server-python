@@ -2,14 +2,7 @@
 
 
 class OneSlotStore:
-    """Models a StatelessStateStore where the store identifier is an
-    encryption salt, not a location key.
-
-    One physical slot per instance, so a mismatched identifier reads as
-    absent, not as a different record. AsyncMock cannot exercise this
-    collision because it treats every identifier as a distinct key, so this
-    fake is required instead.
-    """
+    """Models a StatelessStateStore with one physical slot per instance, where the identifier is an encryption salt rather than a location key, so a mismatched identifier reads as absent rather than a different record."""
 
     def __init__(self):
         self.slot = None
