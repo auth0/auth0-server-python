@@ -17,12 +17,11 @@ Anonymous Sessions give a visitor an Auth0 identity **before they log in**. Each
   - [Login Injection](#login-injection)
   - [Rate-Limiting `get_token()`](#rate-limiting-get_token)
   - [Error Handling](#error-handling)
-  - [Known Limitations](#known-limitations)
   - [Additional Resources](#additional-resources)
 
 ## Setup
 
-Before using the anonymous sessions API, the `anonymous_sessions_enabled` flag must be turned on for your tenant (contact your Auth0 account team — there is no self-serve path yet), and the application/client must be enabled for the feature.
+Before using the anonymous sessions API, the `anonymous_sessions_enabled` flag must be turned on for your tenant, and the application/client must be enabled for the feature.
 
 Pass an `anonymous_store` to `ServerClient`, alongside your existing `state_store` and `transaction_store`:
 
@@ -85,15 +84,13 @@ await server_client.anonymous.logout(store_options=store_options)
 > [!CAUTION]
 > **`logout()` does not revoke.** There is no server-side anonymous session store to revoke against, this clears only the locally-held encrypted context. Any access token already issued for this anonymous session remains valid until its natural expiry.
 
-Local state is always cleared, even if the remote call fails. If the remote `/anonymous/logout` call itself fails, `logout()` raises `AnonymousSessionLogoutError` after clearing local state, so the failure isn't swallowed.
-
 Authenticated (OIDC) logout also ends an active anonymous session. When you call `ServerClient.logout()` and an anonymous store is configured, the SDK clears the locally-held anonymous session before returning the logout URL. This is a local clear only, with no remote call (consistent with `anonymous.logout()`, which also does not revoke server-side). It prevents the next visitor on a shared device from having the previous visitor's anonymous identity re-linked at their login. If no anonymous session is active, nothing is cleared, and any failure ending the anonymous session is best-effort and never breaks the authenticated logout.
 
 ## Login Injection
 
-When an anonymous session is active, `start_interactive_login()` automatically links it to the login, no code change needed at your call site. If no anonymous session exists, behavior is the same as today.
+When an anonymous session is active, `start_interactive_login()` automatically injects an `anon_transfer_token` transfer ticket into the `/authorize` URL, no code change needed at your call site. If no anonymous session exists, behavior is unchanged.
 
-The raw session token never goes on the URL. At the moment the `/authorize` URL is built, the SDK exchanges the stored session token for a short-lived (30s) transfer ticket (`anon_transfer_token`) via `POST /anonymous/token`, and forwards only that ticket as the `anon_transfer_token` query parameter. The raw session token stays inside the SDK's encrypted store and the ticket is never persisted. The ticket is short-lived and grants no authorization on its own, but you should still set `Referrer-Policy: no-referrer` on your login pages and never log the authorize URL.
+The raw `session_token` never goes on the URL. At the moment the `/authorize` URL is built, the SDK exchanges the stored session token for a short-lived (30s) single-use ticket (`anon_transfer_token`) via `POST /anonymous/token`, and forwards only that ticket as the `anon_transfer_token` query parameter. The raw session token stays inside the SDK's encrypted store and the ticket is never persisted. The ticket is short-lived and grants no authorization on its own, but you should still set `Referrer-Policy: no-referrer` on your login pages and never log the authorize URL.
 
 The exchange fails open: if it errors (network failure, a non-200, or an unparseable response), login proceeds with no ticket and no linking, and never aborts the login. Under Multiple Custom Domains it fails closed: a ticket is only minted for the domain the session was created against, so a domain mismatch mints nothing (see [MultipleCustomDomains.md](MultipleCustomDomains.md)).
 
@@ -117,7 +114,6 @@ from auth0_server_python.error import (
     AnonymousSessionCreateError,
     AnonymousSessionTokenError,
     AnonymousSessionIntrospectError,
-    AnonymousSessionLogoutError,
 )
 
 try:
@@ -125,9 +121,3 @@ try:
 except AnonymousSessionFeatureNotEnabledError:
     ...
 ```
-
-## Known Limitations
-
-- **DPoP is not supported.** `AnonymousClient` has no `dpop_key` parameter anywhere in its public API. A tenant/client configured with `require_proof_of_possession: true` cannot use anonymous sessions, you will see `AnonymousSessionClientNotSupportedError`.
-- **PAR, CIBA, Device Flow, RAR, and mTLS clients are not supported** for anonymous sessions.
-- **No server-side revocation.** See [Logging Out](#logging-out) above.
