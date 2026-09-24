@@ -820,27 +820,6 @@ class AnonymousClient:
             return
         await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
 
-    async def _end_session_if_active(
-        self, store_options: Optional[dict[str, Any]] = None
-    ) -> None:
-        """Clear the local anonymous session on authenticated logout, if one is active.
-
-        Args:
-            store_options: Options passed to the anonymous store.
-        """
-        if self._anonymous_store is None:
-            return
-        try:
-            stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
-        except Exception:
-            return
-        if not stored:
-            return
-        try:
-            await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
-        except Exception:
-            return
-
     async def get_session(
         self, store_options: Optional[dict[str, Any]] = None
     ) -> Optional[AnonymousSessionData]:
@@ -880,3 +859,24 @@ class AnonymousClient:
             session_expires_at=context.session_expires_at,
             domain=context.domain,
         )
+
+    async def _end_session_if_active(
+        self, store_options: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Clear the local anonymous session on authenticated logout, if one is active.
+
+        Args:
+            store_options: Options passed to the anonymous store.
+        """
+        if self._anonymous_store is None:
+            return
+        try:
+            stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
+        except Exception:
+            return
+        if not stored:
+            return
+        try:
+            await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
+        except Exception:
+            return
