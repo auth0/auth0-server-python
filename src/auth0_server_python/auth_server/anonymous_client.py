@@ -164,8 +164,12 @@ class AnonymousClient:
     def _decode_sub(access_token: str) -> Optional[str]:
         """Extract the sub claim from a JWT access token without verifying the signature.
 
-        Returns None for opaque tokens (JWE has 5 dot-separated parts), non-JWT
-        strings, or tokens that carry no sub claim.
+        Args:
+            access_token: The token to decode.
+
+        Returns:
+            The sub claim, or None for opaque tokens, non-JWT strings, or
+            tokens with no sub claim.
         """
         try:
             parts = access_token.split(".")

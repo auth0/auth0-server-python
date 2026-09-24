@@ -3497,15 +3497,6 @@ class ServerClient(Generic[TStoreOptions]):
         return self._mfa_client
 
     # ============================================================================
-    # ANONYMOUS SESSIONS
-    # ============================================================================
-
-    @property
-    def anonymous(self) -> AnonymousClient:
-        """Access the anonymous sessions client for pre-login anon@ identity operations."""
-        return self._anonymous_client
-
-    # ============================================================================
     # PASSKEY AUTHENTICATION
     # ============================================================================
 
@@ -4013,6 +4004,15 @@ class ServerClient(Generic[TStoreOptions]):
             invitation=options.invitation,
         )
         return await self.start_interactive_login(login_options, store_options)
+
+    # ============================================================================
+    # ANONYMOUS SESSIONS
+    # ============================================================================
+
+    @property
+    def anonymous(self) -> AnonymousClient:
+        """Access the anonymous sessions client for pre-login anon@ identity operations."""
+        return self._anonymous_client
 
 
 async def is_federated_domain(domain: str, email_domain: str, timeout: float = 5.0) -> bool:

@@ -897,11 +897,7 @@ class AnonymousSession(BaseModel):
 
 
 class AnonymousSessionData(BaseModel):
-    """Local session state returned by AnonymousClient.get_session().
-
-    Contains identity and metadata fields only. session_token is never
-    included; use get_token() when a bearer token is needed.
-    """
+    """Identity and metadata fields returned by AnonymousClient.get_session(), with no session_token."""
 
     sub: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
