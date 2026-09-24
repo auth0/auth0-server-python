@@ -906,16 +906,6 @@ class AnonymousSessionData(BaseModel):
     domain: Optional[str] = None
 
 
-class AnonymousSessionIntrospection(BaseModel):
-    """Result of introspect(), lenient to unrecognized response fields."""
-
-    model_config = ConfigDict(extra="ignore")
-    sub: str
-    session_id: Optional[str] = None
-    expires_at: Optional[int] = None
-    metadata: Optional[dict[str, Any]] = None
-
-
 class AnonymousTokenResponse(BaseModel):
     """Raw response from POST /anonymous/token."""
 

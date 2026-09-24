@@ -11,13 +11,11 @@ from typing import Any, Callable, Optional, Union
 import httpx
 from pydantic import ValidationError
 
-from auth0_server_python.auth_schemes.bearer_auth import BearerAuth
 from auth0_server_python.auth_types import (
     AnonymousCreateTokenResponse,
     AnonymousSession,
     AnonymousSessionContext,
     AnonymousSessionData,
-    AnonymousSessionIntrospection,
     AnonymousTokenResponse,
     AnonymousTokenSetEntry,
     AnonymousTransferTokenResponse,
@@ -30,7 +28,6 @@ from auth0_server_python.error import (
     AnonymousSessionClientNotSupportedError,
     AnonymousSessionCreateError,
     AnonymousSessionFeatureNotEnabledError,
-    AnonymousSessionIntrospectError,
     AnonymousSessionResourceServerError,
     AnonymousSessionScopeError,
     AnonymousSessionTokenError,
@@ -241,7 +238,7 @@ class AnonymousClient:
         Args:
             status_code: The HTTP status code of the response.
             error_data: The parsed error response body.
-            operation: One of 'create', 'token', 'introspect'.
+            operation: One of 'create', 'token'.
 
         Returns:
             The exception instance. Does not raise it.
@@ -266,8 +263,6 @@ class AnonymousClient:
             return AnonymousSessionCreateError(description, cause=error_data)
         if operation == "token":
             return AnonymousSessionTokenError(description, error_data)
-        if operation == "introspect":
-            return AnonymousSessionIntrospectError(description, error_data)
         return AnonymousSessionApiError(code or "anonymous_error", description, error_data)
 
     # ============================================================================
@@ -752,62 +747,6 @@ class AnonymousClient:
             )
 
         return await self._remint(context, eff_audience, eff_scope, store_options)
-
-    async def introspect(
-        self, store_options: Optional[dict[str, Any]] = None
-    ) -> AnonymousSessionIntrospection:
-        """Return the current anonymous session status without mutating the store.
-
-        Args:
-            store_options: Options passed to the anonymous store.
-
-        Returns:
-            The current AnonymousSessionIntrospection.
-
-        Raises:
-            ConfigurationError: No anonymous_store configured.
-            AnonymousSessionIntrospectError: No active session, or a request
-                failure.
-        """
-        self._require_store()
-        stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
-        if not stored:
-            raise AnonymousSessionIntrospectError("No active anonymous session to introspect.")
-
-        try:
-            context = self._decrypt_context(stored)
-        except _AnonymousSessionExpired as e:
-            raise AnonymousSessionIntrospectError(
-                "Stored anonymous session is invalid or corrupted."
-            ) from e
-
-        domain = context.domain or await self._resolve_domain(store_options)
-        base_url = f"https://{domain}"
-
-        async with self._get_http_client() as client:
-            try:
-                response = await client.get(
-                    f"{base_url}/anonymous/userinfo",
-                    auth=BearerAuth(context.session_token),
-                )
-            except httpx.HTTPError as e:
-                raise AnonymousSessionIntrospectError(
-                    "Failed to reach the anonymous userinfo endpoint"
-                ) from e
-
-            if response.status_code != 200:
-                error_data = self._parse_anonymous_error_body(response)
-                mapped = self._map_anonymous_error(response.status_code, error_data, "introspect")
-                if isinstance(mapped, _AnonymousSessionExpired):
-                    raise AnonymousSessionIntrospectError(str(mapped))
-                raise mapped
-
-            try:
-                return AnonymousSessionIntrospection.model_validate(response.json())
-            except (json.JSONDecodeError, ValueError, ValidationError) as e:
-                raise AnonymousSessionIntrospectError(
-                    "Failed to parse anonymous introspection response"
-                ) from e
 
     async def logout(self, store_options: Optional[dict[str, Any]] = None) -> None:
         """Clear the locally-held anonymous session without revoking issued tokens.

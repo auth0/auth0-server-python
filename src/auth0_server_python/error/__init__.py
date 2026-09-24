@@ -465,13 +465,6 @@ class AnonymousSessionTokenError(AnonymousSessionApiError):
         super().__init__("anonymous_token_error", message, cause)
 
 
-class AnonymousSessionIntrospectError(AnonymousSessionApiError):
-    """Error thrown when introspect() fails on an HTTP or auth failure."""
-
-    def __init__(self, message: str, cause: Optional[dict] = None):
-        super().__init__("anonymous_introspect_error", message, cause)
-
-
 class AnonymousSessionFeatureNotEnabledError(AnonymousSessionCreateError):
     """Error thrown when the tenant has not enabled the anonymous sessions add-on."""
 

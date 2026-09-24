@@ -27,7 +27,6 @@ from auth0_server_python.error import (
     AnonymousSessionClientNotSupportedError,
     AnonymousSessionCreateError,
     AnonymousSessionFeatureNotEnabledError,
-    AnonymousSessionIntrospectError,
     AnonymousSessionResourceServerError,
     AnonymousSessionScopeError,
     AnonymousSessionTokenError,
@@ -169,12 +168,6 @@ class TestStoreIsolation:
         client = _make_client(anonymous_store=None)
         with pytest.raises(ConfigurationError):
             await client.get_token()
-
-    @pytest.mark.asyncio
-    async def test_introspect_without_store_raises_configuration_error(self):
-        client = _make_client(anonymous_store=None)
-        with pytest.raises(ConfigurationError):
-            await client.introspect()
 
     @pytest.mark.asyncio
     async def test_logout_without_store_raises_configuration_error(self):
@@ -990,72 +983,6 @@ class TestMcdIsolation:
         )
         with pytest.raises(DomainResolverError):
             await client.create_session(audience="aud", scope="s")
-
-
-# ── introspect ────────────────────────────────────────────────────────────────
-
-class TestIntrospect:
-    @pytest.mark.asyncio
-    async def test_introspect_issues_get_with_no_body(self):
-        store = OneSlotStore()
-        _stored_context(store)
-        client = _make_client(anonymous_store=store)
-        fake_http = _FakeAsyncClient([_fake_response(200, {"sub": "anon@abc"})])
-        with patch("httpx.AsyncClient", fake_http):
-            await client.introspect()
-        method, _, kwargs = fake_http.calls[0]
-        assert method == "GET"
-        assert "json" not in kwargs
-
-    @pytest.mark.asyncio
-    async def test_introspect_lenient_decode_ignores_unknown_fields(self):
-        store = OneSlotStore()
-        _stored_context(store)
-        client = _make_client(anonymous_store=store)
-        fake_http = _FakeAsyncClient([
-            _fake_response(200, {"sub": "anon@abc", "totally_unexpected_field": "value"})
-        ])
-        with patch("httpx.AsyncClient", fake_http):
-            result = await client.introspect()
-        assert result.sub == "anon@abc"
-
-    @pytest.mark.asyncio
-    async def test_introspect_missing_optional_field_does_not_raise(self):
-        store = OneSlotStore()
-        _stored_context(store)
-        client = _make_client(anonymous_store=store)
-        fake_http = _FakeAsyncClient([_fake_response(200, {"sub": "anon@abc"})])
-        with patch("httpx.AsyncClient", fake_http):
-            result = await client.introspect()
-        assert result.metadata is None
-
-    @pytest.mark.asyncio
-    async def test_introspect_never_writes_to_store(self):
-        store = OneSlotStore()
-        _stored_context(store)
-        original_slot = store.slot
-        client = _make_client(anonymous_store=store)
-        fake_http = _FakeAsyncClient([_fake_response(200, {"sub": "anon@abc"})])
-        with patch("httpx.AsyncClient", fake_http):
-            await client.introspect()
-        assert store.slot == original_slot
-
-    @pytest.mark.asyncio
-    async def test_introspect_no_active_session_raises(self):
-        store = OneSlotStore()
-        client = _make_client(anonymous_store=store)
-        with pytest.raises(AnonymousSessionIntrospectError):
-            await client.introspect()
-
-    @pytest.mark.asyncio
-    async def test_introspect_corrupted_context_raises_without_server_call(self):
-        store = OneSlotStore()
-        store.slot = (ANON_IDENTIFIER, {"context": "not-a-decryptable-blob"})
-        client = _make_client(anonymous_store=store)
-        with patch("httpx.AsyncClient") as mock_http:
-            with pytest.raises(AnonymousSessionIntrospectError):
-                await client.introspect()
-            mock_http.assert_not_called()
 
 
 # ── logout ────────────────────────────────────────────────────────────────────
