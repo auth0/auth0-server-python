@@ -6,6 +6,7 @@ import base64 as _b64
 import inspect
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -729,8 +730,8 @@ class TestGetToken:
         stored = await store.get(ANON_IDENTIFIER)
         context = client._decrypt_context(stored)
         audiences = [ts.audience for ts in context.token_sets]
-        assert "https://api1.example.com" in audiences
-        assert "https://api2.example.com" in audiences
+        assert any(a == "https://api1.example.com" for a in audiences)
+        assert any(a == "https://api2.example.com" for a in audiences)
 
     @pytest.mark.asyncio
     async def test_cached_token_returned_for_correct_audience(self):
@@ -809,8 +810,8 @@ class TestGetToken:
         stored = await store.get(ANON_IDENTIFIER)
         final_ctx = client._decrypt_context(stored)
         audiences = [ts.audience for ts in final_ctx.token_sets]
-        assert "https://api2.example.com" in audiences
-        assert "https://api1.example.com" in audiences
+        assert any(a == "https://api2.example.com" for a in audiences)
+        assert any(a == "https://api1.example.com" for a in audiences)
 
     @pytest.mark.asyncio
     async def test_remint_skips_write_when_session_deleted_during_fetch(self):
@@ -944,7 +945,7 @@ class TestMcdIsolation:
         with patch("httpx.AsyncClient", fake_http):
             await client.get_token()
         _, url, _ = fake_http.calls[0]
-        assert url.startswith("https://tenant-b.auth0.local")
+        assert urlsplit(url).hostname == "tenant-b.auth0.local"
 
     @pytest.mark.asyncio
     async def test_domain_mismatch_in_static_mode_mints_fresh_under_current_tenant(self):
@@ -957,7 +958,7 @@ class TestMcdIsolation:
         with patch("httpx.AsyncClient", fake_http):
             await client.get_token()
         _, url, _ = fake_http.calls[0]
-        assert "tenant-a.auth0.local" not in url
+        assert urlsplit(url).hostname != "tenant-a.auth0.local"
 
     @pytest.mark.asyncio
     async def test_domain_mismatch_remint_preserves_metadata(self):
@@ -977,7 +978,7 @@ class TestMcdIsolation:
         with patch("httpx.AsyncClient", fake_http):
             await client.get_token()
         _, url, kwargs = fake_http.calls[0]
-        assert url.startswith("https://tenant-b.auth0.local")
+        assert urlsplit(url).hostname == "tenant-b.auth0.local"
         assert kwargs["json"]["metadata"] == {"cart": ["sku-1"]}
 
     @pytest.mark.asyncio
@@ -1137,7 +1138,7 @@ class TestExchangeTransferTokenForInjection:
             ticket = await client.exchange_transfer_token_for_injection("auth0.local")
         assert ticket == "TICKET"
         _, url, _ = fake_http.calls[0]
-        assert url.startswith("https://auth0.local")
+        assert urlsplit(url).hostname == "auth0.local"
 
     @pytest.mark.asyncio
     async def test_returns_none_without_store(self):
