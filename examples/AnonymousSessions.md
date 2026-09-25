@@ -88,21 +88,17 @@ If the exchange errors (network failure, a non-200, or an unparseable response),
 
 ## Error Handling
 
-All anonymous session errors subclass `AnonymousSessionApiError`, carrying a `.code` you can branch on:
+All anonymous session errors subclass `AnonymousSessionError`, carrying a `.code` you can branch on:
 
 ```python
 from auth0_server_python.error import (
-    AnonymousSessionFeatureNotEnabledError,
-    AnonymousSessionClientNotEnabledError,
-    AnonymousSessionClientNotSupportedError,
-    AnonymousSessionResourceServerError,
-    AnonymousSessionScopeError,
     AnonymousSessionCreateError,
     AnonymousSessionTokenError,
 )
 
 try:
     session = await server_client.anonymous.create_session(audience="...", scope="...")
-except AnonymousSessionFeatureNotEnabledError:
-    ...
+except AnonymousSessionCreateError as e:
+    if e.code == "feature_not_enabled":
+        ...
 ```

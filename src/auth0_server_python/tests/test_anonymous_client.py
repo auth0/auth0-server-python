@@ -23,12 +23,7 @@ from auth0_server_python.auth_types import (
 )
 from auth0_server_python.encryption.encrypt import encrypt
 from auth0_server_python.error import (
-    AnonymousSessionClientNotEnabledError,
-    AnonymousSessionClientNotSupportedError,
     AnonymousSessionCreateError,
-    AnonymousSessionFeatureNotEnabledError,
-    AnonymousSessionResourceServerError,
-    AnonymousSessionScopeError,
     AnonymousSessionTokenError,
     ConfigurationError,
     DomainResolverError,
@@ -379,8 +374,9 @@ class TestCreateSession:
             _fake_response(403, {"error": "feature_not_enabled", "error_description": "disabled"})
         ])
         with patch("httpx.AsyncClient", fake_http):
-            with pytest.raises(AnonymousSessionFeatureNotEnabledError):
+            with pytest.raises(AnonymousSessionCreateError) as exc:
                 await client.create_session(audience="aud", scope="s")
+        assert exc.value.code == "feature_not_enabled"
 
     @pytest.mark.asyncio
     async def test_unauthorized_client_maps_to_typed_error(self):
@@ -390,43 +386,33 @@ class TestCreateSession:
             _fake_response(403, {"error": "unauthorized_client", "error_description": "not enabled"})
         ])
         with patch("httpx.AsyncClient", fake_http):
-            with pytest.raises(AnonymousSessionClientNotEnabledError):
+            with pytest.raises(AnonymousSessionCreateError) as exc:
                 await client.create_session(audience="aud", scope="s")
+        assert exc.value.code == "unauthorized_client"
 
     @pytest.mark.asyncio
-    async def test_dpop_required_client_maps_to_not_supported_with_literal_message(self):
-        store = OneSlotStore()
-        client = _make_client(anonymous_store=store)
-        message = "Client configuration requires the use of Proof-of-Possession mechanism"
-        fake_http = _FakeAsyncClient([
-            _fake_response(400, {"error": "unauthorized_client", "error_description": message})
-        ])
-        with patch("httpx.AsyncClient", fake_http):
-            with pytest.raises(AnonymousSessionClientNotSupportedError) as exc:
-                await client.create_session(audience="aud", scope="s")
-        assert message in str(exc.value)
-
-    @pytest.mark.asyncio
-    async def test_invalid_target_maps_to_resource_server_error(self):
+    async def test_invalid_target_maps_to_typed_error(self):
         store = OneSlotStore()
         client = _make_client(anonymous_store=store)
         fake_http = _FakeAsyncClient([
             _fake_response(400, {"error": "invalid_target", "error_description": "bad audience"})
         ])
         with patch("httpx.AsyncClient", fake_http):
-            with pytest.raises(AnonymousSessionResourceServerError):
+            with pytest.raises(AnonymousSessionCreateError) as exc:
                 await client.create_session(audience="aud", scope="s")
+        assert exc.value.code == "invalid_target"
 
     @pytest.mark.asyncio
-    async def test_invalid_scope_maps_to_scope_error(self):
+    async def test_invalid_scope_maps_to_typed_error(self):
         store = OneSlotStore()
         client = _make_client(anonymous_store=store)
         fake_http = _FakeAsyncClient([
             _fake_response(400, {"error": "invalid_scope", "error_description": "bad scope"})
         ])
         with patch("httpx.AsyncClient", fake_http):
-            with pytest.raises(AnonymousSessionScopeError):
+            with pytest.raises(AnonymousSessionCreateError) as exc:
                 await client.create_session(audience="aud", scope="s")
+        assert exc.value.code == "invalid_scope"
 
     @pytest.mark.asyncio
     async def test_network_failure_raises_create_error(self):
@@ -653,8 +639,9 @@ class TestGetToken:
             _fake_response(403, {"error": "feature_not_enabled", "error_description": "off"}),
         ])
         with patch("httpx.AsyncClient", fake_http):
-            with pytest.raises(AnonymousSessionFeatureNotEnabledError):
+            with pytest.raises(AnonymousSessionTokenError) as exc:
                 await client.get_token()
+        assert exc.value.code == "feature_not_enabled"
         assert len(fake_http.calls) == 1
 
     @pytest.mark.asyncio

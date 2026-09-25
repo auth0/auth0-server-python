@@ -23,13 +23,8 @@ from auth0_server_python.auth_types import (
 )
 from auth0_server_python.encryption.encrypt import decrypt, encrypt
 from auth0_server_python.error import (
-    AnonymousSessionApiError,
-    AnonymousSessionClientNotEnabledError,
-    AnonymousSessionClientNotSupportedError,
     AnonymousSessionCreateError,
-    AnonymousSessionFeatureNotEnabledError,
-    AnonymousSessionResourceServerError,
-    AnonymousSessionScopeError,
+    AnonymousSessionError,
     AnonymousSessionTokenError,
     ConfigurationError,
     DomainResolverError,
@@ -228,14 +223,12 @@ class AnonymousClient:
 
     def _map_anonymous_error(
         self,
-        status_code: int,
         error_data: dict[str, Any],
         operation: str,
     ) -> Exception:
         """Map a server error response to a typed exception.
 
         Args:
-            status_code: The HTTP status code of the response.
             error_data: The parsed error response body.
             operation: One of 'create', 'token'.
 
@@ -247,22 +240,12 @@ class AnonymousClient:
 
         if code in ("session_expired", "invalid_session_token"):
             return _AnonymousSessionExpired(description)
-        if status_code == 400 and "Proof-of-Possession" in description:
-            return AnonymousSessionClientNotSupportedError(description, error_data)
-        if code == "feature_not_enabled":
-            return AnonymousSessionFeatureNotEnabledError(description, error_data)
-        if code == "unauthorized_client":
-            return AnonymousSessionClientNotEnabledError(description, error_data)
-        if code in ("invalid_target", "invalid_request"):
-            return AnonymousSessionResourceServerError(description, error_data)
-        if code == "invalid_scope":
-            return AnonymousSessionScopeError(description, error_data)
 
         if operation == "create":
-            return AnonymousSessionCreateError(description, cause=error_data)
+            return AnonymousSessionCreateError(description, code=code or "anonymous_create_error", cause=error_data)
         if operation == "token":
-            return AnonymousSessionTokenError(description, error_data)
-        return AnonymousSessionApiError(code or "anonymous_error", description, error_data)
+            return AnonymousSessionTokenError(description, code=code or "anonymous_token_error", cause=error_data)
+        return AnonymousSessionError(code or "anonymous_error", description, error_data)
 
     # ============================================================================
     # METADATA VALIDATION
@@ -386,7 +369,7 @@ class AnonymousClient:
 
             if response.status_code != 200:
                 error_data = self._parse_anonymous_error_body(response)
-                mapped = self._map_anonymous_error(response.status_code, error_data, "create")
+                mapped = self._map_anonymous_error(error_data, "create")
                 if isinstance(mapped, _AnonymousSessionExpired):
                     # Internal-only type must never escape.
                     raise AnonymousSessionCreateError(str(mapped))
@@ -485,7 +468,7 @@ class AnonymousClient:
 
             if response.status_code != 200:
                 error_data = self._parse_anonymous_error_body(response)
-                mapped = self._map_anonymous_error(response.status_code, error_data, "token")
+                mapped = self._map_anonymous_error(error_data, "token")
                 if isinstance(mapped, _AnonymousSessionExpired):
                     # One follow-up create call on expiry, never a loop.
                     return await self._create_session_at(

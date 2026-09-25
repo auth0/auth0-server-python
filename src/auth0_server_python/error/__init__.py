@@ -430,8 +430,8 @@ class PasskeyErrorCode:
 # Anonymous Session Error Classes
 # =============================================================================
 
-class AnonymousSessionApiError(Auth0Error):
-    """Base class for anonymous session API errors."""
+class AnonymousSessionError(Auth0Error):
+    """Base class for anonymous session errors."""
 
     def __init__(
         self,
@@ -444,60 +444,18 @@ class AnonymousSessionApiError(Auth0Error):
         self.cause = cause
 
 
-class AnonymousSessionCreateError(AnonymousSessionApiError):
+class AnonymousSessionCreateError(AnonymousSessionError):
     """Error thrown when creating or re-minting an anonymous session fails."""
 
     def __init__(self, message: str, code: str = "anonymous_create_error", cause: Optional[dict] = None):
         super().__init__(code, message, cause)
 
 
-class AnonymousSessionLogoutError(AnonymousSessionApiError):
-    """Error thrown when anonymous logout fails."""
-
-    def __init__(self, message: str, cause: Optional[dict] = None):
-        super().__init__("anonymous_logout_error", message, cause)
-
-
-class AnonymousSessionTokenError(AnonymousSessionApiError):
+class AnonymousSessionTokenError(AnonymousSessionError):
     """Error thrown when get_token() fails for reasons other than session expiry."""
 
-    def __init__(self, message: str, cause: Optional[dict] = None):
-        super().__init__("anonymous_token_error", message, cause)
-
-
-class AnonymousSessionFeatureNotEnabledError(AnonymousSessionCreateError):
-    """Error thrown when the tenant has not enabled the anonymous sessions add-on."""
-
-    def __init__(self, message: str, cause: Optional[dict] = None):
-        super().__init__(message, "anonymous_feature_not_enabled_error", cause)
-
-
-class AnonymousSessionClientNotEnabledError(AnonymousSessionCreateError):
-    """Error thrown when the client is not enabled for anonymous sessions."""
-
-    def __init__(self, message: str, cause: Optional[dict] = None):
-        super().__init__(message, "anonymous_client_not_enabled_error", cause)
-
-
-class AnonymousSessionClientNotSupportedError(AnonymousSessionCreateError):
-    """Error thrown when the client type does not support anonymous sessions (e.g. DPoP-mandated)."""
-
-    def __init__(self, message: str, cause: Optional[dict] = None):
-        super().__init__(message, "anonymous_client_not_supported_error", cause)
-
-
-class AnonymousSessionResourceServerError(AnonymousSessionCreateError):
-    """Error thrown when the requested audience is not a valid resource server."""
-
-    def __init__(self, message: str, cause: Optional[dict] = None):
-        super().__init__(message, "anonymous_resource_server_error", cause)
-
-
-class AnonymousSessionScopeError(AnonymousSessionCreateError):
-    """Error thrown when the requested scope is not granted to anonymous callers."""
-
-    def __init__(self, message: str, cause: Optional[dict] = None):
-        super().__init__(message, "anonymous_scope_error", cause)
+    def __init__(self, message: str, code: str = "anonymous_token_error", cause: Optional[dict] = None):
+        super().__init__(code, message, cause)
 
 
 class _AnonymousSessionExpired(Auth0Error):
