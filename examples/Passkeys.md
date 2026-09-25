@@ -105,12 +105,11 @@ print(f"Signed up and logged in: {user['sub']}")
 
 ## 2. Passkey Login
 
-Identical shape, different endpoints. The login challenge takes an optional `username` hint (for conditional UI), and the browser uses `navigator.credentials.get()`.
+Identical shape, different endpoints. The browser uses `navigator.credentials.get()` and the user picks a passkey from the prompt — that credential identifies the user, so the login challenge takes no username.
 
 ```python
 # Step 1 — login challenge
 challenge = await server_client.passkey_login_challenge(
-    username="existing.user@example.com",            # optional
     connection="Username-Password-Authentication",   # optional
     store_options={"request": request, "response": response},
 )

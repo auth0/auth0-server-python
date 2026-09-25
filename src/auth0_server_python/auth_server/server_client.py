@@ -3520,7 +3520,11 @@ class ServerClient(Generic[TStoreOptions]):
         then call signin_with_passkey() with the auth_session and credential result.
 
         Args:
-            username: Optional username hint for conditional UI.
+            username: Deprecated and ignored. Auth0 rejects ``username`` on the
+                passkey login challenge (the user is identified by the selected
+                credential, not by a supplied username), so it is never forwarded.
+                Retained for backward compatibility and will be removed in a future
+                major release; passing it emits a DeprecationWarning.
             connection: Auth0 database connection name (realm).
             organization: Auth0 organization ID or name.
             store_options: Optional options for domain resolution.
@@ -3532,6 +3536,15 @@ class ServerClient(Generic[TStoreOptions]):
             PasskeyError: If the challenge request fails.
             EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        if username is not None:
+            warnings.warn(
+                "The 'username' argument to passkey_login_challenge is ignored: Auth0 "
+                "rejects 'username' on the passkey login challenge (the user is "
+                "identified by the selected credential). It is retained for backward "
+                "compatibility and will be removed in a future major release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         try:
             domain = await self._resolve_current_domain(store_options)
 
@@ -3539,8 +3552,6 @@ class ServerClient(Generic[TStoreOptions]):
             body: dict[str, Any] = {"client_id": self._client_id}
             if self._client_secret:
                 body["client_secret"] = self._client_secret
-            if username:
-                body["username"] = username
             if connection:
                 body["realm"] = connection
             if resolved_org:
