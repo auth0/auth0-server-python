@@ -62,6 +62,8 @@ server_client = ServerClient(
 )
 ```
 
+`ServerClient` creates no default stores — provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
+
 For apps using request/response-backed stores or multiple custom domains, pass `store_options={"request": request, "response": response}` to each method that reads or writes transaction/session state.
 
 ## 1. Email OTP

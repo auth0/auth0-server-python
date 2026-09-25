@@ -27,6 +27,8 @@ server_client = ServerClient(
 )
 ```
 
+`ServerClient` creates no default stores — provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
+
 ## Login to the application
 
 Use the login methods to authenticate to the application and get a refresh token in order to use MRRT to call the My Account API. If you are also intending to authorize access to any custom API, you may optionally specify an audience and any relevant scopes but you must at a minimum include the `offline_access` scope to ensure you obtain a refresh token.

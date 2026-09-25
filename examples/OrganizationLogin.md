@@ -34,6 +34,8 @@ authorization_url = await auth0.start_interactive_login(
 )
 ```
 
+`ServerClient` creates no default stores — provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
+
 `organization` accepts either an org ID (with the `org_` prefix) or a human-readable org name. The SDK validates the corresponding `org_id` or `org_name` claim in the returned ID token.
 
 ## Multi-Org Login

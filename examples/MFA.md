@@ -124,6 +124,8 @@ except MfaRequiredError as error:
     mfa_token = context.mfa_token  # Raw token for MFA API calls
 ```
 
+`ServerClient` creates no default stores — provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
+
 > [!NOTE]
 > `get_access_token()` is not the only origin of `MfaRequiredError`. A passkey login (`signin_with_passkey`) raises the same error when a second factor is required — but there is **no session yet** at that point, which changes how you complete and persist the flow. See [Passkeys.md → Completing MFA on a passkey login](Passkeys.md#completing-mfa-on-a-passkey-login-and-where-the-session-comes-from).
 

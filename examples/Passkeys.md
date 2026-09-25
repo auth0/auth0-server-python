@@ -31,13 +31,25 @@ A passkey ceremony is always **two steps**, because the WebAuthn signature happe
 ```python
 from auth0_server_python.auth_server.server_client import ServerClient
 
+# Passkey sign-in persists a server-side session, and the challenge step stores
+# short-lived transaction data — so ServerClient needs a state store and a
+# transaction store (it does not create defaults). If your framework wrapper
+# (e.g. auth0-fastapi) already provides these, reuse them; otherwise create your
+# own implementations of the StateStore / TransactionStore ABCs.
+state_store = YourStateStore(...)              # or the store your framework provides
+transaction_store = YourTransactionStore(...)  # or the store your framework provides
+
 server_client = ServerClient(
     domain="YOUR_CUSTOM_DOMAIN",
     client_id="YOUR_CLIENT_ID",
     client_secret="YOUR_CLIENT_SECRET",
     secret="YOUR_SECRET",
+    state_store=state_store,
+    transaction_store=transaction_store,
 )
 ```
+
+For store implementations (cookie, Redis, database) and how to pass `store_options`, see [examples/ConfigureStore.md](ConfigureStore.md).
 
 The **Passkey** grant (`urn:okta:params:oauth:grant-type:webauthn`) must be enabled for your application under **Applications → Your App → Grant Types**.
 

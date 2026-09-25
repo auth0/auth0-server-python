@@ -23,6 +23,9 @@ server_client = ServerClient(
     }
 )
 ```
+
+`ServerClient` creates no default stores — provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
+
 Now call `start_interactive_login()` to obtain the authorization URL and redirect the user:
 ```python
 authorization_url = await server_client.start_interactive_login()
