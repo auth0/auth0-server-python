@@ -10404,8 +10404,8 @@ def _setup_complete_interactive_login(client, mocker):
 
 
 @pytest.mark.asyncio
-async def test_complete_interactive_login_does_not_clear_anonymous_session_by_default(mocker):
-    """Default (clear_anonymous_session_on_login=False): anonymous session is not touched on login."""
+async def test_complete_interactive_login_does_not_clear_anonymous_session_when_disabled(mocker):
+    """clear_anonymous_session_on_login=False: anonymous session is not touched on login."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
@@ -10419,6 +10419,7 @@ async def test_complete_interactive_login_does_not_clear_anonymous_session_by_de
         state_store=AsyncMock(),
         anonymous_store=anon_store,
         secret=secret,
+        clear_anonymous_session_on_login=False,
     )
     _setup_complete_interactive_login(client, mocker)
     logout_spy = mocker.patch.object(client._anonymous_client, "logout", AsyncMock())
@@ -10430,8 +10431,8 @@ async def test_complete_interactive_login_does_not_clear_anonymous_session_by_de
 
 
 @pytest.mark.asyncio
-async def test_complete_interactive_login_clears_anonymous_session_when_enabled(mocker):
-    """clear_anonymous_session_on_login=True: anonymous.logout() is called after session is written."""
+async def test_complete_interactive_login_clears_anonymous_session_by_default(mocker):
+    """Default (clear_anonymous_session_on_login=True): anonymous.logout() is called after session is written."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
@@ -10445,7 +10446,6 @@ async def test_complete_interactive_login_clears_anonymous_session_when_enabled(
         state_store=AsyncMock(),
         anonymous_store=anon_store,
         secret=secret,
-        clear_anonymous_session_on_login=True,
     )
     _setup_complete_interactive_login(client, mocker)
     logout_spy = mocker.patch.object(client._anonymous_client, "logout", AsyncMock())

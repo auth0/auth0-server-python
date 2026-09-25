@@ -167,7 +167,7 @@ class ServerClient(Generic[TStoreOptions]):
         enterprise_connect: bool = False,
         use_mtls: bool = False,
         ssl_context: Optional[ssl.SSLContext] = None,
-        clear_anonymous_session_on_login: bool = False,
+        clear_anonymous_session_on_login: bool = True,
     ):
         """
         Initialize the Auth0 server client.
@@ -212,8 +212,9 @@ class ServerClient(Generic[TStoreOptions]):
             clear_anonymous_session_on_login: When True and an anonymous_store is
                 configured, the anonymous session is cleared via anonymous.logout()
                 after a successful interactive login (complete_interactive_login).
-                Defaults to False. The logout call is best-effort and never fails
-                an otherwise-successful login.
+                Defaults to True. Set to False to keep the anonymous session active
+                across the login boundary. The logout call is best-effort and never
+                fails an otherwise-successful login.
 
         Raises:
             ConfigurationError: If `mfa_token_ttl` is not a positive number of seconds.
