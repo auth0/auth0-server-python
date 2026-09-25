@@ -29,6 +29,8 @@ client = ServerClient(
 )
 ```
 
+`ServerClient` creates no default stores — provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
+
 ### Method 2: Dynamic Domain Resolver (MCD)
 
 For MCD support, provide a domain resolver function that receives a `DomainResolverContext`:

@@ -7819,7 +7819,10 @@ async def test_passkey_login_challenge_minimal_body(mocker):
 
 
 @pytest.mark.asyncio
-async def test_passkey_login_challenge_with_username(mocker):
+async def test_passkey_login_challenge_ignores_username(mocker):
+    """username is deprecated and never forwarded: Auth0 rejects it on the login
+    challenge (passkey login is discoverable/usernameless). Passing it emits a
+    DeprecationWarning and leaves the request body unchanged."""
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -7834,11 +7837,12 @@ async def test_passkey_login_challenge_with_username(mocker):
     mock_response.json = MagicMock(return_value=_PASSKEY_LOGIN_CHALLENGE_RESPONSE)
     mock_post.return_value = mock_response
 
-    await client.passkey_login_challenge(username="jane@example.com")
+    with pytest.warns(DeprecationWarning):
+        await client.passkey_login_challenge(username="jane@example.com")
 
     args, kwargs = mock_post.call_args
     body = kwargs["json"]
-    assert body["username"] == "jane@example.com"
+    assert "username" not in body
 
 
 @pytest.mark.asyncio

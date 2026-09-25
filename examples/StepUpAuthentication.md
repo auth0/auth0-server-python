@@ -113,6 +113,8 @@ async def handle_callback(callback_url, request, response):
     return (result.get("app_state") or {}).get("returnTo", "/")
 ```
 
+`ServerClient` creates no default stores — provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
+
 > [!NOTE]
 > The redirect itself is framework-specific - these handlers return the URL to redirect to, and your app issues the actual HTTP redirect (e.g. a `302`/`303`). `max_age: 0` matters: without it, a user who authenticated moments ago may be returned straight to your callback without a fresh MFA prompt.
 

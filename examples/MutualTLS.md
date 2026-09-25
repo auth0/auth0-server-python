@@ -43,6 +43,8 @@ auth0 = ServerClient(
 )
 ```
 
+`ServerClient` creates no default stores — provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
+
 The SDK passes `ssl_context` as `verify=ssl_context` to every `httpx.AsyncClient` it constructs, including the authlib client used for the authorization-code exchange. You never call `load_cert_chain` inside the SDK - the caller owns the TLS material.
 
 ## Mutual exclusion
