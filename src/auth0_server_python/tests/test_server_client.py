@@ -10103,7 +10103,7 @@ async def test_start_interactive_login_absent_session_no_param(mocker):
 
 @pytest.mark.asyncio
 async def test_start_interactive_login_malformed_anonymous_token_denies_link_allows_login(mocker):
-    """Undecryptable stored token: deny the link, never abort the login."""
+    """An undecryptable stored token denies the link but never aborts the login."""
     anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": "not-a-valid-jwe"})
     client = ServerClient(
@@ -10298,7 +10298,7 @@ async def test_start_interactive_login_does_not_clobber_organization_or_invitati
 
 @pytest.mark.asyncio
 async def test_start_interactive_login_suppresses_injection_on_enterprise_connect(mocker):
-    """Enterprise Connect does not support anonymous-session linking: no exchange, no param."""
+    """Enterprise Connect skips anonymous-session linking entirely, no exchange and no param."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
@@ -10338,7 +10338,7 @@ async def test_start_interactive_login_suppresses_injection_on_enterprise_connec
 
 @pytest.mark.asyncio
 async def test_start_interactive_login_fail_open_when_exchange_returns_none(mocker):
-    """A failed/absent exchange yields no param and still returns the login URL (fail-open)."""
+    """A failed/absent exchange yields no param and still returns the login URL."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
@@ -10405,7 +10405,7 @@ def _setup_complete_interactive_login(client, mocker):
 
 @pytest.mark.asyncio
 async def test_complete_interactive_login_does_not_clear_anonymous_session_when_disabled(mocker):
-    """clear_anonymous_session_on_login=False: anonymous session is not touched on login."""
+    """With clear_anonymous_session_on_login=False, the anonymous session is not touched on login."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
@@ -10432,7 +10432,7 @@ async def test_complete_interactive_login_does_not_clear_anonymous_session_when_
 
 @pytest.mark.asyncio
 async def test_complete_interactive_login_clears_anonymous_session_by_default(mocker):
-    """Default (clear_anonymous_session_on_login=True): anonymous.logout() is called after session is written."""
+    """By default (clear_anonymous_session_on_login=True), anonymous.logout() is called after the session is written."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
@@ -10561,7 +10561,7 @@ async def test_logout_no_anonymous_session_makes_no_remote_call(mocker):
 
 @pytest.mark.asyncio
 async def test_logout_unchanged_without_anonymous_store(mocker):
-    """No anonymous_store configured: logout is unchanged and makes no anonymous remote call."""
+    """With no anonymous_store configured, logout is unchanged and makes no anonymous remote call."""
     mock_state_store = AsyncMock()
     client = ServerClient(
         domain="auth0.local",

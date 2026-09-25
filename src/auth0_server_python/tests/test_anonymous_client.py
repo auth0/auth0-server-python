@@ -61,7 +61,7 @@ def _fake_response(status_code=200, body=None):
 
 
 class _FakeAsyncClient:
-    """Patches httpx.AsyncClient. Call sequence maps 1:1 to responses."""
+    """Patches httpx.AsyncClient. The call sequence maps one-to-one to responses."""
 
     def __init__(self, responses):
         self._responses = list(responses)
@@ -148,13 +148,13 @@ class TestAnonymousClientConstructor:
         assert client._domain_resolver is resolver
 
     def test_no_dpop_key_parameter_exists(self):
-        """Structural guard: AnonymousClient has no dpop_key parameter anywhere."""
+        """AnonymousClient has no dpop_key parameter anywhere in its public API."""
         for name, method in inspect.getmembers(AnonymousClient, predicate=inspect.isfunction):
             sig = inspect.signature(method)
             assert "dpop_key" not in sig.parameters, f"{name} must never accept dpop_key"
 
 
-# ── Fail-closed store isolation ───────────────────────────────────────────────
+# ── Store isolation ────────────────────────────────────────────────────────────
 
 class TestStoreIsolation:
     @pytest.mark.asyncio
@@ -177,7 +177,7 @@ class TestStoreIsolation:
 
     @pytest.mark.asyncio
     async def test_no_write_attempted_when_store_missing(self):
-        """Fails closed before any store write, never falls back to another store."""
+        """No anonymous_store configured raises before any write and never falls back to another store."""
         client = _make_client(anonymous_store=None)
         with patch("httpx.AsyncClient") as mock_http:
             with pytest.raises(ConfigurationError):
@@ -631,7 +631,7 @@ class TestGetToken:
 
     @pytest.mark.asyncio
     async def test_two_consecutive_session_expired_raises_not_loops(self):
-        """Retry-once bound: exactly 2 upstream POSTs, then raise."""
+        """The retry-once bound allows exactly 2 upstream POSTs, then raises."""
         store = OneSlotStore()
         _stored_context(store, expires_at=int(time.time()) - 10)
         client = _make_client(anonymous_store=store)
@@ -1089,7 +1089,7 @@ class TestExchangeTransferTokenForInjection:
 
     @pytest.mark.asyncio
     async def test_domain_mismatch_fails_closed_no_mint(self):
-        """MCD fail-closed: never mint a ticket for a host the session was not created against."""
+        """Under MCD, never mint a ticket for a host the session was not created against."""
         store = OneSlotStore()
         _stored_context(store, domain="tenant-a.auth0.local")
         client = _make_client(anonymous_store=store)

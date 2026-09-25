@@ -80,7 +80,7 @@ When an anonymous session is active, `start_interactive_login()` automatically i
 
 The raw `session_token` never goes on the URL. At the moment the `/authorize` URL is built, the SDK exchanges the stored session token for a short-lived (30s) single-use ticket (`anon_transfer_token`) via `POST /anonymous/token`, and forwards only that ticket as the `anon_transfer_token` query parameter. The raw session token stays inside the SDK's encrypted store and the ticket is never persisted. The ticket is short-lived and grants no authorization on its own, but you should still set `Referrer-Policy: no-referrer` on your login pages and never log the authorize URL.
 
-The exchange fails open: if it errors (network failure, a non-200, or an unparseable response), login proceeds with no ticket and no linking, and never aborts the login.
+If the exchange errors (network failure, a non-200, or an unparseable response), login proceeds with no ticket and no linking, and never aborts the login.
 
 ## Rate-Limiting `get_token()`
 

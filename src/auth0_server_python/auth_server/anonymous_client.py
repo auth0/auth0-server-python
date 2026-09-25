@@ -43,8 +43,7 @@ from auth0_server_python.utils.helpers import (
 ANON_IDENTIFIER = "_a0_anon"
 ANON_TOKEN_SALT = "anon_session"
 
-# Audience for the /anonymous/token exchange that mints a short-lived transfer
-# ticket for login injection.
+# Audience that mints the login-injection transfer ticket instead of an access token.
 TRANSFER_AUDIENCE = "urn:auth0:anon_transfer"
 
 _METADATA_MAX_BYTES = 1024
@@ -92,7 +91,7 @@ class AnonymousClient:
         return httpx.AsyncClient(headers=headers, **kwargs)
 
     def _require_store(self) -> None:
-        """Fail closed when no anonymous store is configured.
+        """Raise ConfigurationError when no anonymous_store is configured.
 
         Raises:
             ConfigurationError: No anonymous_store configured.
@@ -525,8 +524,7 @@ class AnonymousClient:
             sub=new_sub if new_sub is not None else context.sub,
         )
 
-        # Re-read before writing back so concurrent remints for other audiences
-        # are preserved, and writes to a deleted or replaced session are skipped.
+        # Re-read to preserve a concurrent remint and skip a stale write.
         current_stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
         if not current_stored:
             return result
@@ -592,7 +590,7 @@ class AnonymousClient:
     async def _mint_transfer_token(
         self, session_token: str, origin_domain: str
     ) -> Optional[str]:
-        """Exchange a session token for a transfer ticket. Fails open.
+        """Exchange a session token for a transfer ticket.
 
         Args:
             session_token: The stored anonymous session token.

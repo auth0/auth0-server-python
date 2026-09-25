@@ -213,8 +213,8 @@ class ServerClient(Generic[TStoreOptions]):
                 configured, the anonymous session is cleared via anonymous.logout()
                 after a successful interactive login (complete_interactive_login).
                 Defaults to True. Set to False to keep the anonymous session active
-                across the login boundary. The logout call is best-effort and never
-                fails an otherwise-successful login.
+                across the login boundary. A failure clearing the anonymous session
+                never fails the login.
 
         Raises:
             ConfigurationError: If `mfa_token_ttl` is not a positive number of seconds.
@@ -1477,8 +1477,7 @@ class ServerClient(Generic[TStoreOptions]):
                     if session_domain and self._normalize_url(session_domain) == self._normalize_url(domain):
                         await self._state_store.delete(self._state_identifier, store_options)
 
-        # End any active anonymous session on authenticated logout to close the
-        # shared-device re-injection path. Failures are swallowed.
+        # Closes the shared-device re-injection path.
         if self._anonymous_store is not None:
             try:
                 await self._anonymous_client._end_session_if_active(store_options)

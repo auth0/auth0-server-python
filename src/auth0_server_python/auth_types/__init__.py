@@ -237,7 +237,7 @@ class LogoutOptions(BaseModel):
 
 
 class CreateAnonymousSessionOptions(BaseModel):
-    """Options bundle for create_session(): audience, scope, and metadata."""
+    """Options bundle for create_session(), carrying audience, scope, and metadata."""
 
     model_config = ConfigDict(extra="forbid")
 
