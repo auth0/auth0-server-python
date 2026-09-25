@@ -10191,7 +10191,7 @@ async def test_start_interactive_login_suppresses_injection_on_par_branch(mocker
 
 @pytest.mark.asyncio
 async def test_start_interactive_login_constructor_fixation_blocked_no_active_session():
-    """A caller-supplied session_token in constructor authorization_params is blocked by the unconditional pop() at the injection site, since INTERNAL_AUTHORIZE_PARAMS alone only filters per-call options."""
+    """The unconditional pop() at the injection site blocks a session_token supplied via constructor authorization_params."""
     assert "session_token" in INTERNAL_AUTHORIZE_PARAMS  # belt-and-braces still present
 
     anon_store = OneSlotStore()  # no session -> the vulnerable case

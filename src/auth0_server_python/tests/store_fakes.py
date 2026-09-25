@@ -2,7 +2,7 @@
 
 
 class OneSlotStore:
-    """Models a StatelessStateStore with one physical slot per instance, where the identifier is an encryption salt rather than a location key, so a mismatched identifier reads as absent rather than a different record."""
+    """A StatelessStateStore fake with one physical slot per instance, where the identifier is an encryption salt rather than a location key."""
 
     def __init__(self):
         self.slot = None
