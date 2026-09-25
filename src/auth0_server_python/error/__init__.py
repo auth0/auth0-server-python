@@ -427,6 +427,45 @@ class PasskeyErrorCode:
 
 
 # =============================================================================
+# Anonymous Session Error Classes
+# =============================================================================
+
+class AnonymousSessionError(Auth0Error):
+    """Base class for anonymous session errors."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        cause: Optional[dict[str, Any]] = None
+    ):
+        super().__init__(message)
+        self.code = code
+        self.cause = cause
+
+
+class AnonymousSessionCreateError(AnonymousSessionError):
+    """Error thrown when creating or re-minting an anonymous session fails."""
+
+    def __init__(self, message: str, code: str = "anonymous_create_error", cause: Optional[dict] = None):
+        super().__init__(code, message, cause)
+
+
+class AnonymousSessionTokenError(AnonymousSessionError):
+    """Error thrown when get_token() fails for reasons other than session expiry."""
+
+    def __init__(self, message: str, code: str = "anonymous_token_error", cause: Optional[dict] = None):
+        super().__init__(code, message, cause)
+
+
+class _AnonymousSessionExpired(Auth0Error):
+    """Internal-only signal that the stored session token is expired or invalid."""
+
+    def __init__(self, message: str = "The anonymous session token is expired or invalid."):
+        super().__init__(message)
+        self.name = "_AnonymousSessionExpired"
+
+# =============================================================================
 # Enterprise Connect Error Classes
 # =============================================================================
 

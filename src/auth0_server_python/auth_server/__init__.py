@@ -1,3 +1,4 @@
+from .anonymous_client import AnonymousClient
 from .mfa_client import MfaClient
 from .my_account_client import MyAccountClient
 from .passwordless_client import PasswordlessClient
@@ -7,6 +8,7 @@ __all__ = [
     "ServerClient",
     "MyAccountClient",
     "MfaClient",
+    "AnonymousClient",
     "PasswordlessClient",
     "is_federated_domain",
 ]

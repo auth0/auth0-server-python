@@ -17,14 +17,18 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from jwcrypto import jwk
 
 from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
+from auth0_server_python.auth_server.anonymous_client import ANON_IDENTIFIER, AnonymousClient
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.server_client import (
     _EC_ALLOWED_METHODS,
+    INTERNAL_AUTHORIZE_PARAMS,
     ServerClient,
     is_federated_domain,
 )
 from auth0_server_python.auth_types import (
+    AnonymousSessionContext,
+    AnonymousTokenSetEntry,
     CompleteConnectAccountRequest,
     ConnectAccountOptions,
     ConnectAccountRequest,
@@ -51,6 +55,7 @@ from auth0_server_python.auth_types import (
     TransactionData,
     UserClaims,
 )
+from auth0_server_python.encryption.encrypt import encrypt
 from auth0_server_python.error import (
     AccessTokenError,
     AccessTokenErrorCode,
@@ -76,6 +81,7 @@ from auth0_server_python.error import (
     SessionExpiredError,
     StartLinkUserError,
 )
+from auth0_server_python.tests.store_fakes import OneSlotStore
 from auth0_server_python.utils import PKCE, State
 
 
@@ -9900,6 +9906,773 @@ async def test_complete_interactive_login_milliseconds_ceiling_fails_open(mocker
     mock_state_store.set.assert_awaited_once()
     stored_state = mock_state_store.set.call_args.args[1]
     assert stored_state.internal.session_expires_at is None
+
+
+# =============================================================================
+# ANONYMOUS SESSIONS - WIRING AND LOGIN-INJECTION TESTS
+# =============================================================================
+
+
+def _make_anon_context(secret, **overrides):
+    ts_keys = {"access_token", "expires_at", "audience", "scope"}
+    ts_defaults = {
+        "access_token": "anon_at1",
+        "expires_at": int(time.time()) + 3600,
+    }
+    ctx_defaults = {
+        "session_token": "ANON_TOKEN_1",
+        "created_at": int(time.time()),
+    }
+    for k in list(overrides):
+        if k in ts_keys:
+            ts_defaults[k] = overrides.pop(k)
+        else:
+            ctx_defaults[k] = overrides.pop(k)
+    token_set = AnonymousTokenSetEntry(**ts_defaults)
+    context = AnonymousSessionContext(token_sets=[token_set], **ctx_defaults)
+    return encrypt(context.model_dump(), secret, "anon_session")
+
+
+@pytest.mark.asyncio
+async def test_server_client_anonymous_property():
+    """ServerClient exposes an 'anonymous' property returning an AnonymousClient instance."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        secret="a-test-secret-with-enough-length",
+        transaction_store=AsyncMock(),
+        state_store=AsyncMock(),
+    )
+    assert isinstance(client.anonymous, AnonymousClient)
+
+
+@pytest.mark.asyncio
+async def test_anonymous_client_receives_own_store_not_state_store():
+    """The anonymous client must never share the authenticated state store instance."""
+    state_store = AsyncMock()
+    anon_store = OneSlotStore()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        secret="a-test-secret-with-enough-length",
+        transaction_store=AsyncMock(),
+        state_store=state_store,
+        anonymous_store=anon_store,
+    )
+    assert client.anonymous._anonymous_store is anon_store
+    assert client.anonymous._anonymous_store is not state_store
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_no_anonymous_session_is_byte_identical(mocker):
+    """No anonymous store configured -> injection is a complete no-op, existing behaviour unchanged."""
+    mock_transaction_store = AsyncMock()
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=mock_state_store,
+        transaction_store=mock_transaction_store,
+        secret="some-secret",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    captured = {}
+
+    def fake_create_url(endpoint, **kwargs):
+        captured.update(kwargs)
+        return ("https://auth0.local/authorize?client_id=<client_id>", "some_state")
+
+    mocker.patch.object(client._oauth, "create_authorization_url", side_effect=fake_create_url)
+    await client.start_interactive_login()
+    assert "session_token" not in captured
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_injects_transfer_ticket_not_session_token(mocker):
+    """The /authorize URL carries the minted anon_transfer_token, never the raw session_token."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    mocker.patch.object(
+        client._anonymous_client,
+        "exchange_transfer_token_for_injection",
+        AsyncMock(return_value="TICKET_ABC"),
+    )
+    captured = {}
+
+    def fake_create_url(endpoint, **kwargs):
+        captured.update(kwargs)
+        return ("https://auth0.local/authorize?client_id=<client_id>", "some_state")
+
+    mocker.patch.object(client._oauth, "create_authorization_url", side_effect=fake_create_url)
+    await client.start_interactive_login()
+    assert captured.get("anon_transfer_token") == "TICKET_ABC"
+    assert "session_token" not in captured
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_does_not_persist_transfer_token_in_transaction_data(mocker):
+    """The short-lived ticket rides the URL only and is never written to the transaction record."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    mock_transaction_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=mock_transaction_store,
+        anonymous_store=anon_store,
+        secret=secret,
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    mocker.patch.object(
+        client._anonymous_client,
+        "exchange_transfer_token_for_injection",
+        AsyncMock(return_value="TICKET_ABC"),
+    )
+    mocker.patch.object(
+        client._oauth,
+        "create_authorization_url",
+        return_value=("https://auth0.local/authorize?client_id=<client_id>", "some_state"),
+    )
+    await client.start_interactive_login()
+    stored_tx = mock_transaction_store.set.call_args.args[1]
+    assert not hasattr(stored_tx, "session_token")
+    assert not hasattr(stored_tx, "anon_transfer_token")
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_absent_session_no_param(mocker):
+    """An empty anonymous store behaves exactly like no anonymous_store configured."""
+    anon_store = OneSlotStore()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret="a-test-secret-with-enough-length",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    captured = {}
+
+    def fake_create_url(endpoint, **kwargs):
+        captured.update(kwargs)
+        return ("https://auth0.local/authorize?client_id=<client_id>", "some_state")
+
+    mocker.patch.object(client._oauth, "create_authorization_url", side_effect=fake_create_url)
+    await client.start_interactive_login()
+    assert "session_token" not in captured
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_malformed_anonymous_token_denies_link_allows_login(mocker):
+    """An undecryptable stored token denies the link but never aborts the login."""
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": "not-a-valid-jwe"})
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret="a-test-secret-with-enough-length",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    mocker.patch.object(
+        client._oauth,
+        "create_authorization_url",
+        return_value=("https://auth0.local/authorize?client_id=<client_id>", "some_state"),
+    )
+    url = await client.start_interactive_login()
+    assert url == "https://auth0.local/authorize?client_id=<client_id>"
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_suppresses_injection_on_par_branch(mocker):
+    """PAR is not supported for anonymous sessions."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+        authorization_params={"redirect_uri": "/test_redirect_uri", "response_type": "code"},
+        pushed_authorization_requests=True,
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "authorization_endpoint": "https://auth0.local/authorize",
+            "pushed_authorization_request_endpoint": "https://auth0.local/oauth/par",
+        },
+    )
+    exchange = mocker.patch.object(
+        client._anonymous_client,
+        "exchange_transfer_token_for_injection",
+        AsyncMock(return_value="TICKET_ABC"),
+    )
+    captured = {}
+
+    class _FakePost:
+        status_code = 201
+
+        def json(self):
+            return {"request_uri": "urn:ietf:params:oauth:request_uri:xyz"}
+
+    class _FakeHttpClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, **kwargs):
+            captured.update(kwargs.get("data", {}))
+            return _FakePost()
+
+    mocker.patch("httpx.AsyncClient", _FakeHttpClient)
+    await client.start_interactive_login()
+    exchange.assert_not_awaited()
+    assert "anon_transfer_token" not in captured
+    assert "session_token" not in captured
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_constructor_fixation_blocked_no_active_session():
+    """The unconditional pop() at the injection site blocks a session_token supplied via constructor authorization_params."""
+    assert "session_token" in INTERNAL_AUTHORIZE_PARAMS  # belt-and-braces still present
+
+    anon_store = OneSlotStore()  # no session -> the vulnerable case
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret="a-test-secret-with-enough-length",
+        authorization_params={
+            "redirect_uri": "/test_redirect_uri",
+            "session_token": "ATTACKER_SUPPLIED",
+        },
+    )
+    with patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        AsyncMock(return_value={"authorization_endpoint": "https://auth0.local/authorize"}),
+    ):
+        captured = {}
+
+        def fake_create_url(endpoint, **kwargs):
+            captured.update(kwargs)
+            return ("https://auth0.local/authorize?client_id=<client_id>", "some_state")
+
+        with patch.object(client._oauth, "create_authorization_url", side_effect=fake_create_url):
+            await client.start_interactive_login()
+    assert captured.get("session_token") is None
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_per_call_fixation_also_blocked(mocker):
+    """The same vector via options.authorization_params (per-call) is caught by the existing filter."""
+    anon_store = OneSlotStore()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret="a-test-secret-with-enough-length",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    captured = {}
+
+    def fake_create_url(endpoint, **kwargs):
+        captured.update(kwargs)
+        return ("https://auth0.local/authorize?client_id=<client_id>", "some_state")
+
+    mocker.patch.object(client._oauth, "create_authorization_url", side_effect=fake_create_url)
+    await client.start_interactive_login(
+        StartInteractiveLoginOptions(authorization_params={"session_token": "ATTACKER_SUPPLIED"})
+    )
+    assert captured.get("session_token") is None
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_does_not_clobber_organization_or_invitation(mocker):
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    mocker.patch.object(
+        client._anonymous_client,
+        "exchange_transfer_token_for_injection",
+        AsyncMock(return_value="TICKET_ABC"),
+    )
+    captured = {}
+
+    def fake_create_url(endpoint, **kwargs):
+        captured.update(kwargs)
+        return ("https://auth0.local/authorize?client_id=<client_id>", "some_state")
+
+    mocker.patch.object(client._oauth, "create_authorization_url", side_effect=fake_create_url)
+    await client.start_interactive_login(
+        StartInteractiveLoginOptions(organization="org_abc123", invitation="inv_xyz")
+    )
+    assert captured.get("organization") == "org_abc123"
+    assert captured.get("invitation") == "inv_xyz"
+    assert captured.get("anon_transfer_token") == "TICKET_ABC"
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_suppresses_injection_on_enterprise_connect(mocker):
+    """Enterprise Connect skips anonymous-session linking entirely, no exchange and no param."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+        enterprise_connect=True,
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    exchange = mocker.patch.object(
+        client._anonymous_client,
+        "exchange_transfer_token_for_injection",
+        AsyncMock(return_value="TICKET_ABC"),
+    )
+    captured = {}
+
+    def fake_create_url(endpoint, **kwargs):
+        captured.update(kwargs)
+        return ("https://auth0.local/authorize?client_id=<client_id>", "some_state")
+
+    mocker.patch.object(client._oauth, "create_authorization_url", side_effect=fake_create_url)
+    await client.start_interactive_login()
+    exchange.assert_not_awaited()
+    assert "anon_transfer_token" not in captured
+    assert "session_token" not in captured
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_fail_open_when_exchange_returns_none(mocker):
+    """A failed/absent exchange yields no param and still returns the login URL."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    mocker.patch.object(
+        client._anonymous_client,
+        "exchange_transfer_token_for_injection",
+        AsyncMock(return_value=None),
+    )
+    captured = {}
+
+    def fake_create_url(endpoint, **kwargs):
+        captured.update(kwargs)
+        return ("https://auth0.local/authorize?client_id=<client_id>", "some_state")
+
+    mocker.patch.object(client._oauth, "create_authorization_url", side_effect=fake_create_url)
+    url = await client.start_interactive_login()
+    assert "anon_transfer_token" not in captured
+    assert url == "https://auth0.local/authorize?client_id=<client_id>"
+
+
+# ── end anonymous session on authenticated logout ───────────────────────────────
+
+
+# ── clear_anonymous_session_on_login ────────────────────────────────────────────
+
+
+def _setup_complete_interactive_login(client, mocker):
+    """Patch the minimum set of collaborators needed for complete_interactive_login to succeed."""
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"issuer": "https://auth0.local/", "token_endpoint": "https://auth0.local/token"},
+    )
+    mocker.patch.object(client, "_get_jwks_cached", return_value={"keys": [{"kty": "RSA", "kid": "k1"}]})
+    mocker.patch.object(
+        client._oauth,
+        "fetch_token",
+        AsyncMock(return_value={"access_token": "at1", "id_token": "id_jwt", "scope": "openid"}),
+    )
+    mocker.patch("jwt.get_unverified_header", return_value={"kid": "k1"})
+    mock_key = mocker.MagicMock()
+    mock_key.key = "pem"
+    mocker.patch("jwt.PyJWK.from_dict", return_value=mock_key)
+    mocker.patch(
+        "jwt.decode",
+        return_value={"sub": "u1", "iss": "https://auth0.local/", "aud": "cid"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_does_not_clear_anonymous_session_when_disabled(mocker):
+    """With clear_anonymous_session_on_login=False, the anonymous session is not touched on login."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    tx_store = AsyncMock()
+    tx_store.get.return_value = TransactionData(code_verifier="cv1", domain="auth0.local")
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        transaction_store=tx_store,
+        state_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+        clear_anonymous_session_on_login=False,
+    )
+    _setup_complete_interactive_login(client, mocker)
+    logout_spy = mocker.patch.object(client._anonymous_client, "logout", AsyncMock())
+
+    await client.complete_interactive_login("https://auth0.local/cb?code=c&state=s")
+
+    logout_spy.assert_not_awaited()
+    assert anon_store.slot is not None
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_clears_anonymous_session_by_default(mocker):
+    """By default (clear_anonymous_session_on_login=True), anonymous.logout() is called after the session is written."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    tx_store = AsyncMock()
+    tx_store.get.return_value = TransactionData(code_verifier="cv1", domain="auth0.local")
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        transaction_store=tx_store,
+        state_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+    )
+    _setup_complete_interactive_login(client, mocker)
+    logout_spy = mocker.patch.object(client._anonymous_client, "logout", AsyncMock())
+
+    result = await client.complete_interactive_login("https://auth0.local/cb?code=c&state=s")
+
+    assert "state_data" in result
+    logout_spy.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_complete_interactive_login_cleanup_failure_does_not_fail_login(mocker):
+    """A failing anonymous.logout() is swallowed and must never fail an otherwise-successful login."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    tx_store = AsyncMock()
+    tx_store.get.return_value = TransactionData(code_verifier="cv1", domain="auth0.local")
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        transaction_store=tx_store,
+        state_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+        clear_anonymous_session_on_login=True,
+    )
+    _setup_complete_interactive_login(client, mocker)
+    mocker.patch.object(
+        client._anonymous_client, "logout", AsyncMock(side_effect=Exception("store down"))
+    )
+
+    result = await client.complete_interactive_login("https://auth0.local/cb?code=c&state=s")
+
+    assert "state_data" in result
+
+
+class _CapturingHttpClient:
+    """Fake httpx.AsyncClient that records POST URLs and returns a fixed status."""
+
+    posted: list = []
+    status = 204
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def post(self, url, **kwargs):
+        type(self).posted.append(url)
+
+        class _Resp:
+            status_code = _CapturingHttpClient.status
+
+            def json(self):
+                return {}
+
+        return _Resp()
+
+
+@pytest.mark.asyncio
+async def test_logout_ends_active_anonymous_session(mocker):
+    """Authenticated logout clears the local anonymous session with no remote call."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret=secret,
+    )
+    _CapturingHttpClient.posted = []
+    _CapturingHttpClient.status = 204
+    mocker.patch("httpx.AsyncClient", _CapturingHttpClient)
+
+    url = await client.logout()
+
+    assert not any(u.endswith("/anonymous/logout") for u in _CapturingHttpClient.posted)
+    assert anon_store.slot is None
+    assert "logout" in url
+
+
+@pytest.mark.asyncio
+async def test_logout_no_anonymous_session_makes_no_remote_call(mocker):
+    """With no active anonymous session, authenticated logout makes no anonymous remote call."""
+    anon_store = OneSlotStore()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret="a-test-secret-with-enough-length",
+    )
+    _CapturingHttpClient.posted = []
+    _CapturingHttpClient.status = 204
+    mocker.patch("httpx.AsyncClient", _CapturingHttpClient)
+
+    await client.logout()
+
+    assert _CapturingHttpClient.posted == []
+
+
+@pytest.mark.asyncio
+async def test_logout_unchanged_without_anonymous_store(mocker):
+    """With no anonymous_store configured, logout is unchanged and makes no anonymous remote call."""
+    mock_state_store = AsyncMock()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        state_store=mock_state_store,
+        secret="a-test-secret-with-enough-length",
+    )
+    _CapturingHttpClient.posted = []
+    _CapturingHttpClient.status = 204
+    mocker.patch("httpx.AsyncClient", _CapturingHttpClient)
+
+    url = await client.logout()
+
+    mock_state_store.delete.assert_awaited_once()
+    assert _CapturingHttpClient.posted == []
+    assert "logout" in url
+
+
+@pytest.mark.asyncio
+async def test_logout_survives_anonymous_session_cleanup_failure(mocker):
+    """A failure clearing the anonymous session must not break the authenticated logout."""
+    anon_store = AsyncMock()
+    anon_store.get = AsyncMock(return_value={"context": "encrypted"})
+    anon_store.delete = AsyncMock(side_effect=RuntimeError("store delete failed"))
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        anonymous_store=anon_store,
+        secret="a-test-secret-with-enough-length",
+    )
+    _CapturingHttpClient.posted = []
+    _CapturingHttpClient.status = 204
+    mocker.patch("httpx.AsyncClient", _CapturingHttpClient)
+
+    url = await client.logout()
+
+    assert "logout" in url
+    anon_store.delete.assert_awaited_once()
+
+
+# ── Store-collision regression ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_anonymous_write_cannot_destroy_authenticated_session_on_shared_store():
+    """A write to the anonymous store instance never touches the authenticated session on a separate store instance."""
+    shared_store = OneSlotStore()
+    shared_store.slot = ("_a0_session", {"user": {"sub": "real_user"}})
+
+    anon_store = OneSlotStore()
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        secret="a-test-secret-with-enough-length",
+        transaction_store=AsyncMock(),
+        state_store=shared_store,
+        anonymous_store=anon_store,
+    )
+    await client.anonymous._anonymous_store.set(
+        ANON_IDENTIFIER, {"context": _make_anon_context("a-test-secret-with-enough-length")}
+    )
+
+    assert shared_store.slot == ("_a0_session", {"user": {"sub": "real_user"}})
+    session = await client.get_session()
+    assert session is not None
+    assert session.get("user", {}).get("sub") == "real_user"
+
+
+@pytest.mark.asyncio
+async def test_missing_anonymous_store_fails_closed_never_falls_back_to_state_store():
+    """A missing anonymous_store raises before any write, never silently falling back to state_store."""
+    shared_store = OneSlotStore()
+    shared_store.slot = ("_a0_session", {"user": {"sub": "real_user"}})
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        secret="a-test-secret-with-enough-length",
+        transaction_store=AsyncMock(),
+        state_store=shared_store,
+        # anonymous_store intentionally omitted
+    )
+    with pytest.raises(ConfigurationError):
+        await client.anonymous.create_session(audience="aud", scope="s")
+    assert shared_store.slot == ("_a0_session", {"user": {"sub": "real_user"}})
+
+
+@pytest.mark.asyncio
+async def test_get_session_and_get_user_unaffected_by_active_anonymous_session():
+    """Anonymous state never touches _a0_session. get_session()/get_user() see no new keys."""
+    secret = "a-test-secret-with-enough-length"
+    anon_store = OneSlotStore()
+    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    mock_state_store = AsyncMock()
+    mock_state_store.get = AsyncMock(return_value=None)
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="cid",
+        client_secret="csecret",
+        secret=secret,
+        transaction_store=AsyncMock(),
+        state_store=mock_state_store,
+        anonymous_store=anon_store,
+    )
+    assert await client.get_session() is None
+    assert await client.get_user() is None
 
 
 # === Enterprise Connect ===

@@ -236,6 +236,16 @@ class LogoutOptions(BaseModel):
     federated: Optional[bool] = False
 
 
+class CreateAnonymousSessionOptions(BaseModel):
+    """Options bundle for create_session(), carrying audience, scope, and metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    audience: Optional[str] = None
+    scope: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
 class AuthorizationParameters(BaseModel):
     """
     Parameters used in authorization requests.
@@ -869,6 +879,81 @@ class PasskeyTokenResponse(BaseModel):
     id_token: Optional[str] = None
     refresh_token: Optional[str] = None
 
+
+# =============================================================================
+# Anonymous Session Types
+# =============================================================================
+
+
+class AnonymousSession(BaseModel):
+    """Public result of create_session() and the renewal ladder."""
+
+    access_token: str
+    session_token: str
+    expires_at: int
+    session_expires_at: Optional[int] = None
+    metadata: Optional[dict[str, Any]] = None
+    sub: Optional[str] = None
+
+
+class AnonymousSessionData(BaseModel):
+    """Identity and metadata fields returned by AnonymousClient.get_session(), with no session_token."""
+
+    sub: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+    created_at: int
+    session_expires_at: Optional[int] = None
+    domain: Optional[str] = None
+
+
+class AnonymousTokenResponse(BaseModel):
+    """Raw response from POST /anonymous/token."""
+
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    session_expires_in: int
+    session_token: Optional[str] = None
+
+
+class AnonymousCreateTokenResponse(AnonymousTokenResponse):
+    """Raw response from POST /anonymous/token on the create path."""
+
+    session_token: str
+
+
+class AnonymousTransferTokenResponse(BaseModel):
+    """Raw response from POST /anonymous/token on the transfer-ticket path."""
+
+    model_config = ConfigDict(extra="ignore")
+    anon_transfer_token: str
+    token_type: Optional[str] = None
+    expires_in: Optional[int] = None
+
+
+class AnonymousTokenSetEntry(BaseModel):
+    """One cached access token for a specific audience/scope pair."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    access_token: str
+    expires_at: int
+    audience: Optional[str] = None
+    scope: Optional[str] = None
+
+
+class AnonymousSessionContext(BaseModel):
+    """Internal context stored inside the encrypted anonymous session record, rejecting extra fields so a tampered payload raises on decrypt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_token: str
+    token_sets: list[AnonymousTokenSetEntry] = Field(default_factory=list)
+    session_expires_at: Optional[int] = None
+    metadata: Optional[dict[str, Any]] = None
+    created_at: int
+    domain: Optional[str] = None
+    sub: Optional[str] = None
 
 
 # =============================================================================

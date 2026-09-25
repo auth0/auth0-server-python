@@ -28,6 +28,7 @@ from auth0_server_python.auth_schemes.client_assertion import (
     validate_client_assertion_key,
 )
 from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
+from auth0_server_python.auth_server.anonymous_client import AnonymousClient
 from auth0_server_python.auth_server.mfa_client import DEFAULT_MFA_TOKEN_TTL, MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.passwordless_client import PasswordlessClient
@@ -99,7 +100,8 @@ TStoreOptions = TypeVar('TStoreOptions')
 # redirect_uri is intentionally excluded — in MCD mode it is built
 # dynamically from the resolved domain at login time.
 INTERNAL_AUTHORIZE_PARAMS = ["client_id", "response_type",
-                             "code_challenge", "code_challenge_method", "state", "nonce", "scope"]
+                             "code_challenge", "code_challenge_method", "state", "nonce", "scope",
+                             "session_token", "anon_transfer_token"]
 
 # issued_token_type URN for a Session Transfer Token (STT).
 SESSION_TRANSFER_TOKEN_TYPE = "urn:auth0:params:oauth:token-type:session_transfer_token"
@@ -155,6 +157,7 @@ class ServerClient(Generic[TStoreOptions]):
         secret: str = None,
         transaction_store=None,
         state_store=None,
+        anonymous_store=None,
         transaction_identifier: str = "_a0_tx",
         state_identifier: str = "_a0_session",
         authorization_params: Optional[dict[str, Any]] = None,
@@ -164,6 +167,7 @@ class ServerClient(Generic[TStoreOptions]):
         enterprise_connect: bool = False,
         use_mtls: bool = False,
         ssl_context: Optional[ssl.SSLContext] = None,
+        clear_anonymous_session_on_login: bool = True,
     ):
         """
         Initialize the Auth0 server client.
@@ -178,6 +182,13 @@ class ServerClient(Generic[TStoreOptions]):
             secret: Secret used for encryption
             transaction_store: Custom transaction store (defaults to MemoryTransactionStore)
             state_store: Custom state store (defaults to MemoryStateStore)
+            anonymous_store: Store for anonymous session state (server_client.anonymous.*).
+                Must be a distinct store *instance* from state_store, not merely a
+                different identifier. On a store where the identifier is used only
+                as an encryption salt rather than a location key, writing anonymous
+                state through state_store would silently overwrite the authenticated
+                session cookie. When omitted, the `.anonymous` sub-client fails
+                closed on first use rather than sharing state_store implicitly.
             transaction_identifier: Identifier for transaction data
             state_identifier: Identifier for state data
             authorization_params: Default parameters for authorization requests
@@ -198,6 +209,12 @@ class ServerClient(Generic[TStoreOptions]):
             ssl_context: TLS context carrying the client certificate and key.
                 Required when use_mtls=True. Build with ssl.create_default_context()
                 and load_cert_chain().
+            clear_anonymous_session_on_login: When True and an anonymous_store is
+                configured, the anonymous session is cleared via anonymous.logout()
+                after a successful interactive login (complete_interactive_login).
+                Defaults to True. Set to False to keep the anonymous session active
+                across the login boundary. A failure clearing the anonymous session
+                never fails the login.
 
         Raises:
             ConfigurationError: If `mfa_token_ttl` is not a positive number of seconds.
@@ -247,6 +264,11 @@ class ServerClient(Generic[TStoreOptions]):
                     "use_mtls cannot be combined with client_assertion_signing_key. "
                     "The client certificate is the sole credential under mTLS."
                 )
+            if anonymous_store is not None:
+                raise ConfigurationError(
+                    "Anonymous Sessions do not support mTLS. The AnonymousClient has no "
+                    "client-certificate credential path."
+                )
 
         self._client_id = client_id
         self._client_secret = client_secret
@@ -262,11 +284,13 @@ class ServerClient(Generic[TStoreOptions]):
         self._pushed_authorization_requests = pushed_authorization_requests  # store the flag
         self._organization = organization
         self._enterprise_connect = enterprise_connect
+        self._clear_anonymous_session_on_login = clear_anonymous_session_on_login
         self._webfinger_cache: OrderedDict[str, dict] = OrderedDict()
 
         # Initialize stores
         self._transaction_store = transaction_store
         self._state_store = state_store
+        self._anonymous_store = anonymous_store
         self._transaction_identifier = transaction_identifier
         self._state_identifier = state_identifier
 
@@ -310,6 +334,19 @@ class ServerClient(Generic[TStoreOptions]):
             token_endpoint_resolver=self._resolve_mfa_token_endpoint if self._use_mtls else None,
         )
 
+        # Its own store, never self._state_store, so anonymous state stays isolated.
+        self._anonymous_client = AnonymousClient(
+            domain=domain,
+            client_id=self._client_id,
+            client_secret=self._client_secret,
+            secret=self._secret,
+            anonymous_store=self._anonymous_store,
+            default_audience=self._default_authorization_params.get("audience"),
+            default_scope=self._default_authorization_params.get("scope")
+            if isinstance(self._default_authorization_params.get("scope"), str)
+            else None,
+            headers=self._telemetry_headers,
+        )
         self._passwordless_client = PasswordlessClient(self)
 
         if enterprise_connect:
@@ -813,6 +850,16 @@ class ServerClient(Generic[TStoreOptions]):
         if options.invitation:
             auth_params["invitation"] = options.invitation
 
+        # Pops close the session-fixation vector from constructor-seeded defaults.
+        auth_params.pop("session_token", None)
+        auth_params.pop("anon_transfer_token", None)
+        if not self._pushed_authorization_requests and not self._enterprise_connect:
+            anon_transfer_token = await self._anonymous_client.exchange_transfer_token_for_injection(
+                origin_domain, store_options
+            )
+            if anon_transfer_token:
+                auth_params["anon_transfer_token"] = anon_transfer_token
+
         # Build the transaction data to store with domain
         transaction_data = TransactionData(
             code_verifier=code_verifier,
@@ -1076,6 +1123,7 @@ class ServerClient(Generic[TStoreOptions]):
 
         # Clean up transaction data after successful login
         await self._transaction_store.delete(transaction_identifier, options=store_options)
+        await self._clear_anonymous_session_after_login(store_options)
 
         result = {"state_data": state_data.dict()}
         if transaction_data.app_state:
@@ -1283,6 +1331,23 @@ class ServerClient(Generic[TStoreOptions]):
             store_options=store_options,
         )
 
+    async def _clear_anonymous_session_after_login(
+        self, store_options: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Clear the anonymous session after a successful interactive login.
+
+        Args:
+            store_options: Options passed to the anonymous store.
+        """
+        if not self._clear_anonymous_session_on_login:
+            return
+        if self._anonymous_store is None:
+            return
+        try:
+            await self._anonymous_client.logout(store_options)
+        except Exception as e:
+            logger.debug("Anonymous session cleanup after login failed: %s", e)
+
     # ============================================================================
     # USER SESSION MANAGEMENT
     # Methods for retrieving user information, session data, and logout operations.
@@ -1411,6 +1476,13 @@ class ServerClient(Generic[TStoreOptions]):
                     session_domain = self._get_session_domain(state_data)
                     if session_domain and self._normalize_url(session_domain) == self._normalize_url(domain):
                         await self._state_store.delete(self._state_identifier, store_options)
+
+        # Closes the shared-device re-injection path.
+        if self._anonymous_store is not None:
+            try:
+                await self._anonymous_client._end_session_if_active(store_options)
+            except Exception as e:
+                logger.debug("Anonymous session cleanup on logout failed: %s", e)
 
         # Return logout URL for the current resolved domain
         logout_url = URL.create_logout_url(
@@ -3932,6 +4004,15 @@ class ServerClient(Generic[TStoreOptions]):
             invitation=options.invitation,
         )
         return await self.start_interactive_login(login_options, store_options)
+
+    # ============================================================================
+    # ANONYMOUS SESSIONS
+    # ============================================================================
+
+    @property
+    def anonymous(self) -> AnonymousClient:
+        """Access the anonymous sessions client for pre-login anon@ identity operations."""
+        return self._anonymous_client
 
 
 async def is_federated_domain(domain: str, email_domain: str, timeout: float = 5.0) -> bool:
