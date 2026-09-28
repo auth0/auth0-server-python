@@ -246,7 +246,9 @@ class AuthorizationParameters(BaseModel):
     audience: Optional[str] = None
     redirect_uri: Optional[str] = None
     # Auth0 Experiment Center (A/B testing) override params. Pass these to force a
-    # specific experiment, variation, or segment instead of the automatic assignment.
+    # specific variation instead of the automatic assignment, for this request only.
+    # variation_id and segment_id both require experiment_id; segment_id applies only
+    # to segment-targeted experiments.
     experiment_id: Optional[str] = None
     variation_id: Optional[str] = None
     segment_id: Optional[str] = None
