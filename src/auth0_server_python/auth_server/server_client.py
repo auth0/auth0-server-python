@@ -3524,7 +3524,7 @@ class ServerClient(Generic[TStoreOptions]):
                 passkey login challenge (the user is identified by the selected
                 credential, not by a supplied username), so it is never forwarded.
                 Retained for backward compatibility and will be removed in a future
-                major release; passing it emits a DeprecationWarning.
+                major release. Passing it emits a DeprecationWarning.
             connection: Auth0 database connection name (realm).
             organization: Auth0 organization ID or name.
             store_options: Optional options for domain resolution.

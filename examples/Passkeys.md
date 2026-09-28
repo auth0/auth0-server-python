@@ -34,8 +34,8 @@ from auth0_server_python.auth_server.server_client import ServerClient
 # Passkey sign-in persists a server-side session, and the challenge step stores
 # short-lived transaction data, so ServerClient needs a state store and a
 # transaction store (it does not create defaults). If your framework wrapper
-# (e.g. auth0-fastapi) already provides these, reuse them; otherwise create your
-# own implementations of the StateStore / TransactionStore ABCs.
+# (e.g. auth0-fastapi) already provides these, reuse them. Otherwise, create
+# your own implementations of the StateStore / TransactionStore ABCs.
 state_store = YourStateStore(...)              # or the store your framework provides
 transaction_store = YourTransactionStore(...)  # or the store your framework provides
 
