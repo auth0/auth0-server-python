@@ -178,6 +178,46 @@ async def test_start_interactive_login_builds_auth_url(mocker):
 
 
 @pytest.mark.asyncio
+async def test_start_interactive_login_forwards_experiment_center_params(mocker):
+    """Experiment Center override params passed per call reach the /authorize request."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    mock_oauth = mocker.patch.object(
+        client._oauth,
+        "create_authorization_url",
+        return_value=("https://auth0.local/authorize", "some_state"),
+    )
+
+    await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+                "segment_id": "seg_789",
+            }
+        )
+    )
+
+    # EC params are not in INTERNAL_AUTHORIZE_PARAMS, so they flow through to /authorize.
+    forwarded = mock_oauth.call_args.kwargs
+    assert forwarded["experiment_id"] == "exp_123"
+    assert forwarded["variation_id"] == "var_456"
+    assert forwarded["segment_id"] == "seg_789"
+
+
+@pytest.mark.asyncio
 async def test_par_request_uses_private_key_jwt_assertion(mocker):
     """The pushed authorization request posts a client assertion when a signing key is set."""
     client = ServerClient(

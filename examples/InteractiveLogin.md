@@ -61,6 +61,26 @@ authorization_url = await server_client.start_interactive_login({
 > [!NOTE]
 > Any parameter specified here will override the corresponding global configuration.
 
+### Experiment Center Overrides
+Auth0 Experiment Center runs A/B tests on your login flows, and by default Auth0 assigns each user to a variation automatically. To force a specific experiment, variation, or segment (for example while reproducing a variation during debugging), pass `experiment_id`, `variation_id`, and `segment_id` as authorization params on the login call:
+```python
+from auth0_server_python.auth_types import StartInteractiveLoginOptions
+
+authorization_url = await server_client.start_interactive_login(
+    StartInteractiveLoginOptions(
+        authorization_params={
+            "experiment_id": "exp_123",
+            "variation_id": "var_456",
+            "segment_id": "seg_789",
+        }
+    )
+)
+```
+The override applies to this login request only.
+
+> [!IMPORTANT]
+> Pass these per call, not in the client-level `authorization_params` at construction. A construction-time value pins every login to the same variation and defeats the experiment.
+
 ## 3. Passing App State to Track State During Login
 
 The `app_state` parameter allows you to pass custom state (for example, a return URL) that is later available when the login process completes.
