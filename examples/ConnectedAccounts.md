@@ -27,7 +27,7 @@ server_client = ServerClient(
 )
 ```
 
-`ServerClient` creates no default stores — provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
+`ServerClient` creates no default stores. Provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
 
 ## Login to the application
 

@@ -32,7 +32,7 @@ A passkey ceremony is always **two steps**, because the WebAuthn signature happe
 from auth0_server_python.auth_server.server_client import ServerClient
 
 # Passkey sign-in persists a server-side session, and the challenge step stores
-# short-lived transaction data — so ServerClient needs a state store and a
+# short-lived transaction data, so ServerClient needs a state store and a
 # transaction store (it does not create defaults). If your framework wrapper
 # (e.g. auth0-fastapi) already provides these, reuse them; otherwise create your
 # own implementations of the StateStore / TransactionStore ABCs.
@@ -117,7 +117,7 @@ print(f"Signed up and logged in: {user['sub']}")
 
 ## 2. Passkey Login
 
-Identical shape, different endpoints. The browser uses `navigator.credentials.get()` and the user picks a passkey from the prompt — that credential identifies the user, so the login challenge takes no username.
+Identical shape, different endpoints. The browser uses `navigator.credentials.get()` and the user picks a passkey from the prompt. That credential identifies the user, so the login challenge takes no username.
 
 ```python
 # Step 1 — login challenge

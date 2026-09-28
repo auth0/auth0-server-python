@@ -37,7 +37,7 @@ if response.id_token:
     print(f"ID Token: {response.id_token}")
 ```
 
-`ServerClient` creates no default stores — provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
+`ServerClient` creates no default stores. Provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](ConfigureStore.md).
 
 ## 2. Login with Token Exchange
 
