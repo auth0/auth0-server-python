@@ -102,3 +102,33 @@ except AnonymousSessionCreateError as e:
     if e.code == "feature_not_enabled":
         ...
 ```
+
+### Error Hierarchy
+
+```
+AnonymousSessionError           base class, never raised directly
+  AnonymousSessionCreateError   raised by create_session()
+  AnonymousSessionTokenError    raised by get_token()
+```
+
+### `AnonymousSessionCreateError` codes
+
+| `.code` | When |
+|---------|------|
+| `"feature_not_enabled"` | anonymous sessions not enabled on this tenant/client |
+| `"anonymous_create_error"` | generic platform error on the create path |
+| `"missing_session_token"` | platform response omitted the session token (misconfigured tenant) |
+| `"invalid_metadata"` | metadata is not a dict or contains non-JSON-serializable values |
+| `"metadata_too_large"` | metadata exceeds the 1 KB limit |
+| `"invalid_options"` | unrecognised key in `create_session()` options |
+
+The platform may return other codes (e.g. `"insufficient_scope"`); these are passed through on `.code` unchanged.
+
+### `AnonymousSessionTokenError` codes
+
+| `.code` | When |
+|---------|------|
+| `"invalid_session_state"` | stored session could not be decrypted; call `create_session()` to recover |
+| `"anonymous_token_error"` | no active session, network error, parse error, or generic platform error on the renewal path |
+
+> **Note on naming.** The SDK spec names this class `AnonymousSessionTokenExpiredError`. This SDK uses `AnonymousSessionTokenError` - a deliberate broadening, since the class covers all `get_token()` failures, not just expiry. The `.code` values are stable and safe to branch on.
