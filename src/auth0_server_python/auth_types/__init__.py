@@ -894,6 +894,7 @@ class AnonymousSession(BaseModel):
     session_expires_at: Optional[int] = None
     metadata: Optional[dict[str, Any]] = None
     sub: Optional[str] = None
+    scope: Optional[str] = None
 
 
 class AnonymousSessionData(BaseModel):
@@ -914,6 +915,7 @@ class AnonymousTokenResponse(BaseModel):
     expires_in: int
     session_expires_in: Optional[int] = None
     session_token: Optional[str] = None
+    scope: Optional[str] = None
 
 
 class AnonymousCreateTokenResponse(AnonymousTokenResponse):
@@ -940,6 +942,7 @@ class AnonymousTokenSetEntry(BaseModel):
     expires_at: int
     audience: Optional[str] = None
     scope: Optional[str] = None
+    granted_scope: Optional[str] = None
 
 
 class AnonymousSessionContext(BaseModel):

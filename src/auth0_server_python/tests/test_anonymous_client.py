@@ -103,7 +103,7 @@ def _make_jwt(sub: str = "anon@test-uuid") -> str:
 
 
 def _stored_context(store: OneSlotStore, **overrides):
-    ts_keys = {"access_token", "expires_at", "audience", "scope"}
+    ts_keys = {"access_token", "expires_at", "audience", "scope", "granted_scope"}
     ts_defaults = {
         "access_token": "AT1",
         "expires_at": int(time.time()) + 3600,
@@ -485,6 +485,17 @@ class TestCreateSession:
             session = await client.create_session()
         assert session.session_expires_at is None
 
+    @pytest.mark.asyncio
+    async def test_create_session_surfaces_granted_scope(self):
+        """Platform-granted scope is returned in AnonymousSession.scope."""
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        response = {**_token_response(), "scope": "read:cart"}
+        fake_http = _FakeAsyncClient([_fake_response(200, response)])
+        with patch("httpx.AsyncClient", fake_http):
+            session = await client.create_session(scope="read:cart write:cart")
+        assert session.scope == "read:cart"
+
 
 # ── get_token (renewal ladder) ────────────────────────────────────────────────
 
@@ -609,6 +620,29 @@ class TestGetToken:
         with patch("httpx.AsyncClient", fake_http):
             session = await client.get_token()
         assert session.session_expires_at == stored_expiry
+
+    @pytest.mark.asyncio
+    async def test_remint_surfaces_granted_scope(self):
+        """Platform-granted scope from a remint is returned in AnonymousSession.scope."""
+        store = OneSlotStore()
+        _stored_context(store, expires_at=int(time.time()) - 10)
+        client = _make_client(anonymous_store=store)
+        response = {**_token_response(access_token="AT2"), "scope": "read:cart"}
+        fake_http = _FakeAsyncClient([_fake_response(200, response)])
+        with patch("httpx.AsyncClient", fake_http):
+            session = await client.get_token(scope="read:cart write:cart")
+        assert session.scope == "read:cart"
+
+    @pytest.mark.asyncio
+    async def test_cached_token_surfaces_stored_granted_scope(self):
+        """A cached token hit returns the previously stored granted_scope."""
+        store = OneSlotStore()
+        _stored_context(store, expires_at=int(time.time()) + 3600, granted_scope="read:cart")
+        client = _make_client(anonymous_store=store)
+        with patch("httpx.AsyncClient") as mock_http:
+            session = await client.get_token()
+        mock_http.assert_not_called()
+        assert session.scope == "read:cart"
 
     @pytest.mark.asyncio
     async def test_remint_preserves_empty_string_fields_instead_of_falling_back_to_stale_context(

@@ -399,6 +399,7 @@ class AnonymousClient:
             expires_at=now + token_response.expires_in,
             audience=audience,
             scope=scope,
+            granted_scope=token_response.scope,
         )
         context = AnonymousSessionContext(
             session_token=token_response.session_token,
@@ -421,6 +422,7 @@ class AnonymousClient:
             session_expires_at=context.session_expires_at,
             metadata=context.metadata,
             sub=context.sub,
+            scope=token_set.granted_scope,
         )
 
     # ============================================================================
@@ -498,6 +500,7 @@ class AnonymousClient:
             expires_at=now + token_response.expires_in,
             audience=audience,
             scope=scope,
+            granted_scope=token_response.scope,
         )
         result = AnonymousSession(
             access_token=token_set.access_token,
@@ -506,6 +509,7 @@ class AnonymousClient:
             session_expires_at=now + token_response.session_expires_in if token_response.session_expires_in is not None else context.session_expires_at,
             metadata=context.metadata,
             sub=new_sub if new_sub is not None else context.sub,
+            scope=token_response.scope,
         )
 
         # Re-read to preserve a concurrent remint and skip a stale write.
@@ -724,6 +728,7 @@ class AnonymousClient:
                 session_expires_at=context.session_expires_at,
                 metadata=context.metadata,
                 sub=context.sub,
+                scope=token_set.granted_scope,
             )
 
         return await self._remint(context, eff_audience, eff_scope, store_options)
