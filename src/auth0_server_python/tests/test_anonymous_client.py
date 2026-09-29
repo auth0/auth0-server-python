@@ -1007,6 +1007,21 @@ class TestMcdIsolation:
         assert urlsplit(url).hostname == "tenant-b.auth0.local"
 
     @pytest.mark.asyncio
+    async def test_null_domain_in_resolver_mode_treated_as_mismatch(self):
+        """A legacy session with no stored domain must not be sent to an unknown resolver tenant."""
+        store = OneSlotStore()
+        _stored_context(store, expires_at=int(time.time()) + 3600)  # domain defaults to None
+        resolver = AsyncMock(return_value="tenant-b.auth0.local")
+        client = _make_client(anonymous_store=store)
+        client._domain_resolver = resolver
+        client._domain = None
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
+        with patch("httpx.AsyncClient", fake_http):
+            await client.get_token()
+        _, url, _ = fake_http.calls[0]
+        assert urlsplit(url).hostname == "tenant-b.auth0.local"
+
+    @pytest.mark.asyncio
     async def test_domain_mismatch_in_static_mode_mints_fresh_under_current_tenant(self):
         store = OneSlotStore()
         _stored_context(
@@ -1122,7 +1137,7 @@ class TestExchangeTransferTokenForInjection:
 
     @pytest.mark.asyncio
     async def test_missing_context_domain_mints_against_origin(self):
-        """A stored context with no domain is not an MCD mismatch, so mint against origin."""
+        """A stored context with no domain is not an MCD mismatch on a static-domain client."""
         store = OneSlotStore()
         _stored_context(store, session_token="REAL_TOKEN")  # domain defaults to None
         client = _make_client(anonymous_store=store)
@@ -1132,6 +1147,21 @@ class TestExchangeTransferTokenForInjection:
         assert ticket == "TICKET"
         _, url, _ = fake_http.calls[0]
         assert urlsplit(url).hostname == "auth0.local"
+
+    @pytest.mark.asyncio
+    async def test_null_domain_in_resolver_mode_returns_none(self):
+        """A legacy session with no stored domain must not mint a transfer ticket in resolver mode."""
+        store = OneSlotStore()
+        _stored_context(store, session_token="REAL_TOKEN")  # domain defaults to None
+        resolver = AsyncMock(return_value="tenant-b.auth0.local")
+        client = AnonymousClient(
+            domain=resolver, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
+            secret=SECRET, anonymous_store=store,
+        )
+        with patch("httpx.AsyncClient") as mock_http:
+            result = await client.exchange_transfer_token_for_injection("tenant-b.auth0.local")
+        assert result is None
+        mock_http.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_returns_none_without_store(self):

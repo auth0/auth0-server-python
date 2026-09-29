@@ -569,9 +569,12 @@ class AnonymousClient:
         except (_AnonymousSessionExpired, _SessionDecryptError):
             return None
         # Prevents a tenant-A session token from minting a transfer ticket usable at tenant-B's login.
-        if context.domain and self._normalize_url(context.domain) != self._normalize_url(
+        # In resolver mode, an unknown stored domain (legacy session) is treated as a mismatch.
+        domain_unknown = not context.domain and self._domain_resolver is not None
+        domain_mismatch = context.domain and self._normalize_url(context.domain) != self._normalize_url(
             origin_domain
-        ):
+        )
+        if domain_unknown or domain_mismatch:
             return None
         return await self._mint_transfer_token(context.session_token, origin_domain)
 
@@ -707,9 +710,12 @@ class AnonymousClient:
             ) from e
 
         current_domain = await self._resolve_domain(store_options)
-        if context.domain and self._normalize_url(context.domain) != self._normalize_url(
+        # In resolver mode, an unknown stored domain (legacy session) is treated as a mismatch.
+        domain_unknown = not context.domain and self._domain_resolver is not None
+        domain_mismatch = context.domain and self._normalize_url(context.domain) != self._normalize_url(
             current_domain
-        ):
+        )
+        if domain_unknown or domain_mismatch:
             return await self._create_session_at(
                 current_domain,
                 audience=eff_audience,
