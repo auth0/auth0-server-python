@@ -48,7 +48,6 @@ ANON_TOKEN_SALT = "anon_session"
 TRANSFER_AUDIENCE = "urn:auth0:anon_transfer"
 
 _METADATA_MAX_BYTES = 1024
-_DANGEROUS_METADATA_KEYS = frozenset({"__proto__", "constructor", "prototype"})
 
 
 class AnonymousClient:
@@ -201,7 +200,9 @@ class AnonymousClient:
             padded = parts[1] + "=" * (-len(parts[1]) % 4)
             payload = json.loads(base64.urlsafe_b64decode(padded))
             sub = payload.get("sub")
-            return str(sub) if sub else None
+            if not isinstance(sub, str) or not sub.startswith("anon@"):
+                return None
+            return sub
         except Exception:
             return None
 
@@ -298,11 +299,6 @@ class AnonymousClient:
             return
         if not isinstance(metadata, dict):
             raise AnonymousSessionCreateError("metadata must be a JSON object", code="invalid_metadata")
-        for key in metadata:
-            if key in _DANGEROUS_METADATA_KEYS:
-                raise AnonymousSessionCreateError(
-                    f"metadata key '{key}' is not allowed", code="invalid_metadata"
-                )
         try:
             size = len(json.dumps(metadata).encode("utf-8"))
         except TypeError as e:

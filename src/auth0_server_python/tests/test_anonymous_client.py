@@ -314,13 +314,6 @@ class TestCreateSession:
             mock_http.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_dangerous_metadata_key_rejected(self):
-        store = OneSlotStore()
-        client = _make_client(anonymous_store=store)
-        with pytest.raises(AnonymousSessionCreateError, match="not allowed"):
-            await client.create_session(audience="aud", scope="s", metadata={"__proto__": "x"})
-
-    @pytest.mark.asyncio
     async def test_non_string_metadata_value_accepted(self):
         store = OneSlotStore()
         client = _make_client(anonymous_store=store)
@@ -516,6 +509,42 @@ class TestCreateSession:
         with patch("httpx.AsyncClient", fake_http):
             session = await client.create_session(scope="read:cart write:cart")
         assert session.scope == "read:cart"
+
+    @pytest.mark.asyncio
+    async def test_non_string_sub_in_jwt_stored_as_none(self):
+        """A JWT with a non-string sub must not be coerced to a string."""
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        header = _b64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
+        payload = _b64.urlsafe_b64encode(b'{"sub":12345}').rstrip(b"=").decode()
+        bad_jwt = f"{header}.{payload}."
+        fake_http = _FakeAsyncClient([_fake_response(200, {
+            "access_token": bad_jwt,
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "session_token": "ST1",
+            "session_expires_in": 2592000,
+        })])
+        with patch("httpx.AsyncClient", fake_http):
+            session = await client.create_session()
+        assert session.sub is None
+
+    @pytest.mark.asyncio
+    async def test_sub_without_anon_prefix_stored_as_none(self):
+        """A JWT sub that does not start with anon@ must be rejected."""
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        jwt_token = _make_jwt(sub="user@unexpected")
+        fake_http = _FakeAsyncClient([_fake_response(200, {
+            "access_token": jwt_token,
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "session_token": "ST1",
+            "session_expires_in": 2592000,
+        })])
+        with patch("httpx.AsyncClient", fake_http):
+            session = await client.create_session()
+        assert session.sub is None
 
 
 # ── get_token (renewal ladder) ────────────────────────────────────────────────
