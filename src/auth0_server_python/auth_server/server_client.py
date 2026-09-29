@@ -1925,6 +1925,7 @@ class ServerClient(Generic[TStoreOptions]):
         state_data["domain"] = domain
 
         await self._state_store.set(self._state_identifier, state_data, store_options)
+        await self._clear_anonymous_session_after_login(store_options)
 
         result = {
             "authorization_details": token_endpoint_response.get("authorization_details")
@@ -3252,6 +3253,7 @@ class ServerClient(Generic[TStoreOptions]):
 
             # Store session
             await self._state_store.set(self._state_identifier, state_data, options=store_options)
+            await self._clear_anonymous_session_after_login(store_options)
 
             # Build result
             result = LoginWithCustomTokenExchangeResult(
@@ -3870,6 +3872,7 @@ class ServerClient(Generic[TStoreOptions]):
             )
 
             await self._state_store.set(self._state_identifier, state_data, options=store_options)
+            await self._clear_anonymous_session_after_login(store_options)
 
             return PasskeyLoginResult(state_data=state_data.model_dump())
 
