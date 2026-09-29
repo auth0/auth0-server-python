@@ -1082,6 +1082,26 @@ class TestGetToken:
         ctx = client._decrypt_context(stored)
         assert ctx.sub == "anon@original-uuid"
 
+    @pytest.mark.asyncio
+    async def test_remint_backfills_sub_when_initial_token_was_jwe(self):
+        """When sub was None (initial JWE token), a remint returning a JWT must backfill sub."""
+        store = OneSlotStore()
+        _stored_context(store, expires_at=int(time.time()) - 10, sub=None)
+        client = _make_client(anonymous_store=store)
+        jwt_token = _make_jwt("anon@backfilled-uuid")
+        fake_http = _FakeAsyncClient([_fake_response(200, {
+            "access_token": jwt_token,
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "session_expires_in": 2592000,
+        })])
+        with patch("httpx.AsyncClient", fake_http):
+            session = await client.get_token()
+        assert session.sub == "anon@backfilled-uuid"
+        stored = await store.get(ANON_IDENTIFIER)
+        ctx = client._decrypt_context(stored)
+        assert ctx.sub == "anon@backfilled-uuid"
+
 
 # ── MCD / cross-tenant isolation ───────────────────────────────────────────────
 

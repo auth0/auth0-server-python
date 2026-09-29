@@ -46,9 +46,9 @@ session = await server_client.anonymous.create_session(
 )
 ```
 
-`metadata` is **set once, at creation, and never updated**. Any JSON-serializable value is accepted, ≤1 KB total (UTF-8 JSON byte length). Oversized, non-JSON-serializable, or dangerous-key (`__proto__`, `constructor`, `prototype`) metadata is rejected client-side before any network call.
+`metadata` is **set once, at creation, and never updated**. Any JSON-serializable value is accepted, ≤1 KB total (UTF-8 JSON byte length). Oversized or non-JSON-serializable metadata is rejected client-side before any network call.
 
-`AnonymousSession` returns `session_token`, `access_token`, `expires_at`, `session_expires_at`, and `metadata`.
+`AnonymousSession` returns `access_token`, `expires_at`, `session_expires_at`, `metadata`, `sub`, and `scope`.
 
 ## Getting a Token
 
@@ -60,7 +60,7 @@ Renewal logic, in order:
 
 1. Cached access token still fresh, returned with no network call.
 2. Expired, re-minted using the stored session token (not a refresh-token grant, since anonymous sessions never issue refresh tokens).
-3. Session token also expired or invalid, a **brand-new session is silently created, once**. Metadata from the old session is permanently lost, and `session_token` changes. This never raises. An anonymous pre-login session carries no authorization, so re-minting crosses no trust boundary.
+3. Session token also expired or invalid, a **brand-new session is silently created, once**. Both `sub` and `metadata` reset: the visitor gets a new `anon@<uuid>` identity and any previously attached metadata is gone. This never raises. An anonymous pre-login session carries no authorization, so re-minting crosses no trust boundary.
 4. Any other error, raised as a typed exception. No swallow, no auto-retry beyond the one re-mint in step 3.
 
 ## Logging Out
