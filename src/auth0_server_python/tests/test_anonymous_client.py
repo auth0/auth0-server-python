@@ -510,7 +510,7 @@ class TestCreateSession:
 
     @pytest.mark.asyncio
     async def test_create_session_tolerates_missing_session_expires_in(self):
-        """Legacy platform tokens omit session_expires_in; session_expires_at must be None."""
+        """Legacy platform tokens omit session_expires_in so session_expires_at must be None."""
         store = OneSlotStore()
         client = _make_client(anonymous_store=store)
         response = {k: v for k, v in _token_response().items() if k != "session_expires_in"}
@@ -703,7 +703,7 @@ class TestGetToken:
 
     @pytest.mark.asyncio
     async def test_remint_preserves_session_expires_at_when_platform_omits_session_expires_in(self):
-        """Legacy renewal responses omit session_expires_in; stored expiry must be kept."""
+        """Legacy renewal responses omit session_expires_in so stored expiry must be kept."""
         stored_expiry = int(time.time()) + 86400
         store = OneSlotStore()
         _stored_context(store, expires_at=int(time.time()) - 10, session_expires_at=stored_expiry)
