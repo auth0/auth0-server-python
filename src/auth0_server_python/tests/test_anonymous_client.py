@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from auth0_server_python.auth_server.anonymous_client import (
     ANON_IDENTIFIER,
@@ -46,6 +48,15 @@ def _make_client(anonymous_store=None, **kwargs) -> AnonymousClient:
         anonymous_store=anonymous_store,
         **kwargs,
     )
+
+
+def _generate_rsa_private_key_pem() -> str:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
 
 
 def _fake_response(status_code=200, body=None):
@@ -147,6 +158,30 @@ class TestAnonymousClientConstructor:
         for name, method in inspect.getmembers(AnonymousClient, predicate=inspect.isfunction):
             sig = inspect.signature(method)
             assert "dpop_key" not in sig.parameters, f"{name} must never accept dpop_key"
+
+    def test_constructor_accepts_private_key_jwt_params(self):
+        signing_key = _generate_rsa_private_key_pem()
+        client = AnonymousClient(
+            domain=DOMAIN,
+            client_id=CLIENT_ID,
+            client_secret=None,
+            secret=SECRET,
+            client_assertion_signing_key=signing_key,
+            client_assertion_signing_alg="RS256",
+        )
+        assert client._client_assertion_signing_key == signing_key
+        assert client._client_assertion_signing_alg == "RS256"
+        assert client._client_secret is None
+
+    def test_constructor_rejects_invalid_signing_key(self):
+        with pytest.raises(ConfigurationError):
+            AnonymousClient(
+                domain=DOMAIN,
+                client_id=CLIENT_ID,
+                client_secret=None,
+                secret=SECRET,
+                client_assertion_signing_key="not-a-valid-pem-key",
+            )
 
 
 # ── Store isolation ────────────────────────────────────────────────────────────
@@ -258,6 +293,28 @@ class TestCreateSession:
         _, _, kwargs = fake_http.calls[0]
         assert kwargs["json"]["client_secret"] == CLIENT_SECRET
         assert "auth" not in kwargs
+
+    @pytest.mark.asyncio
+    @pytest.mark.asyncio
+    async def test_create_session_uses_client_assertion_when_signing_key_set(self):
+        store = OneSlotStore()
+        signing_key = _generate_rsa_private_key_pem()
+        client = AnonymousClient(
+            domain=DOMAIN,
+            client_id=CLIENT_ID,
+            client_secret=None,
+            secret=SECRET,
+            anonymous_store=store,
+            client_assertion_signing_key=signing_key,
+        )
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
+        with patch("httpx.AsyncClient", fake_http):
+            await client.create_session(audience="aud", scope="s")
+        _, _, kwargs = fake_http.calls[0]
+        body = kwargs["json"]
+        assert "client_assertion" in body
+        assert body.get("client_assertion_type") == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        assert "client_secret" not in body
 
     @pytest.mark.asyncio
     async def test_create_session_never_attaches_dpop_header(self):
@@ -585,6 +642,29 @@ class TestGetToken:
         _, _, kwargs = fake_http.calls[0]
         assert "audience" not in kwargs["json"]
         assert "scope" not in kwargs["json"]
+
+    @pytest.mark.asyncio
+    async def test_remint_uses_client_assertion_when_signing_key_set(self):
+        """Renewal request must carry client_assertion, not client_secret, for private_key_jwt clients."""
+        store = OneSlotStore()
+        _stored_context(store, expires_at=int(time.time()) - 10)
+        signing_key = _generate_rsa_private_key_pem()
+        client = AnonymousClient(
+            domain=DOMAIN,
+            client_id=CLIENT_ID,
+            client_secret=None,
+            secret=SECRET,
+            anonymous_store=store,
+            client_assertion_signing_key=signing_key,
+        )
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response(access_token="AT2"))])
+        with patch("httpx.AsyncClient", fake_http):
+            await client.get_token()
+        _, _, kwargs = fake_http.calls[0]
+        body = kwargs["json"]
+        assert "client_assertion" in body
+        assert body.get("client_assertion_type") == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        assert "client_secret" not in body
 
     @pytest.mark.asyncio
     async def test_remint_never_sends_metadata_in_body(self):
@@ -1134,6 +1214,30 @@ class TestExchangeTransferTokenForInjection:
         assert body["session_token"] == "REAL_TOKEN"
         assert body["client_id"] == CLIENT_ID
         assert body["client_secret"] == CLIENT_SECRET
+
+    @pytest.mark.asyncio
+    async def test_transfer_token_uses_client_assertion_when_signing_key_set(self):
+        """Transfer-ticket request must carry client_assertion, not client_secret, for private_key_jwt clients."""
+        store = OneSlotStore()
+        _stored_context(store, session_token="REAL_TOKEN", domain="auth0.local")
+        signing_key = _generate_rsa_private_key_pem()
+        client = AnonymousClient(
+            domain=DOMAIN,
+            client_id=CLIENT_ID,
+            client_secret=None,
+            secret=SECRET,
+            anonymous_store=store,
+            client_assertion_signing_key=signing_key,
+        )
+        fake_http = _FakeAsyncClient([_fake_response(200, _TRANSFER_OK)])
+        with patch("httpx.AsyncClient", fake_http):
+            ticket = await client.exchange_transfer_token_for_injection("auth0.local")
+        assert ticket == "TICKET"
+        _, _, kwargs = fake_http.calls[0]
+        body = kwargs["json"]
+        assert "client_assertion" in body
+        assert body.get("client_assertion_type") == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        assert "client_secret" not in body
 
     @pytest.mark.asyncio
     async def test_missing_context_domain_mints_against_origin(self):

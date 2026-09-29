@@ -346,6 +346,8 @@ class ServerClient(Generic[TStoreOptions]):
             if isinstance(self._default_authorization_params.get("scope"), str)
             else None,
             headers=self._telemetry_headers,
+            client_assertion_signing_key=self._client_assertion_signing_key,
+            client_assertion_signing_alg=self._client_assertion_signing_alg,
         )
         self._passwordless_client = PasswordlessClient(self)
 

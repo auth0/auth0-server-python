@@ -11,6 +11,11 @@ from typing import Any, Callable, Optional, Union
 import httpx
 from pydantic import ValidationError
 
+from auth0_server_python.auth_schemes.client_assertion import (
+    CLIENT_ASSERTION_TYPE,
+    build_client_assertion,
+    validate_client_assertion_key,
+)
 from auth0_server_python.auth_types import (
     AnonymousCreateTokenResponse,
     AnonymousSession,
@@ -53,12 +58,14 @@ class AnonymousClient:
         self,
         domain: Union[str, Callable, None],
         client_id: str,
-        client_secret: str,
+        client_secret: Optional[str],
         secret: str,
         anonymous_store=None,
         default_audience: Optional[str] = None,
         default_scope: Optional[str] = None,
         headers: Optional[dict[str, str]] = None,
+        client_assertion_signing_key: Optional[str] = None,
+        client_assertion_signing_alg: Optional[str] = None,
     ):
         if callable(domain):
             self._domain = None
@@ -68,6 +75,12 @@ class AnonymousClient:
             self._domain_resolver = None
         self._client_id = client_id
         self._client_secret = client_secret
+        self._client_assertion_signing_key = client_assertion_signing_key
+        self._client_assertion_signing_alg = client_assertion_signing_alg or "RS256"
+        if client_assertion_signing_key:
+            validate_client_assertion_key(
+                client_assertion_signing_key, self._client_assertion_signing_alg
+            )
         self._secret = secret
         self._anonymous_store = anonymous_store
         self._default_audience = default_audience
@@ -98,6 +111,24 @@ class AnonymousClient:
                 "ServerClient's state_store. Writing anonymous state into the same "
                 "store instance can silently overwrite the authenticated session."
             )
+
+    def _apply_client_auth(self, body: dict[str, Any], domain: str) -> None:
+        """Inject client credentials into a JSON request body.
+
+        Args:
+            body: The outgoing request body dict, mutated in place.
+            domain: The target tenant domain, used as the assertion audience.
+        """
+        if self._client_assertion_signing_key:
+            body["client_assertion"] = build_client_assertion(
+                self._client_assertion_signing_key,
+                self._client_id,
+                f"https://{domain}/",
+                self._client_assertion_signing_alg,
+            )
+            body["client_assertion_type"] = CLIENT_ASSERTION_TYPE
+        elif self._client_secret:
+            body["client_secret"] = self._client_secret
 
     async def _resolve_domain(self, store_options: Optional[dict[str, Any]] = None) -> str:
         """Resolve the tenant domain from the configured resolver or static value.
@@ -353,8 +384,7 @@ class AnonymousClient:
         """
         base_url = f"https://{domain}"
         payload: dict[str, Any] = {"client_id": self._client_id}
-        if self._client_secret:
-            payload["client_secret"] = self._client_secret
+        self._apply_client_auth(payload, domain)
         if audience:
             payload["audience"] = audience
         if scope:
@@ -456,8 +486,7 @@ class AnonymousClient:
             "client_id": self._client_id,
             "session_token": context.session_token,
         }
-        if self._client_secret:
-            body["client_secret"] = self._client_secret
+        self._apply_client_auth(body, domain)
         if audience:
             body["audience"] = audience
         if scope:
@@ -596,8 +625,7 @@ class AnonymousClient:
             "session_token": session_token,
             "audience": TRANSFER_AUDIENCE,
         }
-        if self._client_secret:
-            body["client_secret"] = self._client_secret
+        self._apply_client_auth(body, origin_domain)
 
         try:
             async with self._get_http_client() as client:
