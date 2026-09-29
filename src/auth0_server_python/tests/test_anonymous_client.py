@@ -184,6 +184,26 @@ class TestAnonymousClientConstructor:
                 client_assertion_signing_key="not-a-valid-pem-key",
             )
 
+    @pytest.mark.asyncio
+    async def test_public_client_sends_no_credentials(self):
+        """A client with no secret and no signing key sends requests without any auth credential."""
+        store = OneSlotStore()
+        client = AnonymousClient(
+            domain=DOMAIN,
+            client_id=CLIENT_ID,
+            client_secret=None,
+            secret=SECRET,
+            anonymous_store=store,
+        )
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
+        with patch("httpx.AsyncClient", fake_http):
+            await client.create_session(audience="aud", scope="s")
+        _, _, kwargs = fake_http.calls[0]
+        body = kwargs["json"]
+        assert "client_secret" not in body
+        assert "client_assertion" not in body
+        assert "client_assertion_type" not in body
+
 
 # ── Store isolation ────────────────────────────────────────────────────────────
 

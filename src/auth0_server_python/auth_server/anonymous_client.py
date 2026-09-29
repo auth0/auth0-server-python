@@ -37,6 +37,7 @@ from auth0_server_python.error import (
     _SessionDecryptError,
 )
 from auth0_server_python.utils.helpers import (
+    State,
     build_domain_resolver_context,
     validate_resolved_domain_value,
 )
@@ -96,6 +97,7 @@ class AnonymousClient:
             A configured httpx.AsyncClient.
         """
         headers = {**kwargs.pop("headers", {}), **self._headers}
+        kwargs.setdefault("timeout", 5.0)
         return httpx.AsyncClient(headers=headers, **kwargs)
 
     def _require_store(self) -> None:
@@ -542,7 +544,7 @@ class AnonymousClient:
         try:
             current_context = self._decrypt_context(current_stored)
         except (_AnonymousSessionExpired, _SessionDecryptError):
-            current_context = context
+            return result
         if current_context.session_token != context.session_token:
             return result
 
@@ -748,7 +750,7 @@ class AnonymousClient:
 
         now = int(time.time())
         token_set = self._find_token_set(context.token_sets, eff_audience, eff_scope)
-        if token_set and token_set.expires_at > now:
+        if token_set and token_set.expires_at - State.SESSION_EXPIRY_LEEWAY_SECONDS > now:
             return AnonymousSession(
                 access_token=token_set.access_token,
                 expires_at=token_set.expires_at,
@@ -800,7 +802,7 @@ class AnonymousClient:
             context = self._decrypt_context(stored)
         except (_AnonymousSessionExpired, _SessionDecryptError):
             return None
-        if context.domain:
+        if context.domain and self._domain_resolver is not None:
             try:
                 current_domain = await self._resolve_domain(store_options)
             except Exception:
