@@ -748,7 +748,7 @@ class AnonymousClient:
                 current_domain,
                 audience=eff_audience,
                 scope=eff_scope,
-                metadata=context.metadata,
+                metadata=None,
                 store_options=store_options,
             )
 

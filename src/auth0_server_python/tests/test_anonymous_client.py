@@ -1115,8 +1115,8 @@ class TestMcdIsolation:
         assert urlsplit(url).hostname != "tenant-a.auth0.local"
 
     @pytest.mark.asyncio
-    async def test_domain_mismatch_remint_preserves_metadata(self):
-        """A domain-mismatch re-mint must carry the stored metadata, not drop the cart."""
+    async def test_domain_mismatch_remint_does_not_forward_metadata(self):
+        """A domain-mismatch re-mint must not carry metadata to the new domain."""
         store = OneSlotStore()
         _stored_context(
             store,
@@ -1133,7 +1133,7 @@ class TestMcdIsolation:
             await client.get_token()
         _, url, kwargs = fake_http.calls[0]
         assert urlsplit(url).hostname == "tenant-b.auth0.local"
-        assert kwargs["json"]["metadata"] == {"cart": ["sku-1"]}
+        assert "metadata" not in kwargs["json"]
 
     @pytest.mark.asyncio
     async def test_domain_resolver_failure_propagates(self):
