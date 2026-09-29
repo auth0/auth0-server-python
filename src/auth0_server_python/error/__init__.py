@@ -458,11 +458,11 @@ class AnonymousSessionTokenError(AnonymousSessionError):
         super().__init__(code, message, cause)
 
 
-class _AnonymousSessionExpired(Auth0Error):
+class _AnonymousSessionExpired(AnonymousSessionError):
     """Internal-only signal that the stored session token is expired or invalid."""
 
     def __init__(self, message: str = "The anonymous session token is expired or invalid."):
-        super().__init__(message)
+        super().__init__("session_expired", message)
         self.name = "_AnonymousSessionExpired"
 
 
