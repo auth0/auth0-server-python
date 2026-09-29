@@ -1035,6 +1035,33 @@ class TestGetToken:
         assert final_ctx.session_token == "NEW_SESSION_TOKEN"
 
     @pytest.mark.asyncio
+    async def test_remint_skips_write_when_reread_is_corrupt(self):
+        """If the re-read context is corrupt, the result is returned without writing."""
+        store = OneSlotStore()
+        _stored_context(store, expires_at=int(time.time()) - 10)
+        client = _make_client(anonymous_store=store)
+
+        original_get = store.get
+        call_count = 0
+
+        async def get_then_corrupt(identifier, *, options=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                store.slot = (ANON_IDENTIFIER, {"context": "not-valid-jwe"})
+            return await original_get(identifier)
+
+        store.get = get_then_corrupt
+        fake_http = _FakeAsyncClient([_fake_response(200, _token_response(access_token="AT2"))])
+        with patch("httpx.AsyncClient", fake_http):
+            session = await client.get_token()
+
+        assert session.access_token == "AT2"
+        stored_raw = store.slot
+        assert stored_raw is not None
+        assert stored_raw[1]["context"] == "not-valid-jwe"
+
+    @pytest.mark.asyncio
     async def test_get_token_returns_sub_from_cache(self):
         store = OneSlotStore()
         _stored_context(store, sub="anon@cached-uuid")
@@ -1532,4 +1559,28 @@ class TestGetSession:
             secret=SECRET, anonymous_store=store,
         )
         result = await client.get_session()
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_resolver_exception_in_get_session_returns_none(self):
+        """A resolver error during get_session must fail closed."""
+        store = OneSlotStore()
+        _stored_context(store, domain="tenant-a.auth0.local")
+        resolver = AsyncMock(side_effect=RuntimeError("resolver down"))
+        client = AnonymousClient(
+            domain=resolver, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
+            secret=SECRET, anonymous_store=store,
+        )
+        result = await client.get_session()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_static_domain_client_returns_session_without_domain_check(self):
+        """A static-domain client must not invoke the resolver and must return the session."""
+        store = OneSlotStore()
+        _stored_context(store, domain="some-old-domain.auth0.local")
+        client = _make_client(anonymous_store=store)
+        with patch.object(client, "_resolve_domain") as mock_resolver:
+            result = await client.get_session()
+            mock_resolver.assert_not_called()
         assert result is not None
