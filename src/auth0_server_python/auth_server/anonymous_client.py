@@ -447,7 +447,6 @@ class AnonymousClient:
         )
         return AnonymousSession(
             access_token=token_set.access_token,
-            session_token=context.session_token,
             expires_at=token_set.expires_at,
             session_expires_at=context.session_expires_at,
             metadata=context.metadata,
@@ -533,7 +532,6 @@ class AnonymousClient:
         )
         result = AnonymousSession(
             access_token=token_set.access_token,
-            session_token=new_session_token,
             expires_at=token_set.expires_at,
             session_expires_at=now + token_response.session_expires_in if token_response.session_expires_in is not None else context.session_expires_at,
             metadata=context.metadata,
@@ -757,7 +755,6 @@ class AnonymousClient:
         if token_set and token_set.expires_at > now:
             return AnonymousSession(
                 access_token=token_set.access_token,
-                session_token=context.session_token,
                 expires_at=token_set.expires_at,
                 session_expires_at=context.session_expires_at,
                 metadata=context.metadata,

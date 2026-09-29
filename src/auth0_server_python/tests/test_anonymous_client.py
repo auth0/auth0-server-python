@@ -18,6 +18,7 @@ from auth0_server_python.auth_server.anonymous_client import (
     AnonymousClient,
 )
 from auth0_server_python.auth_types import (
+    AnonymousSession,
     AnonymousSessionContext,
     AnonymousSessionData,
     AnonymousTokenSetEntry,
@@ -229,46 +230,9 @@ class TestCreateSession:
             )
         assert session.metadata == {"cart_id": "c1"}
 
-    @pytest.mark.asyncio
-    async def test_create_session_exposes_session_token_to_caller(self):
-        """create_session() must expose session_token to the caller."""
-        store = OneSlotStore()
-        client = _make_client(anonymous_store=store)
-        fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
-        with patch("httpx.AsyncClient", fake_http):
-            session = await client.create_session(audience="aud", scope="s")
-        assert session.session_token == "ST1"
-
-    @pytest.mark.asyncio
-    async def test_get_token_exposes_session_token_on_cached_and_reminted_paths(self):
-        """get_token() must carry session_token on both cached and re-minted paths."""
-        store = OneSlotStore()
-        client = _make_client(anonymous_store=store)
-
-        _stored_context(store)
-        cached = await client.get_token()
-        assert cached.session_token == "ST1"
-
-        _stored_context(store, expires_at=int(time.time()) - 10)
-        fake_http = _FakeAsyncClient(
-            [_fake_response(200, _token_response(access_token="AT2", session_token="ST2"))]
-        )
-        with patch("httpx.AsyncClient", fake_http):
-            reminted = await client.get_token()
-        assert reminted.session_token == "ST2"
-
-    @pytest.mark.asyncio
-    async def test_remint_without_session_token_keeps_exposing_prior_token(self):
-        """Re-mint response omitting session_token must keep exposing the prior one."""
-        store = OneSlotStore()
-        client = _make_client(anonymous_store=store)
-        _stored_context(store, expires_at=int(time.time()) - 10)
-        response = _token_response(access_token="AT2")
-        del response["session_token"]
-        fake_http = _FakeAsyncClient([_fake_response(200, response)])
-        with patch("httpx.AsyncClient", fake_http):
-            session = await client.get_token()
-        assert session.session_token == "ST1"
+    def test_anonymous_session_does_not_expose_session_token(self):
+        """session_token is a server credential and must not appear on the public return type."""
+        assert "session_token" not in AnonymousSession.model_fields
 
     @pytest.mark.asyncio
     async def test_create_session_response_missing_session_token_raises(self):
@@ -1445,13 +1409,9 @@ class TestGetSession:
         assert result.sub == "anon@test-uuid"
         assert result.domain == "auth0.local"
 
-    @pytest.mark.asyncio
-    async def test_does_not_include_session_token(self):
-        store = OneSlotStore()
-        _stored_context(store)
-        client = _make_client(anonymous_store=store)
-        result = await client.get_session()
-        assert not hasattr(result, "session_token") or not isinstance(getattr(result, "session_token", None), str)
+    def test_does_not_include_session_token(self):
+        """session_token must not be declared on AnonymousSessionData's schema."""
+        assert "session_token" not in AnonymousSessionData.model_fields
 
     @pytest.mark.asyncio
     async def test_makes_no_http_call(self):

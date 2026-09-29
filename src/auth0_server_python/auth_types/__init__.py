@@ -889,7 +889,6 @@ class AnonymousSession(BaseModel):
     """Public result of create_session() and the renewal ladder."""
 
     access_token: str
-    session_token: str
     expires_at: int
     session_expires_at: Optional[int] = None
     metadata: Optional[dict[str, Any]] = None
