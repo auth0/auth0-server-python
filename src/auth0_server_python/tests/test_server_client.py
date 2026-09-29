@@ -302,6 +302,41 @@ async def test_start_interactive_login_forwards_experiment_center_params_via_par
 
 
 @pytest.mark.asyncio
+async def test_start_interactive_login_experiment_center_params_appear_in_url(mocker):
+    """The EC override params show up in the query string of the built authorization URL."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    # No builder mock here, so authlib builds the real URL and we can check the query string.
+
+    url = await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+                "segment_id": "seg_789",
+            }
+        )
+    )
+
+    query = parse_qs(urlparse(url).query)
+    assert query["experiment_id"] == ["exp_123"]
+    assert query["variation_id"] == ["var_456"]
+    assert query["segment_id"] == ["seg_789"]
+
+
+@pytest.mark.asyncio
 async def test_par_request_uses_private_key_jwt_assertion(mocker):
     """The pushed authorization request posts a client assertion when a signing key is set."""
     client = ServerClient(
