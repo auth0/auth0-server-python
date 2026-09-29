@@ -178,6 +178,165 @@ async def test_start_interactive_login_builds_auth_url(mocker):
 
 
 @pytest.mark.asyncio
+async def test_start_interactive_login_forwards_experiment_center_params(mocker):
+    """Experiment Center override params passed per call reach the /authorize request."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    mock_oauth = mocker.patch.object(
+        client._oauth,
+        "create_authorization_url",
+        return_value=("https://auth0.local/authorize", "some_state"),
+    )
+
+    await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+                "segment_id": "seg_789",
+            }
+        )
+    )
+
+    # EC params are not in INTERNAL_AUTHORIZE_PARAMS, so they flow through to /authorize.
+    forwarded = mock_oauth.call_args.kwargs
+    assert forwarded["experiment_id"] == "exp_123"
+    assert forwarded["variation_id"] == "var_456"
+    assert forwarded["segment_id"] == "seg_789"
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_omits_unset_experiment_center_params(mocker):
+    """An Experiment Center param that is not passed never reaches the /authorize request."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    mock_oauth = mocker.patch.object(
+        client._oauth,
+        "create_authorization_url",
+        return_value=("https://auth0.local/authorize", "some_state"),
+    )
+
+    await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+            }
+        )
+    )
+
+    # segment_id was not passed, so it must not be forwarded to /authorize.
+    forwarded = mock_oauth.call_args.kwargs
+    assert forwarded["experiment_id"] == "exp_123"
+    assert forwarded["variation_id"] == "var_456"
+    assert "segment_id" not in forwarded
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_forwards_experiment_center_params_via_par(mocker):
+    """On the PAR branch, Experiment Center override params are posted in the PAR request body."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="my_client",
+        client_secret="my_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        pushed_authorization_requests=True,
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "authorization_endpoint": "https://auth0.local/authorize",
+            "pushed_authorization_request_endpoint": "https://auth0.local/oauth/par",
+        },
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    par_response = AsyncMock()
+    par_response.status_code = 201
+    par_response.json = MagicMock(return_value={"request_uri": "urn:req:abc", "expires_in": 60})
+    mock_post.return_value = par_response
+
+    await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+                "segment_id": "seg_789",
+            }
+        )
+    )
+
+    # EC params are not in INTERNAL_AUTHORIZE_PARAMS, so they flow through to the PAR body.
+    posted = mock_post.call_args[1]["data"]
+    assert posted["experiment_id"] == "exp_123"
+    assert posted["variation_id"] == "var_456"
+    assert posted["segment_id"] == "seg_789"
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_experiment_center_params_appear_in_url(mocker):
+    """The EC override params show up in the query string of the built authorization URL."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    # No builder mock here, so authlib builds the real URL and we can check the query string.
+
+    url = await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+                "segment_id": "seg_789",
+            }
+        )
+    )
+
+    query = parse_qs(urlparse(url).query)
+    assert query["experiment_id"] == ["exp_123"]
+    assert query["variation_id"] == ["var_456"]
+    assert query["segment_id"] == ["seg_789"]
+
+
+@pytest.mark.asyncio
 async def test_par_request_uses_private_key_jwt_assertion(mocker):
     """The pushed authorization request posts a client assertion when a signing key is set."""
     client = ServerClient(
