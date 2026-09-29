@@ -912,7 +912,7 @@ class AnonymousTokenResponse(BaseModel):
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
-    session_expires_in: int
+    session_expires_in: Optional[int] = None
     session_token: Optional[str] = None
 
 

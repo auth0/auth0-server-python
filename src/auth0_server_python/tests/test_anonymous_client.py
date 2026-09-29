@@ -474,6 +474,17 @@ class TestCreateSession:
         ctx = client._decrypt_context(stored)
         assert ctx.sub is None
 
+    @pytest.mark.asyncio
+    async def test_create_session_tolerates_missing_session_expires_in(self):
+        """Legacy platform tokens omit session_expires_in; session_expires_at must be None."""
+        store = OneSlotStore()
+        client = _make_client(anonymous_store=store)
+        response = {k: v for k, v in _token_response().items() if k != "session_expires_in"}
+        fake_http = _FakeAsyncClient([_fake_response(200, response)])
+        with patch("httpx.AsyncClient", fake_http):
+            session = await client.create_session()
+        assert session.session_expires_at is None
+
 
 # ── get_token (renewal ladder) ────────────────────────────────────────────────
 
@@ -585,6 +596,19 @@ class TestGetToken:
             await client.get_token()
         _, _, kwargs = fake_http.calls[0]
         assert "metadata" not in kwargs["json"]
+
+    @pytest.mark.asyncio
+    async def test_remint_preserves_session_expires_at_when_platform_omits_session_expires_in(self):
+        """Legacy renewal responses omit session_expires_in; stored expiry must be kept."""
+        stored_expiry = int(time.time()) + 86400
+        store = OneSlotStore()
+        _stored_context(store, expires_at=int(time.time()) - 10, session_expires_at=stored_expiry)
+        client = _make_client(anonymous_store=store)
+        response = {k: v for k, v in _token_response(access_token="AT2").items() if k != "session_expires_in"}
+        fake_http = _FakeAsyncClient([_fake_response(200, response)])
+        with patch("httpx.AsyncClient", fake_http):
+            session = await client.get_token()
+        assert session.session_expires_at == stored_expiry
 
     @pytest.mark.asyncio
     async def test_remint_preserves_empty_string_fields_instead_of_falling_back_to_stale_context(

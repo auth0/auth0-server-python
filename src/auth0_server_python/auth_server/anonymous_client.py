@@ -403,7 +403,7 @@ class AnonymousClient:
         context = AnonymousSessionContext(
             session_token=token_response.session_token,
             token_sets=[token_set],
-            session_expires_at=now + token_response.session_expires_in,
+            session_expires_at=now + token_response.session_expires_in if token_response.session_expires_in is not None else None,
             metadata=metadata,
             created_at=now,
             domain=domain,
@@ -503,7 +503,7 @@ class AnonymousClient:
             access_token=token_set.access_token,
             session_token=new_session_token,
             expires_at=token_set.expires_at,
-            session_expires_at=now + token_response.session_expires_in,
+            session_expires_at=now + token_response.session_expires_in if token_response.session_expires_in is not None else context.session_expires_at,
             metadata=context.metadata,
             sub=new_sub if new_sub is not None else context.sub,
         )
@@ -524,7 +524,7 @@ class AnonymousClient:
         updated_context = self._upsert_token_set(
             current_context.model_copy(update={
                 "session_token": new_session_token,
-                "session_expires_at": now + token_response.session_expires_in,
+                "session_expires_at": now + token_response.session_expires_in if token_response.session_expires_in is not None else context.session_expires_at,
                 **sub_update,
             }),
             token_set,
