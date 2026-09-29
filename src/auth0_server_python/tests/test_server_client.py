@@ -257,6 +257,51 @@ async def test_start_interactive_login_omits_unset_experiment_center_params(mock
 
 
 @pytest.mark.asyncio
+async def test_start_interactive_login_forwards_experiment_center_params_via_par(mocker):
+    """On the PAR branch, Experiment Center override params are posted in the PAR request body."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="my_client",
+        client_secret="my_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        pushed_authorization_requests=True,
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "authorization_endpoint": "https://auth0.local/authorize",
+            "pushed_authorization_request_endpoint": "https://auth0.local/oauth/par",
+        },
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    par_response = AsyncMock()
+    par_response.status_code = 201
+    par_response.json = MagicMock(return_value={"request_uri": "urn:req:abc", "expires_in": 60})
+    mock_post.return_value = par_response
+
+    await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+                "segment_id": "seg_789",
+            }
+        )
+    )
+
+    # EC params are not in INTERNAL_AUTHORIZE_PARAMS, so they flow through to the PAR body.
+    posted = mock_post.call_args[1]["data"]
+    assert posted["experiment_id"] == "exp_123"
+    assert posted["variation_id"] == "var_456"
+    assert posted["segment_id"] == "seg_789"
+
+
+@pytest.mark.asyncio
 async def test_par_request_uses_private_key_jwt_assertion(mocker):
     """The pushed authorization request posts a client assertion when a signing key is set."""
     client = ServerClient(
