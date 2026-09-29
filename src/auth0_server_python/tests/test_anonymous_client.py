@@ -723,8 +723,11 @@ class TestGetToken:
             _fake_response(200, _token_response()),
         ])
         with patch("httpx.AsyncClient", fake_http):
-            await client.get_token()
+            session = await client.get_token()
         assert len(fake_http.calls) == 2
+        _, _, second_call = fake_http.calls[1]
+        assert "session_token" not in second_call["json"]
+        assert session.access_token == "AT1"
 
     @pytest.mark.asyncio
     async def test_silent_remint_drops_metadata(self):
