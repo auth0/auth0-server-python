@@ -198,7 +198,7 @@ class AnonymousClient:
             parts = access_token.split(".")
             if len(parts) != 3:
                 return None
-            padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
+            padded = parts[1] + "=" * (-len(parts[1]) % 4)
             payload = json.loads(base64.urlsafe_b64decode(padded))
             sub = payload.get("sub")
             return str(sub) if sub else None
