@@ -565,6 +565,28 @@ class TestGetToken:
         assert "scope" not in kwargs["json"]
 
     @pytest.mark.asyncio
+    async def test_remint_never_sends_metadata_in_body(self):
+        """Platform 400s if metadata is included in a renewal request."""
+        store = OneSlotStore()
+        _stored_context(store, expires_at=int(time.time()) - 10, metadata={"cart_id": "c1"})
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient([
+            _fake_response(
+                200,
+                {
+                    "access_token": "AT2",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                    "session_expires_in": 2592000,
+                },
+            )
+        ])
+        with patch("httpx.AsyncClient", fake_http):
+            await client.get_token()
+        _, _, kwargs = fake_http.calls[0]
+        assert "metadata" not in kwargs["json"]
+
+    @pytest.mark.asyncio
     async def test_remint_preserves_empty_string_fields_instead_of_falling_back_to_stale_context(
         self,
     ):
@@ -645,15 +667,14 @@ class TestGetToken:
         assert len(fake_http.calls) == 1
 
     @pytest.mark.asyncio
-    async def test_corrupted_stored_token_triggers_silent_new_session(self):
+    async def test_corrupted_stored_token_raises_and_clears_store(self):
         store = OneSlotStore()
         store.slot = (ANON_IDENTIFIER, {"context": "not-a-valid-jwe"})
         client = _make_client(anonymous_store=store)
-        fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
-        with patch("httpx.AsyncClient", fake_http):
-            session = await client.get_token()
-        assert session.access_token == "AT1"
-        assert len(fake_http.calls) == 1
+        with pytest.raises(AnonymousSessionTokenError) as exc:
+            await client.get_token()
+        assert exc.value.code == "invalid_session_state"
+        assert store.slot is None
 
     @pytest.mark.asyncio
     async def test_network_error_during_renewal_not_misclassified_as_expiry(self):

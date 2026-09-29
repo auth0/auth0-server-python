@@ -29,6 +29,7 @@ from auth0_server_python.error import (
     ConfigurationError,
     DomainResolverError,
     _AnonymousSessionExpired,
+    _SessionDecryptError,
 )
 from auth0_server_python.utils.helpers import (
     build_domain_resolver_context,
@@ -317,7 +318,7 @@ class AnonymousClient:
             payload = decrypt(encrypted, self._secret, ANON_TOKEN_SALT)
             return AnonymousSessionContext.model_validate(payload)
         except Exception as e:
-            raise _AnonymousSessionExpired(
+            raise _SessionDecryptError(
                 "Stored anonymous session token is invalid or corrupted."
             ) from e
 
@@ -513,7 +514,7 @@ class AnonymousClient:
             return result
         try:
             current_context = self._decrypt_context(current_stored)
-        except _AnonymousSessionExpired:
+        except (_AnonymousSessionExpired, _SessionDecryptError):
             current_context = context
         if current_context.session_token != context.session_token:
             return result
@@ -561,7 +562,7 @@ class AnonymousClient:
             return None
         try:
             context = self._decrypt_context(stored)
-        except _AnonymousSessionExpired:
+        except (_AnonymousSessionExpired, _SessionDecryptError):
             return None
         # Prevents a tenant-A session token from minting a transfer ticket usable at tenant-B's login.
         if context.domain and self._normalize_url(context.domain) != self._normalize_url(
@@ -693,15 +694,13 @@ class AnonymousClient:
 
         try:
             context = self._decrypt_context(stored)
-        except _AnonymousSessionExpired:
-            domain = await self._resolve_domain(store_options)
-            return await self._create_session_at(
-                domain,
-                audience=eff_audience,
-                scope=eff_scope,
-                metadata=None,
-                store_options=store_options,
-            )
+        except _SessionDecryptError as e:
+            await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
+            raise AnonymousSessionTokenError(
+                "The stored anonymous session could not be decrypted. "
+                "Call create_session() to start a new session.",
+                code="invalid_session_state",
+            ) from e
 
         current_domain = await self._resolve_domain(store_options)
         if context.domain and self._normalize_url(context.domain) != self._normalize_url(
@@ -767,7 +766,7 @@ class AnonymousClient:
             return None
         try:
             context = self._decrypt_context(stored)
-        except _AnonymousSessionExpired:
+        except (_AnonymousSessionExpired, _SessionDecryptError):
             return None
         if context.domain:
             try:
