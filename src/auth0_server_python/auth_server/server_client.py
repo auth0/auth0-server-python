@@ -1271,6 +1271,7 @@ class ServerClient(Generic[TStoreOptions]):
         }
         if transaction_data.app_state:
             result["app_state"] = transaction_data.app_state
+        await self._clear_anonymous_session_after_login(store_options)
         return result
 
     async def _establish_session_from_mfa_verify_response(
@@ -1338,6 +1339,7 @@ class ServerClient(Generic[TStoreOptions]):
             id_token_claims=claims,
             store_options=store_options,
         )
+        await self._clear_anonymous_session_after_login(store_options)
 
     async def _clear_anonymous_session_after_login(
         self, store_options: Optional[dict[str, Any]] = None
