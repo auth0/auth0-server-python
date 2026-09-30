@@ -460,7 +460,7 @@ class AnonymousClient:
                         domain,
                         audience=audience,
                         scope=scope,
-                        metadata=None,
+                        metadata=context.metadata,
                         store_options=store_options,
                     )
                 raise mapped

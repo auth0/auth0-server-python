@@ -775,7 +775,7 @@ class TestGetToken:
         assert session.access_token == "AT1"
 
     @pytest.mark.asyncio
-    async def test_silent_remint_drops_metadata(self):
+    async def test_silent_remint_preserves_metadata(self):
         store = OneSlotStore()
         _stored_context(store, expires_at=int(time.time()) - 10, metadata={"cart_id": "c1"})
         client = _make_client(anonymous_store=store)
@@ -785,7 +785,7 @@ class TestGetToken:
         ])
         with patch("httpx.AsyncClient", fake_http):
             session = await client.get_token()
-        assert session.metadata is None
+        assert session.metadata == {"cart_id": "c1"}
 
     @pytest.mark.asyncio
     async def test_two_consecutive_session_expired_raises_not_loops(self):

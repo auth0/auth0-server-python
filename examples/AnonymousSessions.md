@@ -62,7 +62,7 @@ Renewal logic, in order:
 
 1. Cached access token still fresh, returned with no network call.
 2. Expired, re-minted using the stored session token (not a refresh-token grant, since anonymous sessions never issue refresh tokens).
-3. Session token also expired or invalid, a **brand-new session is silently created, once**. Both `sub` and `metadata` reset: the visitor gets a new `anon@<uuid>` identity and any previously attached metadata is gone. This never raises. An anonymous pre-login session carries no authorization, so re-minting crosses no trust boundary.
+3. Session token also expired or invalid, a **brand-new session is silently created, once**. The visitor gets a new `anon@<uuid>` identity but any metadata attached to the previous session is carried over. This never raises. An anonymous pre-login session carries no authorization, so re-minting crosses no trust boundary.
 4. Any other error, raised as a typed exception. No swallow, no auto-retry beyond the one re-mint in step 3.
 
 ## Logging Out
