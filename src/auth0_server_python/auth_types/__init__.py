@@ -255,6 +255,12 @@ class AuthorizationParameters(BaseModel):
     scope: Optional[str] = None
     audience: Optional[str] = None
     redirect_uri: Optional[str] = None
+    # Auth0 Experiment Center (A/B testing) override params, applied to this request only.
+    # Pass any of them to hint a specific experiment, variation, or segment instead of the
+    # automatic assignment. These are optional override hints, not a strict contract.
+    experiment_id: Optional[str] = None
+    variation_id: Optional[str] = None
+    segment_id: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional OAuth parameters
