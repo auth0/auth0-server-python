@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from jwcrypto import jwk
 
 from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
-from auth0_server_python.auth_server.anonymous_client import ANON_IDENTIFIER, AnonymousClient
+from auth0_server_python.auth_server.anonymous import ANON_IDENTIFIER, AnonymousClient
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.server_client import (

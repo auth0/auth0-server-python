@@ -13,10 +13,11 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from auth0_server_python.auth_server.anonymous_client import (
+from auth0_server_python.auth_server.anonymous import (
     ANON_IDENTIFIER,
     AnonymousClient,
 )
+from auth0_server_python.auth_server.anonymous.helpers import upsert_token_set
 from auth0_server_python.auth_types import (
     AnonymousSession,
     AnonymousSessionContext,
@@ -945,7 +946,7 @@ class TestGetToken:
                     expires_at=int(time.time()) + 3600,
                     audience="https://api2.example.com",
                 )
-                merged = client._upsert_token_set(ctx, concurrent_token_set)
+                merged = upsert_token_set(ctx, concurrent_token_set)
                 await original_set(identifier, merged.model_dump())
             return await original_get(identifier)
 

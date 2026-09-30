@@ -28,7 +28,7 @@ from auth0_server_python.auth_schemes.client_assertion import (
     validate_client_assertion_key,
 )
 from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
-from auth0_server_python.auth_server.anonymous_client import AnonymousClient
+from auth0_server_python.auth_server.anonymous import AnonymousClient
 from auth0_server_python.auth_server.mfa_client import DEFAULT_MFA_TOKEN_TTL, MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.passwordless_client import PasswordlessClient

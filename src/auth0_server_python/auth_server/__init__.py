@@ -1,4 +1,4 @@
-from .anonymous_client import AnonymousClient
+from .anonymous import AnonymousClient
 from .mfa_client import MfaClient
 from .my_account_client import MyAccountClient
 from .passwordless_client import PasswordlessClient
