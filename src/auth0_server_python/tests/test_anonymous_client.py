@@ -176,7 +176,7 @@ class TestAnonymousClientConstructor:
                 domain=DOMAIN,
                 client_id=CLIENT_ID,
                 client_secret=None,
-    
+
                 client_assertion_signing_key="not-a-valid-pem-key",
             )
 
