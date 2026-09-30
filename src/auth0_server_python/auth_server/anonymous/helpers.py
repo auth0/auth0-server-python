@@ -153,7 +153,7 @@ def validate_metadata(metadata: Optional[dict[str, Any]]) -> None:
 
     Raises:
         AnonymousSessionCreateError: metadata is not a dict, contains a
-            disallowed key, a non-JSON-serializable value, or exceeds 1KB.
+            a non-JSON-serializable value, or exceeds 1KB.
     """
     if metadata is None:
         return

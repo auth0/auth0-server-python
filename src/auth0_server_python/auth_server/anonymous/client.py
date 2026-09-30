@@ -85,10 +85,6 @@ class AnonymousClient:
         self._default_scope = default_scope
         self._headers = headers or {}
 
-    # ============================================================================
-    # INFRASTRUCTURE HELPERS
-    # ============================================================================
-
     def _get_http_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient with default headers injected.
 
@@ -159,10 +155,6 @@ class AnonymousClient:
                     original_error=e,
                 )
         return self._domain
-
-    # ============================================================================
-    # SESSION CREATION
-    # ============================================================================
 
     async def _create_session_at(
         self,
@@ -261,10 +253,6 @@ class AnonymousClient:
             scope=token_set.granted_scope,
         )
 
-    # ============================================================================
-    # TOKEN RENEWAL LADDER
-    # ============================================================================
-
     async def _remint(
         self,
         context: AnonymousSessionContext,
@@ -275,7 +263,7 @@ class AnonymousClient:
         """Re-mint an access token using the stored session token.
 
         Args:
-            context: The current decrypted session context.
+            context: The current session context.
             audience: Audience to request for the new token.
             scope: Scope to request for the new token.
             store_options: Options passed to the anonymous store.
@@ -357,7 +345,7 @@ class AnonymousClient:
         if current_context.session_token != context.session_token:
             return result
 
-        # Only update sub when it was not previously stored (token was initially JWE).
+        # Only backfill sub when the stored context has none.
         sub_update = {"sub": new_sub} if new_sub is not None and current_context.sub is None else {}
         updated_context = upsert_token_set(
             current_context.model_copy(update={
@@ -373,10 +361,6 @@ class AnonymousClient:
             options=store_options,
         )
         return result
-
-    # ============================================================================
-    # LOGIN INJECTION SUPPORT
-    # ============================================================================
 
     async def exchange_transfer_token_for_injection(
         self, origin_domain: str, store_options: Optional[dict[str, Any]] = None
@@ -445,9 +429,26 @@ class AnonymousClient:
             return None
         return token_response.anon_transfer_token
 
-    # ============================================================================
-    # PUBLIC API
-    # ============================================================================
+    async def _end_session_if_active(
+        self, store_options: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Clear the local anonymous session on authenticated logout, if one is active.
+
+        Args:
+            store_options: Options passed to the anonymous store.
+        """
+        if self._anonymous_store is None:
+            return
+        try:
+            stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
+        except Exception:
+            return
+        if not stored:
+            return
+        try:
+            await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
+        except Exception:
+            return
 
     async def create_session(
         self,
@@ -537,7 +538,7 @@ class AnonymousClient:
         except Exception as e:
             await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
             raise AnonymousSessionTokenError(
-                "The stored anonymous session could not be decrypted. "
+                "The stored anonymous session is corrupt or unreadable. "
                 "Call create_session() to start a new session.",
                 code="invalid_session_state",
             ) from e
@@ -625,24 +626,3 @@ class AnonymousClient:
             session_expires_at=context.session_expires_at,
             domain=context.domain,
         )
-
-    async def _end_session_if_active(
-        self, store_options: Optional[dict[str, Any]] = None
-    ) -> None:
-        """Clear the local anonymous session on authenticated logout, if one is active.
-
-        Args:
-            store_options: Options passed to the anonymous store.
-        """
-        if self._anonymous_store is None:
-            return
-        try:
-            stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
-        except Exception:
-            return
-        if not stored:
-            return
-        try:
-            await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
-        except Exception:
-            return
