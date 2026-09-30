@@ -35,7 +35,8 @@ server_client = ServerClient(
 
 Give `anonymous_store` its own store instance, not `state_store` with a different identifier. If you omit it, every `.anonymous.*` call raises `ConfigurationError` before any write.
 
-The SDK writes the anonymous session as a plain dict. If you use a stateless (cookie-backed) store, make sure it encrypts the payload - the same responsibility you already have for `state_store`.
+> [!IMPORTANT]
+> **Encryption is your responsibility.** The SDK writes the anonymous session as a plain dict with no encryption applied. If your `anonymous_store` is cookie-backed or otherwise persists data outside a trusted server boundary, you must encrypt the payload before writing and decrypt it on read. This is the same responsibility you already have for `state_store`.
 
 ## Creating a Session
 
@@ -72,7 +73,7 @@ await server_client.anonymous.logout(store_options=store_options)
 ```
 
 > [!CAUTION]
-> **`logout()` does not revoke.** There is no server-side anonymous session store to revoke against, this clears only the locally-held encrypted context. Any access token already issued for this anonymous session remains valid until its natural expiry.
+> **`logout()` does not revoke.** There is no server-side anonymous session store to revoke against, this clears only the locally-held session context. Any access token already issued for this anonymous session remains valid until its natural expiry.
 
 Authenticated (OIDC) logout also ends an active anonymous session. When you call `ServerClient.logout()` and an anonymous store is configured, the SDK clears the locally-held anonymous session before returning the logout URL. This is a local clear only, with no remote call (consistent with `anonymous.logout()`, which also does not revoke server-side). It prevents the next visitor on a shared device from having the previous visitor's anonymous identity re-linked at their login. If no anonymous session is active, nothing is cleared.
 
@@ -80,7 +81,7 @@ Authenticated (OIDC) logout also ends an active anonymous session. When you call
 
 When an anonymous session is active, `start_interactive_login()` automatically injects an `anon_transfer_token` transfer ticket into the `/authorize` URL, no code change needed at your call site. If no anonymous session exists, behavior is unchanged.
 
-The raw `session_token` never goes on the URL. At the moment the `/authorize` URL is built, the SDK exchanges the stored session token for a short-lived (30s) single-use ticket (`anon_transfer_token`) via `POST /anonymous/token`, and forwards only that ticket as the `anon_transfer_token` query parameter. The raw session token stays inside the SDK's encrypted store and the ticket is never persisted. The ticket is short-lived and grants no authorization on its own, but you should still set `Referrer-Policy: no-referrer` on your login pages and never log the authorize URL.
+The raw `session_token` never goes on the URL. At the moment the `/authorize` URL is built, the SDK exchanges the stored session token for a short-lived (30s) single-use ticket (`anon_transfer_token`) via `POST /anonymous/token`, and forwards only that ticket as the `anon_transfer_token` query parameter. The raw session token stays inside the SDK's store and the ticket is never persisted. The ticket is short-lived and grants no authorization on its own, but you should still set `Referrer-Policy: no-referrer` on your login pages and never log the authorize URL.
 
 If the exchange errors (network failure, a non-200, or an unparseable response), login proceeds with no ticket and no linking, and never aborts the login.
 
@@ -130,7 +131,7 @@ The platform may return other codes (e.g. `"insufficient_scope"`) and these are 
 
 | `.code` | When |
 |---------|------|
-| `"invalid_session_state"` | stored session could not be decrypted - call `create_session()` to recover |
+| `"invalid_session_state"` | stored session data is corrupt or unreadable - call `create_session()` to recover |
 | `"anonymous_token_error"` | no active session, network error, parse error, or generic platform error on the renewal path |
 
 > **Note on naming.** The SDK spec names this class `AnonymousSessionTokenExpiredError`. This SDK uses `AnonymousSessionTokenError` - a deliberate broadening, since the class covers all `get_token()` failures, not just expiry. The `.code` values are stable and safe to branch on.
