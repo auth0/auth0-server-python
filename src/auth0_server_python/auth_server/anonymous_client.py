@@ -26,7 +26,6 @@ from auth0_server_python.auth_types import (
     AnonymousTransferTokenResponse,
     CreateAnonymousSessionOptions,
 )
-from auth0_server_python.encryption.encrypt import decrypt, encrypt
 from auth0_server_python.error import (
     AnonymousSessionCreateError,
     AnonymousSessionError,
@@ -34,7 +33,6 @@ from auth0_server_python.error import (
     ConfigurationError,
     DomainResolverError,
     _AnonymousSessionExpired,
-    _SessionDecryptError,
 )
 from auth0_server_python.utils.helpers import (
     State,
@@ -43,7 +41,6 @@ from auth0_server_python.utils.helpers import (
 )
 
 ANON_IDENTIFIER = "_a0_anon"
-ANON_TOKEN_SALT = "anon_session"
 
 # Audience that mints the login-injection transfer ticket instead of an access token.
 TRANSFER_AUDIENCE = "urn:auth0:anon_transfer"
@@ -59,7 +56,6 @@ class AnonymousClient:
         domain: Union[str, Callable, None],
         client_id: str,
         client_secret: Optional[str],
-        secret: str,
         anonymous_store=None,
         default_audience: Optional[str] = None,
         default_scope: Optional[str] = None,
@@ -81,7 +77,6 @@ class AnonymousClient:
             validate_client_assertion_key(
                 client_assertion_signing_key, self._client_assertion_signing_alg
             )
-        self._secret = secret
         self._anonymous_store = anonymous_store
         self._default_audience = default_audience
         self._default_scope = default_scope
@@ -302,7 +297,7 @@ class AnonymousClient:
         if not isinstance(metadata, dict):
             raise AnonymousSessionCreateError("metadata must be a JSON object", code="invalid_metadata")
         try:
-            size = len(json.dumps(metadata).encode("utf-8"))
+            size = len(json.dumps(metadata, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
         except TypeError as e:
             raise AnonymousSessionCreateError(
                 "metadata must contain only JSON-serializable values", code="invalid_metadata"
@@ -311,45 +306,6 @@ class AnonymousClient:
             raise AnonymousSessionCreateError(
                 "metadata exceeds the 1KB size limit", code="metadata_too_large"
             )
-
-    # ============================================================================
-    # ENCRYPTION
-    # ============================================================================
-
-    def _encrypt_context(self, context: AnonymousSessionContext) -> str:
-        """Encrypt an anonymous session context for storage.
-
-        Args:
-            context: The context to encrypt.
-
-        Returns:
-            The encrypted context string.
-        """
-        return encrypt(context.model_dump(), self._secret, ANON_TOKEN_SALT)
-
-    def _decrypt_context(self, stored: Any) -> AnonymousSessionContext:
-        """Decrypt and validate a stored anonymous session record.
-
-        Args:
-            stored: The raw record read from the anonymous store.
-
-        Returns:
-            The decrypted AnonymousSessionContext.
-
-        Raises:
-            _AnonymousSessionExpired: The record is missing, malformed, or
-                fails to decrypt or validate.
-        """
-        try:
-            encrypted = stored.get("context") if isinstance(stored, dict) else None
-            if not encrypted:
-                raise ValueError("Malformed anonymous session record")
-            payload = decrypt(encrypted, self._secret, ANON_TOKEN_SALT)
-            return AnonymousSessionContext.model_validate(payload)
-        except Exception as e:
-            raise _SessionDecryptError(
-                "Stored anonymous session token is invalid or corrupted."
-            ) from e
 
     # ============================================================================
     # SESSION CREATION
@@ -440,7 +396,7 @@ class AnonymousClient:
         )
         await self._anonymous_store.set(
             ANON_IDENTIFIER,
-            {"context": self._encrypt_context(context)},
+            context.model_dump(),
             options=store_options,
         )
         return AnonymousSession(
@@ -542,8 +498,8 @@ class AnonymousClient:
         if not current_stored:
             return result
         try:
-            current_context = self._decrypt_context(current_stored)
-        except (_AnonymousSessionExpired, _SessionDecryptError):
+            current_context = AnonymousSessionContext.model_validate(current_stored)
+        except Exception:
             return result
         if current_context.session_token != context.session_token:
             return result
@@ -560,7 +516,7 @@ class AnonymousClient:
         )
         await self._anonymous_store.set(
             ANON_IDENTIFIER,
-            {"context": self._encrypt_context(updated_context)},
+            updated_context.model_dump(),
             options=store_options,
         )
         return result
@@ -590,8 +546,8 @@ class AnonymousClient:
         if not stored:
             return None
         try:
-            context = self._decrypt_context(stored)
-        except (_AnonymousSessionExpired, _SessionDecryptError):
+            context = AnonymousSessionContext.model_validate(stored)
+        except Exception:
             return None
         # Prevents a tenant-A session token from minting a transfer ticket usable at tenant-B's login.
         # In resolver mode, an unknown stored domain (legacy session) is treated as a mismatch.
@@ -724,8 +680,8 @@ class AnonymousClient:
         eff_scope = scope or self._default_scope
 
         try:
-            context = self._decrypt_context(stored)
-        except _SessionDecryptError as e:
+            context = AnonymousSessionContext.model_validate(stored)
+        except Exception as e:
             await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
             raise AnonymousSessionTokenError(
                 "The stored anonymous session could not be decrypted. "
@@ -799,10 +755,10 @@ class AnonymousClient:
         if not stored:
             return None
         try:
-            context = self._decrypt_context(stored)
-        except (_AnonymousSessionExpired, _SessionDecryptError):
+            context = AnonymousSessionContext.model_validate(stored)
+        except Exception:
             return None
-        if context.domain and self._domain_resolver is not None:
+        if context.domain:
             try:
                 current_domain = await self._resolve_domain(store_options)
             except Exception:

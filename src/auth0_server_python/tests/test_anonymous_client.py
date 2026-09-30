@@ -24,7 +24,6 @@ from auth0_server_python.auth_types import (
     AnonymousTokenSetEntry,
     CreateAnonymousSessionOptions,
 )
-from auth0_server_python.encryption.encrypt import encrypt
 from auth0_server_python.error import (
     AnonymousSessionCreateError,
     AnonymousSessionTokenError,
@@ -37,7 +36,6 @@ from auth0_server_python.tests.store_fakes import OneSlotStore
 DOMAIN = "auth0.local"
 CLIENT_ID = "<client_id>"
 CLIENT_SECRET = "<client_secret>"
-SECRET = "test-secret-long-enough-for-encryption"
 
 
 def _make_client(anonymous_store=None, **kwargs) -> AnonymousClient:
@@ -45,7 +43,6 @@ def _make_client(anonymous_store=None, **kwargs) -> AnonymousClient:
         domain=DOMAIN,
         client_id=CLIENT_ID,
         client_secret=CLIENT_SECRET,
-        secret=SECRET,
         anonymous_store=anonymous_store,
         **kwargs,
     )
@@ -131,8 +128,7 @@ def _stored_context(store: OneSlotStore, **overrides):
             ctx_defaults[k] = overrides.pop(k)
     token_set = AnonymousTokenSetEntry(**ts_defaults)
     context = AnonymousSessionContext(token_sets=[token_set], **ctx_defaults)
-    encrypted = encrypt(context.model_dump(), SECRET, "anon_session")
-    store.slot = (ANON_IDENTIFIER, {"context": encrypted})
+    store.slot = (ANON_IDENTIFIER, context.model_dump())
     return context
 
 
@@ -149,7 +145,7 @@ class TestAnonymousClientConstructor:
     def test_constructor_accepts_callable_domain(self):
         resolver = AsyncMock(return_value="tenant.auth0.local")
         client = AnonymousClient(
-            domain=resolver, client_id=CLIENT_ID, client_secret=CLIENT_SECRET, secret=SECRET
+            domain=resolver, client_id=CLIENT_ID, client_secret=CLIENT_SECRET
         )
         assert client._domain is None
         assert client._domain_resolver is resolver
@@ -166,7 +162,7 @@ class TestAnonymousClientConstructor:
             domain=DOMAIN,
             client_id=CLIENT_ID,
             client_secret=None,
-            secret=SECRET,
+
             client_assertion_signing_key=signing_key,
             client_assertion_signing_alg="RS256",
         )
@@ -180,7 +176,7 @@ class TestAnonymousClientConstructor:
                 domain=DOMAIN,
                 client_id=CLIENT_ID,
                 client_secret=None,
-                secret=SECRET,
+    
                 client_assertion_signing_key="not-a-valid-pem-key",
             )
 
@@ -192,7 +188,7 @@ class TestAnonymousClientConstructor:
             domain=DOMAIN,
             client_id=CLIENT_ID,
             client_secret=None,
-            secret=SECRET,
+
             anonymous_store=store,
         )
         fake_http = _FakeAsyncClient([_fake_response(200, _token_response())])
@@ -287,7 +283,7 @@ class TestCreateSession:
             domain=DOMAIN,
             client_id=CLIENT_ID,
             client_secret=None,
-            secret=SECRET,
+
             anonymous_store=store,
             client_assertion_signing_key=signing_key,
         )
@@ -487,7 +483,7 @@ class TestCreateSession:
             session = await client.create_session()
         assert session.sub == "anon@test-uuid"
         stored = await store.get(ANON_IDENTIFIER)
-        ctx = client._decrypt_context(stored)
+        ctx = AnonymousSessionContext.model_validate(stored)
         assert ctx.sub == "anon@test-uuid"
 
     @pytest.mark.asyncio
@@ -505,7 +501,7 @@ class TestCreateSession:
             session = await client.create_session()
         assert session.sub is None
         stored = await store.get(ANON_IDENTIFIER)
-        ctx = client._decrypt_context(stored)
+        ctx = AnonymousSessionContext.model_validate(stored)
         assert ctx.sub is None
 
     @pytest.mark.asyncio
@@ -666,7 +662,7 @@ class TestGetToken:
             domain=DOMAIN,
             client_id=CLIENT_ID,
             client_secret=None,
-            secret=SECRET,
+
             anonymous_store=store,
             client_assertion_signing_key=signing_key,
         )
@@ -759,7 +755,7 @@ class TestGetToken:
         with patch("httpx.AsyncClient", fake_http):
             await client.get_token()
         stored = await store.get(ANON_IDENTIFIER)
-        context = client._decrypt_context(stored)
+        context = AnonymousSessionContext.model_validate(stored)
         assert context.session_token == ""
 
     @pytest.mark.asyncio
@@ -883,7 +879,7 @@ class TestGetToken:
             await client.get_token(audience="https://api2.example.com")
 
         stored = await store.get(ANON_IDENTIFIER)
-        context = client._decrypt_context(stored)
+        context = AnonymousSessionContext.model_validate(stored)
         audiences = [ts.audience for ts in context.token_sets]
         assert any(a == "https://api1.example.com" for a in audiences)
         assert any(a == "https://api2.example.com" for a in audiences)
@@ -943,17 +939,14 @@ class TestGetToken:
                 # Simulate a concurrent remint for api2 completing during our HTTP call,
                 # i.e. before our re-read runs.
                 current = await original_get(identifier)
-                ctx = client._decrypt_context(current)
+                ctx = AnonymousSessionContext.model_validate(current)
                 concurrent_token_set = AnonymousTokenSetEntry(
                     access_token="AT_API2",
                     expires_at=int(time.time()) + 3600,
                     audience="https://api2.example.com",
                 )
                 merged = client._upsert_token_set(ctx, concurrent_token_set)
-                await original_set(
-                    identifier,
-                    {"context": encrypt(merged.model_dump(), SECRET, "anon_session")},
-                )
+                await original_set(identifier, merged.model_dump())
             return await original_get(identifier)
 
         store.get = get_with_concurrent_write
@@ -963,7 +956,7 @@ class TestGetToken:
             await client.get_token(audience="https://api1.example.com")
 
         stored = await store.get(ANON_IDENTIFIER)
-        final_ctx = client._decrypt_context(stored)
+        final_ctx = AnonymousSessionContext.model_validate(stored)
         audiences = [ts.audience for ts in final_ctx.token_sets]
         assert any(a == "https://api2.example.com" for a in audiences)
         assert any(a == "https://api1.example.com" for a in audiences)
@@ -1031,7 +1024,7 @@ class TestGetToken:
 
         assert session is not None
         stored = await store.get(ANON_IDENTIFIER)
-        final_ctx = client._decrypt_context(stored)
+        final_ctx = AnonymousSessionContext.model_validate(stored)
         assert final_ctx.session_token == "NEW_SESSION_TOKEN"
 
     @pytest.mark.asyncio
@@ -1087,7 +1080,7 @@ class TestGetToken:
             session = await client.get_token()
         assert session.sub == "anon@reminted-uuid"
         stored = await store.get(ANON_IDENTIFIER)
-        ctx = client._decrypt_context(stored)
+        ctx = AnonymousSessionContext.model_validate(stored)
         assert ctx.sub == "anon@reminted-uuid"
 
     @pytest.mark.asyncio
@@ -1106,7 +1099,7 @@ class TestGetToken:
         with patch("httpx.AsyncClient", fake_http):
             await client.get_token()
         stored = await store.get(ANON_IDENTIFIER)
-        ctx = client._decrypt_context(stored)
+        ctx = AnonymousSessionContext.model_validate(stored)
         assert ctx.sub == "anon@original-uuid"
 
     @pytest.mark.asyncio
@@ -1126,7 +1119,7 @@ class TestGetToken:
             session = await client.get_token()
         assert session.sub == "anon@backfilled-uuid"
         stored = await store.get(ANON_IDENTIFIER)
-        ctx = client._decrypt_context(stored)
+        ctx = AnonymousSessionContext.model_validate(stored)
         assert ctx.sub == "anon@backfilled-uuid"
 
 
@@ -1202,7 +1195,7 @@ class TestMcdIsolation:
     async def test_domain_resolver_failure_propagates(self):
         resolver = AsyncMock(return_value=None)
         client = AnonymousClient(
-            domain=resolver, client_id=CLIENT_ID, client_secret=CLIENT_SECRET, secret=SECRET,
+            domain=resolver, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
             anonymous_store=OneSlotStore(),
         )
         with pytest.raises(DomainResolverError):
@@ -1288,7 +1281,7 @@ class TestExchangeTransferTokenForInjection:
             domain=DOMAIN,
             client_id=CLIENT_ID,
             client_secret=None,
-            secret=SECRET,
+
             anonymous_store=store,
             client_assertion_signing_key=signing_key,
         )
@@ -1323,7 +1316,7 @@ class TestExchangeTransferTokenForInjection:
         resolver = AsyncMock(return_value="tenant-b.auth0.local")
         client = AnonymousClient(
             domain=resolver, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
-            secret=SECRET, anonymous_store=store,
+            anonymous_store=store,
         )
         with patch("httpx.AsyncClient") as mock_http:
             result = await client.exchange_transfer_token_for_injection("tenant-b.auth0.local")
@@ -1544,7 +1537,7 @@ class TestGetSession:
         resolver = AsyncMock(return_value="tenant-b.auth0.local")
         client = AnonymousClient(
             domain=resolver, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
-            secret=SECRET, anonymous_store=store,
+            anonymous_store=store,
         )
         result = await client.get_session()
         assert result is None
@@ -1556,7 +1549,7 @@ class TestGetSession:
         resolver = AsyncMock(return_value="tenant-a.auth0.local")
         client = AnonymousClient(
             domain=resolver, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
-            secret=SECRET, anonymous_store=store,
+            anonymous_store=store,
         )
         result = await client.get_session()
         assert result is not None
@@ -1569,18 +1562,24 @@ class TestGetSession:
         resolver = AsyncMock(side_effect=RuntimeError("resolver down"))
         client = AnonymousClient(
             domain=resolver, client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
-            secret=SECRET, anonymous_store=store,
+            anonymous_store=store,
         )
         result = await client.get_session()
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_static_domain_client_returns_session_without_domain_check(self):
-        """A static-domain client must not invoke the resolver and must return the session."""
+    async def test_static_domain_client_returns_session_when_domain_matches(self):
+        """A static-domain client returns the session when the stored domain matches."""
+        store = OneSlotStore()
+        _stored_context(store, domain=DOMAIN)
+        client = _make_client(anonymous_store=store)
+        result = await client.get_session()
+        assert result is not None
+
+    async def test_static_domain_client_returns_none_when_domain_mismatches(self):
+        """A static-domain client returns None when the stored domain differs from the configured domain."""
         store = OneSlotStore()
         _stored_context(store, domain="some-old-domain.auth0.local")
         client = _make_client(anonymous_store=store)
-        with patch.object(client, "_resolve_domain") as mock_resolver:
-            result = await client.get_session()
-            mock_resolver.assert_not_called()
-        assert result is not None
+        result = await client.get_session()
+        assert result is None

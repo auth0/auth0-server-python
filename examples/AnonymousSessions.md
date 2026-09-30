@@ -35,6 +35,8 @@ server_client = ServerClient(
 
 Give `anonymous_store` its own store instance, not `state_store` with a different identifier. If you omit it, every `.anonymous.*` call raises `ConfigurationError` before any write.
 
+The SDK writes the anonymous session as a plain dict. If you use a stateless (cookie-backed) store, make sure it encrypts the payload - the same responsibility you already have for `state_store`.
+
 ## Creating a Session
 
 ```python
@@ -115,7 +117,7 @@ AnonymousSessionError           base class, never raised directly
 
 | `.code` | When |
 |---------|------|
-| `"feature_not_enabled"` | anonymous sessions not enabled on this tenant/client |
+| `"feature_not_enabled"` | anonymous sessions not enabled on this tenant/client (server-returned code, passed through unchanged) |
 | `"anonymous_create_error"` | generic platform error on the create path |
 | `"missing_session_token"` | platform response omitted the session token (misconfigured tenant) |
 | `"invalid_metadata"` | metadata is not a dict or contains non-JSON-serializable values |

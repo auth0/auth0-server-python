@@ -287,6 +287,13 @@ class ServerClient(Generic[TStoreOptions]):
         self._clear_anonymous_session_on_login = clear_anonymous_session_on_login
         self._webfinger_cache: OrderedDict[str, dict] = OrderedDict()
 
+        if anonymous_store is not None and anonymous_store is state_store:
+            raise ConfigurationError(
+                "anonymous_store must be a distinct store instance from state_store. "
+                "Passing the same instance causes anonymous and authenticated session "
+                "data to share the same storage slot, leading to silent overwrites."
+            )
+
         # Initialize stores
         self._transaction_store = transaction_store
         self._state_store = state_store
@@ -339,7 +346,6 @@ class ServerClient(Generic[TStoreOptions]):
             domain=domain,
             client_id=self._client_id,
             client_secret=self._client_secret,
-            secret=self._secret,
             anonymous_store=self._anonymous_store,
             default_audience=self._default_authorization_params.get("audience"),
             default_scope=self._default_authorization_params.get("scope")
@@ -855,7 +861,7 @@ class ServerClient(Generic[TStoreOptions]):
         # Pops close the session-fixation vector from constructor-seeded defaults.
         auth_params.pop("session_token", None)
         auth_params.pop("anon_transfer_token", None)
-        if not self._pushed_authorization_requests and not self._enterprise_connect:
+        if not self._enterprise_connect:
             anon_transfer_token = await self._anonymous_client.exchange_transfer_token_for_injection(
                 origin_domain, store_options
             )

@@ -466,17 +466,6 @@ class _AnonymousSessionExpired(AnonymousSessionError):
         self.name = "_AnonymousSessionExpired"
 
 
-class _SessionDecryptError(Auth0Error):
-    """Internal-only signal that the stored session payload could not be decrypted or parsed.
-
-    Distinct from _AnonymousSessionExpired (platform expiry) - this indicates local
-    JWE decryption failure, e.g. secret rotation or store corruption.
-    """
-
-    def __init__(self, message: str = "The stored anonymous session could not be decrypted."):
-        super().__init__(message)
-        self.name = "_SessionDecryptError"
-
 # =============================================================================
 # Enterprise Connect Error Classes
 # =============================================================================
