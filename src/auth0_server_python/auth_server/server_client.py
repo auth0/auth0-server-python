@@ -1355,8 +1355,8 @@ class ServerClient(Generic[TStoreOptions]):
             return
         try:
             await self._anonymous_client.logout(store_options)
-        except Exception as e:
-            logger.debug("Anonymous session cleanup after login failed: %s", e)
+        except Exception:
+            pass
 
     # ============================================================================
     # USER SESSION MANAGEMENT
@@ -1491,8 +1491,8 @@ class ServerClient(Generic[TStoreOptions]):
         if self._anonymous_store is not None:
             try:
                 await self._anonymous_client._end_session_if_active(store_options)
-            except Exception as e:
-                logger.debug("Anonymous session cleanup on logout failed: %s", e)
+            except Exception:
+                pass
 
         # Return logout URL for the current resolved domain
         logout_url = URL.create_logout_url(
