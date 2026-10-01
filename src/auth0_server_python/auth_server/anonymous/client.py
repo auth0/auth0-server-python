@@ -272,10 +272,8 @@ class AnonymousClient:
             The refreshed AnonymousSession.
 
         Raises:
-            AnonymousSessionTokenError: The request failed, or the response was
-                invalid.
-            AnonymousSessionCreateError: The session expired and the silent
-                re-creation failed.
+            AnonymousSessionTokenError: The request failed, the response was
+                invalid, or the session has expired (code ``session_expired``).
         """
         domain = context.domain or await self._resolve_domain(store_options)
         body: dict[str, Any] = {
@@ -298,13 +296,8 @@ class AnonymousClient:
                 error_data = parse_anonymous_error_body(response)
                 mapped = map_anonymous_error(error_data, "token")
                 if isinstance(mapped, _AnonymousSessionExpired):
-                    # One follow-up create call on expiry, never a loop.
-                    return await self._create_session_at(
-                        domain,
-                        audience=audience,
-                        scope=scope,
-                        metadata=context.metadata,
-                        store_options=store_options,
+                    raise AnonymousSessionTokenError(
+                        str(mapped), code="session_expired"
                     )
                 raise mapped
 
@@ -524,10 +517,8 @@ class AnonymousClient:
 
         Raises:
             ConfigurationError: No anonymous_store configured.
-            AnonymousSessionTokenError: No active session, or an unrecoverable
-                failure.
-            AnonymousSessionCreateError: The session expired and the silent
-                re-creation failed.
+            AnonymousSessionTokenError: No active session, unrecoverable
+                failure, or expired session (code ``session_expired``).
         """
         self._require_store()
         stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)

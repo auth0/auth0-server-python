@@ -759,48 +759,32 @@ class TestGetToken:
         assert context.session_token == ""
 
     @pytest.mark.asyncio
-    async def test_expired_session_token_triggers_silent_new_session(self):
+    async def test_expired_session_token_raises_session_expired(self):
         store = OneSlotStore()
         _stored_context(store, expires_at=int(time.time()) - 10)
         client = _make_client(anonymous_store=store)
         fake_http = _FakeAsyncClient([
             _fake_response(400, {"error": "session_expired", "error_description": "expired"}),
-            _fake_response(200, _token_response()),
         ])
         with patch("httpx.AsyncClient", fake_http):
-            session = await client.get_token()
-        assert len(fake_http.calls) == 2
-        _, _, second_call = fake_http.calls[1]
-        assert "session_token" not in second_call["json"]
-        assert session.access_token == "AT1"
+            with pytest.raises(AnonymousSessionTokenError) as exc:
+                await client.get_token()
+        assert exc.value.code == "session_expired"
+        assert len(fake_http.calls) == 1
 
     @pytest.mark.asyncio
-    async def test_silent_remint_preserves_metadata(self):
+    async def test_invalid_session_token_raises_session_expired(self):
         store = OneSlotStore()
         _stored_context(store, expires_at=int(time.time()) - 10, metadata={"cart_id": "c1"})
         client = _make_client(anonymous_store=store)
         fake_http = _FakeAsyncClient([
             _fake_response(400, {"error": "invalid_session_token", "error_description": "bad"}),
-            _fake_response(200, _token_response()),
         ])
         with patch("httpx.AsyncClient", fake_http):
-            session = await client.get_token()
-        assert session.metadata == {"cart_id": "c1"}
-
-    @pytest.mark.asyncio
-    async def test_two_consecutive_session_expired_raises_not_loops(self):
-        """The retry-once bound allows exactly 2 upstream POSTs, then raises."""
-        store = OneSlotStore()
-        _stored_context(store, expires_at=int(time.time()) - 10)
-        client = _make_client(anonymous_store=store)
-        fake_http = _FakeAsyncClient([
-            _fake_response(400, {"error": "session_expired", "error_description": "expired"}),
-            _fake_response(400, {"error": "session_expired", "error_description": "expired again"}),
-        ])
-        with patch("httpx.AsyncClient", fake_http):
-            with pytest.raises(AnonymousSessionCreateError):
+            with pytest.raises(AnonymousSessionTokenError) as exc:
                 await client.get_token()
-        assert len(fake_http.calls) == 2
+        assert exc.value.code == "session_expired"
+        assert len(fake_http.calls) == 1
 
     @pytest.mark.asyncio
     async def test_other_error_code_raises_typed_error_no_retry(self):
