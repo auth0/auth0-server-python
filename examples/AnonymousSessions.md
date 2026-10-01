@@ -91,8 +91,13 @@ Renewal logic, in order:
 
 1. Cached access token still fresh, returned with no network call.
 2. Expired, re-minted using the stored session token (not a refresh-token grant, since anonymous sessions never issue refresh tokens).
-3. Session token also expired or invalid, raises `AnonymousSessionTokenError` with code `session_expired`. Call `create_session()` to start a new session.
+3. Session token also expired or invalid, raises `AnonymousSessionTokenError` with code `session_expired` and clears the stored session. Call `create_session()` to start a new session.
 4. Any other error, raised as a typed exception. No swallow, no auto-retry.
+
+> [!IMPORTANT]
+> **On `session_expired`, the previous anonymous identity is gone.** The SDK clears the stored session before raising, so a subsequent `get_session()` returns `None`. This release does not surface the expired identity (its `sub` or `metadata`) on the error. Call `create_session()` to start fresh.
+>
+> Do any identity-dependent work, such as cart or data migration, at **login time**, not on expiry. Read `get_session().sub` before calling `complete_interactive_login()`. That is the normal migration path and is unaffected by the expiry clear. A session expiring before the visitor ever logs in is rare given the session lifetime, and the correct response is simply to create a new one.
 
 ## Reading the Session
 

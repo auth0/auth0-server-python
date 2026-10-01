@@ -734,7 +734,7 @@ class TestGetToken:
         assert session.scope == "read:cart"
 
     @pytest.mark.asyncio
-    async def test_remint_preserves_empty_string_fields_instead_of_falling_back_to_stale_context(
+    async def test_remint_keeps_held_session_token_ignoring_renewal_response(
         self,
     ):
         store = OneSlotStore()
@@ -748,7 +748,7 @@ class TestGetToken:
                     "token_type": "Bearer",
                     "expires_in": 3600,
                     "session_expires_in": 2592000,
-                    "session_token": "",
+                    "session_token": "SERVER_SENT_DIFFERENT",
                 },
             )
         ])
@@ -756,7 +756,7 @@ class TestGetToken:
             await client.get_token()
         stored = await store.get(ANON_IDENTIFIER)
         context = AnonymousSessionContext.model_validate(stored)
-        assert context.session_token == ""
+        assert context.session_token == "ST1"
 
     @pytest.mark.asyncio
     async def test_expired_session_token_raises_session_expired(self):
@@ -771,6 +771,7 @@ class TestGetToken:
                 await client.get_token()
         assert exc.value.code == "session_expired"
         assert len(fake_http.calls) == 1
+        assert store.slot is None
 
     @pytest.mark.asyncio
     async def test_invalid_session_token_raises_session_expired(self):
@@ -785,6 +786,54 @@ class TestGetToken:
                 await client.get_token()
         assert exc.value.code == "session_expired"
         assert len(fake_http.calls) == 1
+        assert store.slot is None
+
+    @pytest.mark.asyncio
+    async def test_remint_clears_dead_session_on_expiry(self):
+        store = OneSlotStore()
+        _stored_context(
+            store,
+            expires_at=int(time.time()) - 10,
+            metadata={"cart_id": "c1"},
+        )
+        client = _make_client(anonymous_store=store)
+        fake_http = _FakeAsyncClient([
+            _fake_response(400, {"error": "session_expired", "error_description": "expired"}),
+        ])
+        with patch("httpx.AsyncClient", fake_http):
+            with pytest.raises(AnonymousSessionTokenError):
+                await client.get_token()
+        assert store.slot is None
+        assert await store.get(ANON_IDENTIFIER) is None
+
+    @pytest.mark.asyncio
+    async def test_expiry_does_not_clear_session_replaced_during_remint(self):
+        """A concurrent create_session() that replaced the record is not wiped by the expiry handler."""
+        store = OneSlotStore()
+        _stored_context(store, expires_at=int(time.time()) - 10)
+        client = _make_client(anonymous_store=store)
+
+        original_get = store.get
+        call_count = 0
+
+        async def get_and_replace(identifier, *, options=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                _stored_context(store, session_token="NEW_SESSION_TOKEN")
+            return await original_get(identifier)
+
+        store.get = get_and_replace
+        fake_http = _FakeAsyncClient([
+            _fake_response(400, {"error": "session_expired", "error_description": "expired"}),
+        ])
+        with patch("httpx.AsyncClient", fake_http):
+            with pytest.raises(AnonymousSessionTokenError):
+                await client.get_token()
+
+        assert store.slot is not None
+        stored = await original_get(ANON_IDENTIFIER)
+        assert AnonymousSessionContext.model_validate(stored).session_token == "NEW_SESSION_TOKEN"
 
     @pytest.mark.asyncio
     async def test_other_error_code_raises_typed_error_no_retry(self):
@@ -799,6 +848,7 @@ class TestGetToken:
                 await client.get_token()
         assert exc.value.code == "feature_not_enabled"
         assert len(fake_http.calls) == 1
+        assert store.slot is not None
 
     @pytest.mark.asyncio
     async def test_corrupted_stored_token_raises_and_clears_store(self):
@@ -833,6 +883,7 @@ class TestGetToken:
         with patch("httpx.AsyncClient", _RaisingClient()):
             with pytest.raises(AnonymousSessionTokenError):
                 await client.get_token()
+        assert store.slot is not None
 
     @pytest.mark.asyncio
     async def test_get_token_never_writes_to_authenticated_state_store(self):

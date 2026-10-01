@@ -296,6 +296,11 @@ class AnonymousClient:
                 error_data = parse_anonymous_error_body(response)
                 mapped = map_anonymous_error(error_data, "token")
                 if isinstance(mapped, _AnonymousSessionExpired):
+                    # The session token is permanently unusable. Clear the dead
+                    # record so a later get_session()/login does not act on it,
+                    # but only if a concurrent create_session() has not already
+                    # replaced it with a fresh session.
+                    await self._delete_if_unchanged(context, store_options)
                     raise AnonymousSessionTokenError(
                         str(mapped), code="session_expired"
                     )
@@ -307,11 +312,6 @@ class AnonymousClient:
                 raise AnonymousSessionTokenError("Failed to parse anonymous token response") from e
 
         now = int(time.time())
-        new_session_token = (
-            token_response.session_token
-            if token_response.session_token is not None
-            else context.session_token
-        )
         new_sub = decode_anonymous_sub(token_response.access_token)
         token_set = AnonymousTokenSetEntry(
             access_token=token_response.access_token,
@@ -343,7 +343,6 @@ class AnonymousClient:
         sub_update = {"sub": new_sub} if new_sub is not None and current_context.sub is None else {}
         updated_context = upsert_token_set(
             current_context.model_copy(update={
-                "session_token": new_session_token,
                 "session_expires_at": now + token_response.session_expires_in if token_response.session_expires_in is not None else context.session_expires_at,
                 **sub_update,
             }),
@@ -355,6 +354,32 @@ class AnonymousClient:
             options=store_options,
         )
         return result
+
+    async def _delete_if_unchanged(
+        self,
+        context: AnonymousSessionContext,
+        store_options: Optional[dict[str, Any]],
+    ) -> None:
+        """Delete the stored session only if it still holds context's session token.
+
+        Re-reads the store and deletes only when the stored session token still
+        matches context. A concurrent create_session() that replaced the record
+        with a fresh session is left untouched.
+
+        Args:
+            context: The session context whose token is being retired.
+            store_options: Options passed to the anonymous store.
+        """
+        current_stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
+        if not current_stored:
+            return
+        try:
+            current_context = AnonymousSessionContext.model_validate(current_stored)
+        except Exception:
+            return
+        if current_context.session_token != context.session_token:
+            return
+        await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
 
     async def _mint_transfer_token(
         self, session_token: str, origin_domain: str
