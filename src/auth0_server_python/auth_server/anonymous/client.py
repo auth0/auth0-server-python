@@ -274,6 +274,8 @@ class AnonymousClient:
         Raises:
             AnonymousSessionTokenError: The request failed, or the response was
                 invalid.
+            AnonymousSessionCreateError: The session expired and the silent
+                re-creation failed.
         """
         domain = context.domain or await self._resolve_domain(store_options)
         body: dict[str, Any] = {
@@ -524,6 +526,8 @@ class AnonymousClient:
             ConfigurationError: No anonymous_store configured.
             AnonymousSessionTokenError: No active session, or an unrecoverable
                 failure.
+            AnonymousSessionCreateError: The session expired and the silent
+                re-creation failed.
         """
         self._require_store()
         stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)

@@ -160,8 +160,8 @@ def validate_metadata(metadata: Optional[dict[str, Any]]) -> None:
     if not isinstance(metadata, dict):
         raise AnonymousSessionCreateError("metadata must be a JSON object", code="invalid_metadata")
     try:
-        size = len(json.dumps(metadata, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-    except TypeError as e:
+        size = len(json.dumps(metadata, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8"))
+    except (TypeError, ValueError) as e:
         raise AnonymousSessionCreateError(
             "metadata must contain only JSON-serializable values", code="invalid_metadata"
         ) from e

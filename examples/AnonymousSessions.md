@@ -60,7 +60,7 @@ class AnonymousSessionStore(StateStore):
         options["response"].delete_cookie("_a0_anon")
 ```
 
-`self.encrypt` / `self.decrypt` are helpers from the `StateStore` base class that derive a key from your `secret` and the store identifier. See `examples/ConfigureStore.md` for the full store configuration reference.
+`self.encrypt` / `self.decrypt` are helpers from the `StateStore` base class that derive a key from your `secret` and the store identifier. The cookie name `_a0_anon` must be distinct from the cookie name used by your `state_store` - a shared name will silently overwrite the authenticated session. See `examples/ConfigureStore.md` for the full store configuration reference.
 
 > [!IMPORTANT]
 > **Encryption is your responsibility.** The SDK writes the anonymous session as a plain dict with no encryption applied. If your `anonymous_store` is cookie-backed or otherwise persists data outside a trusted server boundary, you must encrypt the payload before writing and decrypt it on read. This is the same responsibility you already have for `state_store`.

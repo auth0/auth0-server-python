@@ -276,7 +276,6 @@ class TestCreateSession:
         assert "auth" not in kwargs
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_create_session_uses_client_assertion_when_signing_key_set(self):
         store = OneSlotStore()
         signing_key = _generate_rsa_private_key_pem()
@@ -1577,6 +1576,7 @@ class TestGetSession:
         result = await client.get_session()
         assert result is not None
 
+    @pytest.mark.asyncio
     async def test_static_domain_client_returns_none_when_domain_mismatches(self):
         """A static-domain client returns None when the stored domain differs from the configured domain."""
         store = OneSlotStore()
