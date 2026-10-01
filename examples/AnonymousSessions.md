@@ -35,6 +35,33 @@ server_client = ServerClient(
 
 Give `anonymous_store` its own store instance, not `state_store` with a different identifier. If you omit it, every `.anonymous.*` call raises `ConfigurationError` before any write.
 
+The anonymous store implements the same `StateStore` ABC as your existing session store. A minimal cookie-backed example:
+
+```python
+from auth0_server_python.store import StateStore
+
+class AnonymousSessionStore(StateStore):
+    def __init__(self, secret: str):
+        super().__init__({"secret": secret})
+
+    async def set(self, identifier, state, remove_if_expires=False, options=None):
+        # Encrypt and write to a cookie or server-side store.
+        # The SDK passes a plain dict; encryption is your responsibility.
+        encrypted = self.encrypt(identifier, state)
+        options["response"].set_cookie("_a0_anon", encrypted, httponly=True, samesite="lax")
+
+    async def get(self, identifier, options=None):
+        value = options["request"].cookies.get("_a0_anon")
+        if not value:
+            return None
+        return self.decrypt(identifier, value)
+
+    async def delete(self, identifier, options=None):
+        options["response"].delete_cookie("_a0_anon")
+```
+
+`self.encrypt` / `self.decrypt` are helpers from the `StateStore` base class that derive a key from your `secret` and the store identifier. See `examples/ConfigureStore.md` for the full store configuration reference.
+
 > [!IMPORTANT]
 > **Encryption is your responsibility.** The SDK writes the anonymous session as a plain dict with no encryption applied. If your `anonymous_store` is cookie-backed or otherwise persists data outside a trusted server boundary, you must encrypt the payload before writing and decrypt it on read. This is the same responsibility you already have for `state_store`.
 
