@@ -340,7 +340,6 @@ class AnonymousClient:
         if current_context.session_token != context.session_token:
             return result
 
-        # Only backfill sub when the stored context has none.
         sub_update = {"sub": new_sub} if new_sub is not None and current_context.sub is None else {}
         updated_context = upsert_token_set(
             current_context.model_copy(update={
@@ -356,40 +355,6 @@ class AnonymousClient:
             options=store_options,
         )
         return result
-
-    async def exchange_transfer_token_for_injection(
-        self, origin_domain: str, store_options: Optional[dict[str, Any]] = None
-    ) -> Optional[str]:
-        """Mint a short-lived transfer ticket from the active session for login injection.
-
-        Args:
-            origin_domain: The domain the /authorize URL is being built for.
-            store_options: Options passed to the anonymous store.
-
-        Returns:
-            The minted transfer ticket, or None.
-        """
-        if self._anonymous_store is None:
-            return None
-        try:
-            stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
-        except Exception:
-            return None
-        if not stored:
-            return None
-        try:
-            context = AnonymousSessionContext.model_validate(stored)
-        except Exception:
-            return None
-        # Prevents a tenant-A session token from minting a transfer ticket usable at tenant-B's login.
-        # In resolver mode, an unknown stored domain (legacy session) is treated as a mismatch.
-        domain_unknown = not context.domain and self._domain_resolver is not None
-        domain_mismatch = context.domain and normalize_url(context.domain) != normalize_url(
-            origin_domain
-        )
-        if domain_unknown or domain_mismatch:
-            return None
-        return await self._mint_transfer_token(context.session_token, origin_domain)
 
     async def _mint_transfer_token(
         self, session_token: str, origin_domain: str
@@ -444,6 +409,40 @@ class AnonymousClient:
             await self._anonymous_store.delete(ANON_IDENTIFIER, options=store_options)
         except Exception:
             return
+
+    async def exchange_transfer_token_for_injection(
+        self, origin_domain: str, store_options: Optional[dict[str, Any]] = None
+    ) -> Optional[str]:
+        """Mint a short-lived transfer ticket from the active session for login injection.
+
+        Args:
+            origin_domain: The domain the /authorize URL is being built for.
+            store_options: Options passed to the anonymous store.
+
+        Returns:
+            The minted transfer ticket, or None.
+        """
+        if self._anonymous_store is None:
+            return None
+        try:
+            stored = await self._anonymous_store.get(ANON_IDENTIFIER, options=store_options)
+        except Exception:
+            return None
+        if not stored:
+            return None
+        try:
+            context = AnonymousSessionContext.model_validate(stored)
+        except Exception:
+            return None
+        # Prevents a tenant-A session token from minting a transfer ticket usable at tenant-B's login.
+        # In resolver mode, an unknown stored domain (legacy session) is treated as a mismatch.
+        domain_unknown = not context.domain and self._domain_resolver is not None
+        domain_mismatch = context.domain and normalize_url(context.domain) != normalize_url(
+            origin_domain
+        )
+        if domain_unknown or domain_mismatch:
+            return None
+        return await self._mint_transfer_token(context.session_token, origin_domain)
 
     async def create_session(
         self,
