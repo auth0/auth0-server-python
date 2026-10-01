@@ -1,5 +1,15 @@
 # Change Log
 
+## [1.0.0b18](https://github.com/auth0/auth0-server-python/tree/1.0.0b18) (2026-10-01)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b17...1.0.0b18)
+
+**Added**
+- feat: add anonymous sessions support via `ServerClient.anonymous`, pre-login `anon@<uuid>` identity with short-lived access token, metadata (up to 1 KB), automatic transfer token injection on login, and configurable clear on login [\#156](https://github.com/auth0/auth0-server-python/pull/156) ([rmad17](https://github.com/rmad17))
+- feat: add Experiment Center override params (`experiment_id`, `variation_id`, `segment_id`) to `AuthorizationParameters` for interactive login, for parity with other Auth0 SDKs [\#177](https://github.com/auth0/auth0-server-python/pull/177) ([nandan-bhat](https://github.com/nandan-bhat))
+
+**Fixed**
+- fix: stop forwarding `username` in `passkey_login_challenge` to prevent Auth0 rejections. The parameter is retained for backward compatibility and now emits a `DeprecationWarning` [\#175](https://github.com/auth0/auth0-server-python/pull/175) ([tanya732](https://github.com/tanya732))
+
 ## [1.0.0b17](https://github.com/auth0/auth0-server-python/tree/1.0.0b17) (2026-09-16)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b16...1.0.0b17)
 
