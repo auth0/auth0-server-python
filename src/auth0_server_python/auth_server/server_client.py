@@ -861,12 +861,11 @@ class ServerClient(Generic[TStoreOptions]):
         # Pops close the session-fixation vector from constructor-seeded defaults.
         auth_params.pop("session_token", None)
         auth_params.pop("anon_transfer_token", None)
-        if not self._enterprise_connect:
-            anon_transfer_token = await self._anonymous_client.exchange_transfer_token_for_injection(
-                origin_domain, store_options
-            )
-            if anon_transfer_token:
-                auth_params["anon_transfer_token"] = anon_transfer_token
+        anon_transfer_token = await self._anonymous_client.exchange_transfer_token_for_injection(
+            origin_domain, store_options
+        )
+        if anon_transfer_token:
+            auth_params["anon_transfer_token"] = anon_transfer_token
 
         # Build the transaction data to store with domain
         transaction_data = TransactionData(

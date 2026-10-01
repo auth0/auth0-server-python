@@ -10459,8 +10459,8 @@ async def test_start_interactive_login_does_not_clobber_organization_or_invitati
 
 
 @pytest.mark.asyncio
-async def test_start_interactive_login_suppresses_injection_on_enterprise_connect(mocker):
-    """Enterprise Connect skips anonymous-session linking entirely, no exchange and no param."""
+async def test_start_interactive_login_injects_on_enterprise_connect(mocker):
+    """Enterprise Connect injects the transfer ticket the same as any other flow."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
     anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
@@ -10493,8 +10493,8 @@ async def test_start_interactive_login_suppresses_injection_on_enterprise_connec
 
     mocker.patch.object(client._oauth, "create_authorization_url", side_effect=fake_create_url)
     await client.start_interactive_login()
-    exchange.assert_not_awaited()
-    assert "anon_transfer_token" not in captured
+    exchange.assert_awaited_once()
+    assert captured.get("anon_transfer_token") == "TICKET_ABC"
     assert "session_token" not in captured
 
 
