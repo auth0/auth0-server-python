@@ -9,6 +9,7 @@ Anonymous Sessions give a visitor an Auth0 identity **before they log in**. Each
   - [Setup](#setup)
   - [Creating a Session](#creating-a-session)
   - [Getting a Token (Renewal Ladder)](#getting-a-token-renewal-ladder)
+  - [Reading the Session](#reading-the-session)
   - [Logging Out](#logging-out)
   - [Login Injection](#login-injection)
   - [Rate-Limiting `get_token()`](#rate-limiting-get_token)
@@ -33,7 +34,7 @@ server_client = ServerClient(
 )
 ```
 
-Give `anonymous_store` its own store instance, not `state_store` with a different identifier. If you omit it, every `.anonymous.*` call raises `ConfigurationError` before any write.
+Give `anonymous_store` its own store instance, not `state_store` with a different identifier. If you omit it, `create_session()`, `get_token()`, and `logout()` raise `ConfigurationError` before any write. `get_session()` returns `None`.
 
 The anonymous store implements the same `StateStore` ABC as your existing session store. A minimal cookie-backed example:
 
@@ -93,6 +94,18 @@ Renewal logic, in order:
 3. Session token also expired or invalid, raises `AnonymousSessionTokenError` with code `session_expired`. Call `create_session()` to start a new session.
 4. Any other error, raised as a typed exception. No swallow, no auto-retry.
 
+## Reading the Session
+
+```python
+data = await server_client.anonymous.get_session(store_options=store_options)
+```
+
+Returns the stored anonymous identity without calling Auth0, or `None` when there is no session, the stored record is unreadable, or the stored domain does not match the current tenant. Use it to check whether a visitor already has an anonymous identity before deciding to call `create_session()`.
+
+`AnonymousSessionData` carries `sub`, `metadata`, `created_at`, `session_expires_at`, and `domain` - the identity fields only. It never exposes the session token or an access token. To obtain a usable access token, call `get_token()`.
+
+Unlike the other `.anonymous.*` methods, `get_session()` returns `None` rather than raising when no `anonymous_store` is configured.
+
 ## Logging Out
 
 ```python
@@ -114,7 +127,7 @@ If the exchange errors (network failure, a non-200, or an unparseable response),
 
 ## Rate-Limiting `get_token()`
 
-`get_token()`'s retry-once bound caps amplification to two upstream Auth0 calls *per invocation*. It does not protect against an attacker calling your route repeatedly. `POST /anonymous/token` is an unauthenticated, token-issuing endpoint. **You must rate-limit any route in your application that calls `get_token()` on an anonymous session**, the same way you would rate-limit any other unauthenticated token-issuing path. The SDK has no request-level context to do this itself.
+`get_token()` makes at most one upstream Auth0 call per invocation. It does not protect against an attacker calling your route repeatedly. `POST /anonymous/token` is an unauthenticated, token-issuing endpoint. **You must rate-limit any route in your application that calls `get_token()` on an anonymous session**, the same way you would rate-limit any other unauthenticated token-issuing path. The SDK has no request-level context to do this itself.
 
 ## Error Handling
 
