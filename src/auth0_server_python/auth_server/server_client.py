@@ -1355,7 +1355,7 @@ class ServerClient(Generic[TStoreOptions]):
             return
         try:
             await self._anonymous_client.logout(store_options)
-        except Exception:
+        except Exception:  # must not prevent login from completing  # noqa: S110
             pass
 
     # ============================================================================
@@ -1491,7 +1491,7 @@ class ServerClient(Generic[TStoreOptions]):
         if self._anonymous_store is not None:
             try:
                 await self._anonymous_client._end_session_if_active(store_options)
-            except Exception:
+            except Exception:  # must not prevent logout from completing  # noqa: S110
                 pass
 
         # Return logout URL for the current resolved domain
