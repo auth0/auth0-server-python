@@ -125,6 +125,15 @@ The raw `session_token` never goes on the URL. At the moment the `/authorize` UR
 
 If the exchange errors (network failure, a non-200, or an unparseable response), login proceeds with no ticket and no linking, and never aborts the login.
 
+After `complete_interactive_login` succeeds, the SDK clears the anonymous session by default. To keep it active across the login boundary:
+
+```python
+server_client = ServerClient(
+    ...
+    clear_anonymous_session_on_login=False,
+)
+```
+
 ## Rate-Limiting `get_token()`
 
 `get_token()` makes at most one upstream Auth0 call per invocation. It does not protect against an attacker calling your route repeatedly. `POST /anonymous/token` is an unauthenticated, token-issuing endpoint. **You must rate-limit any route in your application that calls `get_token()` on an anonymous session**, the same way you would rate-limit any other unauthenticated token-issuing path. The SDK has no request-level context to do this itself.
