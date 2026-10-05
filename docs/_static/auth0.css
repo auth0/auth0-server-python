@@ -1,43 +1,4 @@
 /* ============================================================
-   Auth0 brand theme for Sphinx / furo
-   ============================================================ */
-
-/* --- Brand colors (light mode) ----------------------------- */
-:root {
-  --color-brand-primary:  #9921FE;
-  --color-brand-content:  #9921FE;
-  --color-api-name:       #9921FE;
-  --color-api-pre-name:   #9921FE;
-  --color-link:           #9921FE;
-  --color-link--hover:    #7A10D4;
-
-  /* Sidebar: Auth0 dark navy */
-  --color-sidebar-background:               #16214A;
-  --color-sidebar-background-border:        #1e2d5a;
-  --color-sidebar-brand-text:               #FFFFFF;
-  --color-sidebar-caption-text:             rgba(255,255,255,0.5);
-  --color-sidebar-link-text:                rgba(255,255,255,0.82);
-  --color-sidebar-link-text--top-level:     #BC6DFF;
-  --color-sidebar-item-background--hover:   rgba(153,33,254,0.14);
-  --color-sidebar-item-background--current: rgba(153,33,254,0.22);
-  --color-sidebar-search-text:              #FFFFFF;
-  --color-sidebar-search-background:        rgba(255,255,255,0.06);
-  --color-sidebar-search-background--focus: rgba(255,255,255,0.10);
-  --color-sidebar-search-border:            rgba(255,255,255,0.14);
-  --color-sidebar-search-icon:              rgba(255,255,255,0.4);
-}
-
-/* --- Brand colors (dark mode) ------------------------------ */
-body[data-theme="dark"] {
-  --color-brand-primary: #BC6DFF;
-  --color-brand-content: #BC6DFF;
-  --color-api-name:      #BC6DFF;
-  --color-api-pre-name:  #BC6DFF;
-  --color-link:          #BC6DFF;
-  --color-link--hover:   #9921FE;
-}
-
-/* ============================================================
    Typography and spacing
    ============================================================ */
 
@@ -202,7 +163,7 @@ table.autosummary {
    ============================================================ */
 
 dl.py.attribute > dt.sig {
-  border-left-color: #7B8CCC;  /* softer blue-purple for attributes vs methods */
+  border-left-color: var(--color-background-border);
 }
 
 dl.py.attribute > dd {

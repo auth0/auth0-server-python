@@ -69,14 +69,6 @@ html_css_files = ["auth0.css"]
 html_theme_options = {
     "sidebar_hide_name": False,
     "navigation_with_keys": True,
-    "light_css_variables": {
-        "color-brand-primary": "#9921FE",
-        "color-brand-content": "#9921FE",
-    },
-    "dark_css_variables": {
-        "color-brand-primary": "#BC6DFF",
-        "color-brand-content": "#BC6DFF",
-    },
 }
 
 # -- General ------------------------------------------------------------
