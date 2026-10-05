@@ -15,8 +15,6 @@ release = "1.0.0b18"
 extensions = [
     "autoapi.extension",
     "sphinx.ext.napoleon",
-    "sphinx.ext.viewcode",
-    "sphinx.ext.intersphinx",
 ]
 
 # -- AutoAPI ------------------------------------------------------------
@@ -50,26 +48,6 @@ napoleon_google_docstring = True
 napoleon_use_param = True
 napoleon_use_rtype = True
 napoleon_preprocess_types = True
-
-# -- Intersphinx --------------------------------------------------------
-
-intersphinx_mapping = {
-    "python": ("https://docs.python.org/3", None),
-    "pydantic": ("https://docs.pydantic.dev/latest/", None),
-}
-
-# -- HTML output --------------------------------------------------------
-
-html_show_sphinx = False
-html_show_copyright = False
-html_theme = "furo"
-html_title = "auth0-server-python"
-html_static_path = ["_static"]
-html_css_files = ["auth0.css"]
-html_theme_options = {
-    "sidebar_hide_name": False,
-    "navigation_with_keys": True,
-}
 
 # -- General ------------------------------------------------------------
 
