@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import sys
@@ -162,7 +163,6 @@ DOCS_V2_NAVIGATION = [
 
 
 def _postprocess_json_build(app, exception):
-    import json
     if exception or app.builder.name != "json":
         return
 
