@@ -70,7 +70,7 @@ exclude_patterns = [
     "reference/utils/index.rst",
 ]
 
-# -- Mintlify / docs-v2 post-processing ---------------------------------
+# -- Mintlify post-processing ---------------------------------
 
 DOCS_V2_DIRECTORY = "docs/sdk/python/server"
 
