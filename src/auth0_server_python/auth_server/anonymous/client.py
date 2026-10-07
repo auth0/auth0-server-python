@@ -272,8 +272,10 @@ class AnonymousClient:
             The refreshed AnonymousSession.
 
         Raises:
-            AnonymousSessionTokenError: The request failed, the response was
-                invalid, or the session has expired (code ``session_expired``).
+            AnonymousSessionTokenError: The request failed or the response was
+                invalid (code ``anonymous_token_error``); session expired (code
+                ``session_expired``); or session token is structurally invalid
+                (code ``invalid_session_token``).
         """
         domain = context.domain or await self._resolve_domain(store_options)
         body: dict[str, Any] = {
@@ -302,7 +304,7 @@ class AnonymousClient:
                     # replaced it with a fresh session.
                     await self._delete_if_unchanged(context, store_options)
                     raise AnonymousSessionTokenError(
-                        str(mapped), code="session_expired"
+                        str(mapped), code=mapped.code
                     )
                 raise mapped
 

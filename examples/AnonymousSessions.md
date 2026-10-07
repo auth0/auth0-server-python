@@ -91,11 +91,11 @@ Renewal logic, in order:
 
 1. Cached access token still fresh, returned with no network call.
 2. Expired, re-minted using the stored session token (not a refresh-token grant, since anonymous sessions never issue refresh tokens).
-3. Session token also expired or invalid, raises `AnonymousSessionTokenError` with code `session_expired` and clears the stored session. Call `create_session()` to start a new session.
+3. Session token expired, raises `AnonymousSessionTokenError` with code `session_expired` and clears the stored session. Token structurally invalid raises with code `invalid_session_token` and also clears. Call `create_session()` to start a new session in either case.
 4. Any other error, raised as a typed exception. No swallow, no auto-retry.
 
 > [!IMPORTANT]
-> **On `session_expired`, the previous anonymous identity is gone.** The SDK clears the stored session before raising, so a subsequent `get_session()` returns `None`. This release does not surface the expired identity (its `sub` or `metadata`) on the error. Call `create_session()` to start fresh.
+> **On `session_expired` or `invalid_session_token`, the previous anonymous identity is gone.** The SDK clears the stored session before raising, so a subsequent `get_session()` returns `None`. Neither error surfaces the previous identity (its `sub` or `metadata`). Call `create_session()` to start fresh.
 >
 > Do any identity-dependent work, such as cart or data migration, at **login time**, not on expiry. Read `get_session().sub` before calling `complete_interactive_login()`. That is the normal migration path and is unaffected by the expiry clear. A session expiring before the visitor ever logs in is rare given the session lifetime, and the correct response is simply to create a new one.
 
@@ -185,8 +185,61 @@ The platform may return other codes (e.g. `"insufficient_scope"`) and these are 
 
 | `.code` | When |
 |---------|------|
-| `"session_expired"` | session token has expired or been invalidated - call `create_session()` to start a new session |
+| `"session_expired"` | session token has expired - call `create_session()` to start a new session |
+| `"invalid_session_token"` | session token is structurally invalid (e.g. rotated or revoked) - call `create_session()` to recover |
 | `"invalid_session_state"` | stored session data is corrupt or unreadable - call `create_session()` to recover |
 | `"anonymous_token_error"` | no active session, network error, parse error, or generic platform error on the renewal path |
 
 > **Note on naming.** The SDK spec names this class `AnonymousSessionTokenExpiredError`. This SDK uses `AnonymousSessionTokenError` - a deliberate broadening, since the class covers all `get_token()` failures, not just expiry. The `.code` values are stable and safe to branch on.
+
+### Handling expired and invalid session tokens
+
+Both `session_expired` and `invalid_session_token` mean the stored session is permanently unusable. The SDK clears it before raising, so `get_session()` returns `None` immediately after. The correct response is to start a fresh session:
+
+```python
+from auth0_server_python.error import AnonymousSessionTokenError
+
+try:
+    token = await server_client.anonymous.get_token(store_options=store_options)
+except AnonymousSessionTokenError as e:
+    if e.code == "session_expired":
+        # The session lifetime elapsed. Start a fresh one.
+        session = await server_client.anonymous.create_session(
+            audience="https://api.example.com",
+            scope="read:cart write:cart",
+            store_options=store_options,
+        )
+        token = await server_client.anonymous.get_token(store_options=store_options)
+    elif e.code == "invalid_session_token":
+        # The token is structurally invalid (e.g. rotated or revoked).
+        # Recovery is the same as expiry.
+        session = await server_client.anonymous.create_session(
+            audience="https://api.example.com",
+            scope="read:cart write:cart",
+            store_options=store_options,
+        )
+        token = await server_client.anonymous.get_token(store_options=store_options)
+    else:
+        raise
+```
+
+If your application treats both cases identically, you can handle them together:
+
+```python
+from auth0_server_python.error import AnonymousSessionTokenError
+
+try:
+    token = await server_client.anonymous.get_token(store_options=store_options)
+except AnonymousSessionTokenError as e:
+    if e.code in ("session_expired", "invalid_session_token"):
+        session = await server_client.anonymous.create_session(
+            audience="https://api.example.com",
+            scope="read:cart write:cart",
+            store_options=store_options,
+        )
+        token = await server_client.anonymous.get_token(store_options=store_options)
+    else:
+        raise
+```
+
+The two codes are kept distinct so callers that need to differentiate (for example, to log a metric or alert on unexpected token invalidation) can do so without parsing the message string.
