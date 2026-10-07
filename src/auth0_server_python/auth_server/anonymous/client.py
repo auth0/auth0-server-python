@@ -299,10 +299,7 @@ class AnonymousClient:
                 error_data = parse_anonymous_error_body(response)
                 mapped = map_anonymous_error(error_data, "token")
                 if isinstance(mapped, _AnonymousSessionExpired):
-                    # The session token is permanently unusable. Clear the dead
-                    # record so a later get_session()/login does not act on it,
-                    # but only if a concurrent create_session() has not already
-                    # replaced it with a fresh session.
+                    # Don't wipe a record replaced by a concurrent create_session().
                     await self._delete_if_unchanged(context, store_options)
                     raise AnonymousSessionTokenError(
                         str(mapped), code=mapped.code
