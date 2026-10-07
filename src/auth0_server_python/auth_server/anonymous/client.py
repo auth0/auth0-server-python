@@ -299,7 +299,7 @@ class AnonymousClient:
                 error_data = parse_anonymous_error_body(response)
                 mapped = map_anonymous_error(error_data, "token")
                 if isinstance(mapped, _AnonymousSessionExpired):
-                    # Don't wipe a record replaced by a concurrent create_session().
+                    # Only delete if the session token has not been replaced by a concurrent create_session().
                     await self._delete_if_unchanged(context, store_options)
                     raise AnonymousSessionTokenError(
                         str(mapped), code=mapped.code
