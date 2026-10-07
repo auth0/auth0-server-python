@@ -273,9 +273,10 @@ class AnonymousClient:
 
         Raises:
             AnonymousSessionTokenError: The request failed or the response was
-                invalid (code ``anonymous_token_error``); session expired (code
-                ``session_expired``); or session token is structurally invalid
-                (code ``invalid_session_token``).
+                invalid (code ``anonymous_token_error``). Raises with code
+                ``session_expired`` when the token has expired, or
+                ``invalid_session_token`` when the token is structurally
+                invalid. Store is cleared in both expiry cases.
         """
         domain = context.domain or await self._resolve_domain(store_options)
         body: dict[str, Any] = {

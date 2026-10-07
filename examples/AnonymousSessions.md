@@ -212,7 +212,6 @@ except AnonymousSessionTokenError as e:
         token = await server_client.anonymous.get_token(store_options=store_options)
     elif e.code == "invalid_session_token":
         # The token is structurally invalid (e.g. rotated or revoked).
-        # Recovery is the same as expiry.
         session = await server_client.anonymous.create_session(
             audience="https://api.example.com",
             scope="read:cart write:cart",
