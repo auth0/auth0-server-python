@@ -81,7 +81,7 @@ session = await server_client.anonymous.create_session(
 
 `AnonymousSession` returns `access_token`, `expires_at`, `session_expires_at`, `metadata`, `sub`, and `scope`.
 
-## Getting a Token
+## Getting a Token (Renewal Ladder)
 
 ```python
 token = await server_client.anonymous.get_token(store_options=store_options)
