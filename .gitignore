@@ -16,7 +16,24 @@ env/
 
 #Build files
 dist
-docs
+!docs/dist
+docs/_build
+docs/reference
+docs/overview.md
+docs/CONTRIBUTING.md
+docs/examples
+docs/dist/.doctrees
+docs/dist/_sources
+docs/dist/_static
+docs/dist/environment.pickle
+docs/dist/last_build
+docs/dist/objects.inv
+docs/dist/searchindex.json
+docs/dist/genindex.fjson
+docs/dist/py-modindex.fjson
+docs/dist/search.fjson
+docs/dist/globalcontext.json
+docs/dist/.buildinfo
 
 #testfile
 server.py

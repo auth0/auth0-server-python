@@ -1,0 +1,79 @@
+{
+  "pages": [
+    "docs/sdk/python/server/overview",
+    {
+      "group": "Guides",
+      "pages": [
+        "docs/sdk/python/server/examples/AnonymousSessions",
+        "docs/sdk/python/server/examples/ClientInitiatedBackChannelLogin",
+        "docs/sdk/python/server/examples/ConfigureStore",
+        "docs/sdk/python/server/examples/ConnectedAccounts",
+        "docs/sdk/python/server/examples/CustomTokenExchange",
+        "docs/sdk/python/server/examples/EnterpriseConnect",
+        "docs/sdk/python/server/examples/InteractiveLogin",
+        "docs/sdk/python/server/examples/MFA",
+        "docs/sdk/python/server/examples/MultipleCustomDomains",
+        "docs/sdk/python/server/examples/MutualTLS",
+        "docs/sdk/python/server/examples/MyAccountAuthenticationMethods",
+        "docs/sdk/python/server/examples/OrganizationLogin",
+        "docs/sdk/python/server/examples/Passkeys",
+        "docs/sdk/python/server/examples/Passwordless",
+        "docs/sdk/python/server/examples/RetrievingData",
+        "docs/sdk/python/server/examples/StepUpAuthentication",
+        "docs/sdk/python/server/examples/UserLinking"
+      ]
+    },
+    {
+      "group": "Auth Server",
+      "pages": [
+        "docs/sdk/python/server/reference/auth_server/server_client/index",
+        "docs/sdk/python/server/reference/auth_server/anonymous/client/index",
+        "docs/sdk/python/server/reference/auth_server/mfa_client/index",
+        "docs/sdk/python/server/reference/auth_server/my_account_client/index",
+        "docs/sdk/python/server/reference/auth_server/passwordless_client/index"
+      ]
+    },
+    {
+      "group": "Auth Schemes",
+      "pages": [
+        "docs/sdk/python/server/reference/auth_schemes/bearer_auth/index",
+        "docs/sdk/python/server/reference/auth_schemes/dpop_auth/index",
+        "docs/sdk/python/server/reference/auth_schemes/client_assertion/index"
+      ]
+    },
+    {
+      "group": "Types",
+      "pages": [
+        "docs/sdk/python/server/reference/auth_types/index"
+      ]
+    },
+    {
+      "group": "Store",
+      "pages": [
+        "docs/sdk/python/server/reference/store/abstractdatastore/index",
+        "docs/sdk/python/server/reference/store/statestore/index",
+        "docs/sdk/python/server/reference/store/transactionstore/index"
+      ]
+    },
+    {
+      "group": "Encryption",
+      "pages": [
+        "docs/sdk/python/server/reference/encryption/encrypt/index"
+      ]
+    },
+    {
+      "group": "Errors",
+      "pages": [
+        "docs/sdk/python/server/reference/error/index"
+      ]
+    },
+    {
+      "group": "Utilities",
+      "pages": [
+        "docs/sdk/python/server/reference/utils/helpers/index",
+        "docs/sdk/python/server/reference/telemetry/index"
+      ]
+    },
+    "docs/sdk/python/server/CONTRIBUTING"
+  ]
+}

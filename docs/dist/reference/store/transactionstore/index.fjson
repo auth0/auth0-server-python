@@ -1,0 +1,59 @@
+{
+  "parents": [],
+  "prev": {
+    "link": "../../auth_types/",
+    "title": "Auth Types"
+  },
+  "next": {
+    "link": "../../encryption/encrypt/",
+    "title": "Encrypt"
+  },
+  "title": "TransactionStore",
+  "meta": {},
+  "body": "<section id=\"transactionstore\"><h1>TransactionStore</h1><dl class=\"py class\">\n<dt class=\"sig sig-object py\" id=\"store.abstract.TransactionStore\">\n<em class=\"property\"><span class=\"pre\">class</span><span class=\"w\"> </span></em><span class=\"sig-prename descclassname\"><span class=\"pre\">store.abstract.</span></span><span class=\"sig-name descname\"><span class=\"pre\">TransactionStore</span></span><span class=\"sig-paren\">(</span><em class=\"sig-param\"><span class=\"n\"><span class=\"pre\">options</span></span><span class=\"p\"><span class=\"pre\">:</span></span><span class=\"w\"> </span><span class=\"n\"><span class=\"pre\">dict</span><span class=\"p\"><span class=\"pre\">[</span></span><span class=\"pre\">str</span><span class=\"p\"><span class=\"pre\">,</span></span><span class=\"w\"> </span><span class=\"pre\">Any</span><span class=\"p\"><span class=\"pre\">]</span></span></span></em><span class=\"sig-paren\">)</span><a class=\"headerlink\" href=\"#store.abstract.TransactionStore\" title=\"Link to this definition\">\u00b6</a></dt>\n<dd><p>Bases: <a class=\"reference internal\" href=\"#store.abstract.AbstractDataStore\" title=\"store.abstract.AbstractDataStore\"><code class=\"xref py py-obj docutils literal notranslate\"><span class=\"pre\">AbstractDataStore</span></code></a>[<code class=\"xref py py-obj docutils literal notranslate\"><span class=\"pre\">dict</span></code>[<code class=\"xref py py-obj docutils literal notranslate\"><span class=\"pre\">str</span></code>, <code class=\"xref py py-obj docutils literal notranslate\"><span class=\"pre\">Any</span></code>]]</p>\n<p>Abstract store for temporary transaction data during auth flows.</p>\n</dd></dl>\n\n<dl class=\"py data\">\n<dt class=\"sig sig-object py\" id=\"store.abstract.T\">\n<span class=\"sig-prename descclassname\"><span class=\"pre\">store.abstract.</span></span><span class=\"sig-name descname\"><span class=\"pre\">T</span></span><a class=\"headerlink\" href=\"#store.abstract.T\" title=\"Link to this definition\">\u00b6</a></dt>\n<dd></dd></dl>\n\n</section>\n</section>\n</section>",
+  "metatags": "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n",
+  "rellinks": [
+    [
+      "genindex",
+      "General Index",
+      "I",
+      "index"
+    ],
+    [
+      "py-modindex",
+      "Python Module Index",
+      "",
+      "modules"
+    ],
+    [
+      "reference/encryption/encrypt/index",
+      "Encrypt",
+      "N",
+      "next"
+    ],
+    [
+      "reference/auth_types/index",
+      "Auth Types",
+      "P",
+      "previous"
+    ]
+  ],
+  "sourcename": "reference/store/abstract/index.rst.txt",
+  "toc": "",
+  "display_toc": true,
+  "page_source_suffix": ".rst",
+  "current_page_name": "reference/store/transactionstore/index",
+  "sidebars": [
+    "about.html",
+    "navigation.html",
+    "relations.html",
+    "searchbox.html",
+    "donate.html"
+  ],
+  "alabaster_version": "0.7.16",
+  "alabaster_version_info": [
+    0,
+    7,
+    16
+  ]
+}
