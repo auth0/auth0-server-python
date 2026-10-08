@@ -1,5 +1,28 @@
 {
   "pages": [
+    "docs/sdk/python/server/overview",
+    {
+      "group": "Guides",
+      "pages": [
+        "docs/sdk/python/server/examples/AnonymousSessions",
+        "docs/sdk/python/server/examples/ClientInitiatedBackChannelLogin",
+        "docs/sdk/python/server/examples/ConfigureStore",
+        "docs/sdk/python/server/examples/ConnectedAccounts",
+        "docs/sdk/python/server/examples/CustomTokenExchange",
+        "docs/sdk/python/server/examples/EnterpriseConnect",
+        "docs/sdk/python/server/examples/InteractiveLogin",
+        "docs/sdk/python/server/examples/MFA",
+        "docs/sdk/python/server/examples/MultipleCustomDomains",
+        "docs/sdk/python/server/examples/MutualTLS",
+        "docs/sdk/python/server/examples/MyAccountAuthenticationMethods",
+        "docs/sdk/python/server/examples/OrganizationLogin",
+        "docs/sdk/python/server/examples/Passkeys",
+        "docs/sdk/python/server/examples/Passwordless",
+        "docs/sdk/python/server/examples/RetrievingData",
+        "docs/sdk/python/server/examples/StepUpAuthentication",
+        "docs/sdk/python/server/examples/UserLinking"
+      ]
+    },
     {
       "group": "Auth Server",
       "pages": [
@@ -50,6 +73,7 @@
         "docs/sdk/python/server/reference/utils/helpers/index",
         "docs/sdk/python/server/reference/telemetry/index"
       ]
-    }
+    },
+    "docs/sdk/python/server/CONTRIBUTING"
   ]
 }

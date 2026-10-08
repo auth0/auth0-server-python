@@ -19,6 +19,9 @@ dist
 !docs/dist
 docs/_build
 docs/reference
+docs/overview.md
+docs/CONTRIBUTING.md
+docs/examples
 docs/dist/.doctrees
 docs/dist/_sources
 docs/dist/_static

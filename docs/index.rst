@@ -5,6 +5,23 @@ Auth0 server-side Python SDK: authentication flows, token management, and sessio
 for web applications.
 
 .. toctree::
+   :hidden:
+
+   overview
+
+.. toctree::
+   :hidden:
+   :glob:
+   :caption: Guides
+
+   examples/*
+
+.. toctree::
+   :hidden:
+
+   CONTRIBUTING
+
+.. toctree::
    :maxdepth: 1
    :caption: API Reference
 

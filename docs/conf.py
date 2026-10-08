@@ -17,6 +17,7 @@ release = "1.0.0b18"
 extensions = [
     "autoapi.extension",
     "sphinx.ext.napoleon",
+    "myst_parser",
 ]
 
 # -- AutoAPI ------------------------------------------------------------
@@ -51,6 +52,12 @@ napoleon_use_param = True
 napoleon_use_rtype = True
 napoleon_preprocess_types = True
 
+# -- MyST (Markdown) ----------------------------------------------------
+
+# Generate anchors for headings so README/example cross-links to '#section'
+# resolve. GitHub-style slugs, up to <h4>.
+myst_heading_anchors = 4
+
 # -- General ------------------------------------------------------------
 
 templates_path = ["_templates"]
@@ -75,6 +82,7 @@ exclude_patterns = [
 DOCS_V2_DIRECTORY = "docs/sdk/python/server"
 
 TITLE_OVERRIDES = {
+    "overview": "auth0-server-python",
     "reference/auth_server/anonymous/client/index": "Anonymous Client",
 }
 
@@ -113,7 +121,55 @@ def _split_class_blocks(body):
         for i, start in enumerate(starts)
     ]
 
+# -- Generated include-pages --------------------------------------------
+# README and examples/*.md are the single source. These thin {include}
+# wrappers are generated at build time (not committed) so the content is
+# never duplicated. .gitignore excludes overview.md, CONTRIBUTING.md, and
+# examples/.
+
+_HERE = os.path.dirname(__file__)
+EXAMPLES_SRC = os.path.join(_HERE, "..", "examples")
+
+EXAMPLE_PAGES = sorted(
+    f[:-3] for f in os.listdir(EXAMPLES_SRC) if f.endswith(".md")
+)
+
+
+def _write_if_changed(path, content):
+    if os.path.exists(path):
+        with open(path) as f:
+            if f.read() == content:
+                return
+    with open(path, "w") as f:
+        f.write(content)
+
+
+def _generate_include_pages(app):
+    _write_if_changed(
+        os.path.join(app.srcdir, "overview.md"),
+        "```{include} ../README.md\n```\n",
+    )
+    _write_if_changed(
+        os.path.join(app.srcdir, "CONTRIBUTING.md"),
+        "```{include} ../CONTRIBUTING.md\n```\n",
+    )
+    examples_out = os.path.join(app.srcdir, "examples")
+    os.makedirs(examples_out, exist_ok=True)
+    for name in EXAMPLE_PAGES:
+        _write_if_changed(
+            os.path.join(examples_out, name + ".md"),
+            f"```{{include}} ../../examples/{name}.md\n```\n",
+        )
+
+
 DOCS_V2_NAVIGATION = [
+    f"{DOCS_V2_DIRECTORY}/overview",
+    {
+        "group": "Guides",
+        "pages": [
+            f"{DOCS_V2_DIRECTORY}/examples/{name}" for name in EXAMPLE_PAGES
+        ],
+    },
     {
         "group": "Auth Server",
         "pages": [
@@ -159,6 +215,7 @@ DOCS_V2_NAVIGATION = [
             f"{DOCS_V2_DIRECTORY}/reference/telemetry/index",
         ],
     },
+    f"{DOCS_V2_DIRECTORY}/CONTRIBUTING",
 ]
 
 
@@ -217,5 +274,6 @@ def _postprocess_json_build(app, exception):
 
 
 def setup(app):
+    _generate_include_pages(app)
     app.connect("autoapi-skip-member", autoapi_skip_member)
     app.connect("build-finished", _postprocess_json_build)

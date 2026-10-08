@@ -45,15 +45,15 @@
   "current_page_name": "reference/store/statestore/index",
   "sidebars": [
     "about.html",
-    "searchfield.html",
     "navigation.html",
     "relations.html",
+    "searchbox.html",
     "donate.html"
   ],
-  "alabaster_version": "1.0.0",
+  "alabaster_version": "0.7.16",
   "alabaster_version_info": [
-    1,
     0,
-    0
+    7,
+    16
   ]
 }
