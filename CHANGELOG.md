@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.0.0b19](https://github.com/auth0/auth0-server-python/tree/1.0.0b19) (2026-10-08)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b18...1.0.0b19)
+
+**Fixed**
+- fix: preserve `invalid_session_token` as a distinct `AnonymousSessionTokenError` code, previously it was collapsed into `session_expired`, preventing callers from distinguishing a structurally invalid token (rotated, revoked) from a naturally expired one [\#181](https://github.com/auth0/auth0-server-python/pull/181) ([rmad17](https://github.com/rmad17))
+
 ## [1.0.0b18](https://github.com/auth0/auth0-server-python/tree/1.0.0b18) (2026-10-01)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b17...1.0.0b18)
 
