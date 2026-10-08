@@ -464,9 +464,9 @@ class _AnonymousSessionExpired(AnonymousSessionError):
     def __init__(
         self,
         message: str = "The anonymous session token is expired or invalid.",
-        original_code: str = "session_expired",
+        code: str = "session_expired",
     ):
-        super().__init__(original_code, message)
+        super().__init__(code, message)
         self.name = "_AnonymousSessionExpired"
 
 
