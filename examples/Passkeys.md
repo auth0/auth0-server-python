@@ -16,6 +16,7 @@ Passkeys let users sign up and log in with [WebAuthn](https://www.w3.org/TR/weba
 - [2. Passkey Login](#2-passkey-login)
 - [3. DPoP-bound passkey tokens (optional)](#3-dpop-bound-passkey-tokens-optional)
   - [Completing MFA on a passkey login (and where the session comes from)](#completing-mfa-on-a-passkey-login-and-where-the-session-comes-from)
+- [4. Identifier verification (optional)](#4-identifier-verification-optional)
 - [Error Handling](#error-handling)
 
 ## How the flow works
@@ -69,6 +70,7 @@ challenge = await server_client.passkey_signup_challenge(
 # Hand these to the browser:
 #   challenge.auth_session              -> opaque session credential (Tier 1, do not log)
 #   challenge.authn_params_public_key   -> pass to navigator.credentials.create()
+#   challenge.verification_required     -> codes to collect first, when set (see section 4)
 ```
 
 > [!TIP]
@@ -102,6 +104,9 @@ print(f"Signed up and logged in: {user['sub']}")
 ```
 
 `signin_with_passkey` returns a `PasskeyLoginResult` whose `state_data` holds the user claims and token sets — the same shape as `complete_interactive_login` and `login_with_custom_token_exchange`. The session is persisted to your configured state store.
+
+> [!NOTE]
+> If your connection requires users to verify their email or phone at signup, `passkey_signup_challenge` also accepts a `delivery_method` and `signin_with_passkey` accepts a `verification` argument. Both are optional and covered in [section 4](#4-identifier-verification-optional).
 
 ## 2. Passkey Login
 
@@ -212,6 +217,85 @@ except MfaRequiredError as e:
 > [!NOTE]
 > Do **not** pass `persist=True` on this path. It updates an *existing* session, and a passkey-first login has none yet, so it raises `MfaVerifyError("No existing session found…")` — discarding the tokens `verify` just obtained. Use `persist=False` and store the returned tokens as shown above. (This is pre-existing MFA-client behavior, unrelated to passkeys.)
 
+## 4. Identifier verification (optional)
+
+Some connections require a new user to prove they own their email address or phone number before tokens are issued. When that is on, the signup challenge lists the identifiers that need a code, Auth0 sends each code, and you pass the codes back when you complete sign-in. Connections without it behave exactly as described above.
+
+### Turning it on
+
+Enable identifier verification for the email and/or phone identifier on your database connection, and make sure passkeys are enabled on that connection and a custom domain is configured.
+
+### The flow
+
+1. Request the challenge. If `verification_required` is set, show a code field for each identifier it lists.
+2. Collect the codes before you create the credential. Otherwise a user who fails verification is left with a saved passkey on their device for a signup that never finished.
+3. Create the credential in the browser, then call `signin_with_passkey` with the codes in `verification`.
+
+```python
+challenge = await server_client.passkey_signup_challenge(
+    user_profile=PasskeyUserProfile(email="new.user@example.com", phone_number="+15551234567"),
+    delivery_method="text",   # optional, "text" or "voice" for the phone code
+    store_options={"request": request, "response": response},
+)
+
+# For example ["email", "phone"]. None when nothing needs verifying.
+required = challenge.verification_required
+
+# Show a field per identifier, collect the codes, then create the credential in the browser.
+
+result = await server_client.signin_with_passkey(
+    auth_session=challenge.auth_session,
+    authn_response=authn_response,
+    verification={"email": email_code, "phone": phone_code},
+    store_options={"request": request, "response": response},
+)
+```
+
+The keys of `verification` are `email` and `phone`, exactly as listed in `verification_required`. Do not use `phone_number` here, because Auth0 rejects a key it does not recognise with `invalid_request`. Leave `verification` out when `verification_required` is `None`.
+
+When verification is required the session lasts 15 minutes, and the `timeout` inside `authn_params_public_key` is 15 minutes too. A prompt built from it will stay open that long.
+
+### Handling a wrong code
+
+A wrong code does not end the signup. Auth0 keeps the session, and `signin_with_passkey` raises a `PasskeyError` where `is_verification_retryable` is `True`. The error's `verification_required` lists only the identifiers that are still unverified, so ask the user for just those and call again.
+
+```python
+from auth0_server_python.error import PasskeyError
+
+MAX_ATTEMPTS = 3
+auth_session = challenge.auth_session
+codes = {"email": email_code, "phone": phone_code}
+
+for attempt in range(MAX_ATTEMPTS):
+    try:
+        result = await server_client.signin_with_passkey(
+            auth_session=auth_session,
+            authn_response=authn_response,
+            verification=codes,
+            store_options={"request": request, "response": response},
+        )
+        break
+    except PasskeyError as e:
+        if not e.is_verification_retryable or attempt == MAX_ATTEMPTS - 1:
+            raise
+        auth_session = e.auth_session
+        codes = ask_user_for_codes(e.verification_required)
+```
+
+Retry with the `auth_session` from the error, which is the same value today, and with the same `authn_response`, so the user is not asked for another biometric prompt. Send codes only for the identifiers still listed. Always cap the number of attempts, because Auth0 also limits them and ends the session when the limit is reached.
+
+`is_verification_retryable` is `False` in these cases.
+
+- Too many wrong codes, an expired code, or an expired session. Start again from the signup challenge.
+- A missing code raises code `invalid_request`. The session is still valid, so call again with the same `auth_session` and the missing code, but treat it as a bug in your app because it means a code Auth0 asked for was not sent. Do not loop on it.
+- A server error (code `server_error`) may or may not have ended the session. If Auth0 could not reach its verification service, the session is kept. If the failure came after the codes were accepted, the session is gone. The error does not say which, so call again once or twice with the same `auth_session`, `authn_response` and codes after a short delay. If the session is gone, the call fails with `invalid_grant` and no `auth_session`, and you start again from the signup challenge.
+- Any other failure is raised with the code Auth0 returned. Treat it as a general failure.
+
+A dropped connection after Auth0 accepts the final code also ends the session, because each code works once. The user has to start again from the signup challenge.
+
+> [!IMPORTANT]
+> If your tenant requires proof of possession, pass `dpop_key` on this call as well, otherwise the request is rejected. The rest of the DPoP behavior in section 3 is unchanged.
+
 ## Error Handling
 
 The three passkey methods raise `PasskeyError` (a subclass of `Auth0Error`). Input-validation failures raise `MissingRequiredArgumentError`; a required step-up raises `MfaRequiredError`. For most code, catching `Auth0Error` is enough.
@@ -257,6 +341,9 @@ except Auth0Error as e:
 - `passkey_challenge_error` — the signup/login challenge request failed
 - `passkey_token_error` — token exchange failed (also used for a rejected DPoP downgrade)
 - `invalid_response` — Auth0 returned a response that could not be parsed
+- `too_many_requests` when the signup challenge or the token exchange is rate limited
+
+`PasskeyError` also exposes `auth_session`, `verification_required` and `is_verification_retryable` for [identifier verification](#4-identifier-verification-optional). Rate limiting on the signup challenge or the token exchange raises code `too_many_requests`. The per-IP limit on the signup challenge applies to public clients only. Treat `auth_session` on the error like any other session credential and keep it out of logs.
 
 > [!NOTE]
-> `auth_session` is a short-lived (typically ~5 min) Tier 1 credential. It is redacted in the SDK's model `repr()`, and you should never log or persist it. If the ceremony takes too long, re-request the challenge.
+> `auth_session` is a short-lived (typically ~5 min, or 15 min when `verification_required` is set) credential. Never log or persist it. If the ceremony takes too long, re-request the challenge.

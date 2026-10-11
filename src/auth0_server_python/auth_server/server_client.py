@@ -47,6 +47,7 @@ from auth0_server_python.auth_types import (
     MfaRequirements,
     MfaVerifyResponse,
     PasskeyAuthResponse,
+    PasskeyDeliveryMethod,
     PasskeyLoginChallengeResponse,
     PasskeyLoginResult,
     PasskeySignupChallengeResponse,
@@ -3507,6 +3508,7 @@ class ServerClient(Generic[TStoreOptions]):
         organization: Optional[str] = None,
         user_metadata: Optional[dict[str, Any]] = None,
         store_options: Optional[dict[str, Any]] = None,
+        delivery_method: Optional[PasskeyDeliveryMethod] = None,
     ) -> PasskeySignupChallengeResponse:
         """
         Step 1 of 2: Initiate a passkey signup challenge (POST /passkey/register).
@@ -3522,12 +3524,14 @@ class ServerClient(Generic[TStoreOptions]):
             user_metadata: Optional custom metadata added at the root of the request body,
                            not nested inside user_profile (per Auth0 API spec).
             store_options: Optional options for domain resolution.
+            delivery_method: How a phone verification code is sent, "text" or "voice".
 
         Returns:
-            PasskeySignupChallengeResponse with auth_session and authn_params_public_key.
+            PasskeySignupChallengeResponse with auth_session, authn_params_public_key and,
+            when the connection requires verification, verification_required.
 
         Raises:
-            PasskeyError: If the challenge request fails.
+            PasskeyError: If the challenge request fails or the request is rate limited.
             EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         try:
@@ -3545,10 +3549,19 @@ class ServerClient(Generic[TStoreOptions]):
                 body["realm"] = connection
             if resolved_org:
                 body["organization"] = resolved_org
+            if delivery_method:
+                body["delivery_method"] = delivery_method
 
             async with self._get_http_client() as client:
                 url = f"https://{domain}{self.PASSKEY_REGISTER_PATH}"
                 response = await client.post(url, json=body)
+
+                if response.status_code == 429:
+                    # The limiter can answer with a plain-text body, so check before parsing.
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOO_MANY_REQUESTS,
+                        "Too many passkey signup requests",
+                    )
 
                 if response.status_code != 200:
                     try:
@@ -3660,6 +3673,7 @@ class ServerClient(Generic[TStoreOptions]):
         scope: Optional[str] = None,
         audience: Optional[str] = None,
         dpop_key: Optional["jwk.JWK"] = None,
+        verification: Optional[dict[str, str]] = None,
     ) -> PasskeyLoginResult:
         """
         Completes passkey authentication by exchanging the WebAuthn assertion
@@ -3680,6 +3694,8 @@ class ServerClient(Generic[TStoreOptions]):
             dpop_key: Optional EC P-256 JWK for DPoP-bound token exchange. When provided,
                       attaches a DPoP proof header so Auth0 issues a DPoP-bound token
                       (token_type: DPoP). Required when the tenant mandates DPoP binding.
+            verification: Codes the user entered, keyed by the identifiers listed in
+                          verification_required, such as {"email": "123456", "phone": "654321"}.
 
         Returns:
             PasskeyLoginResult containing state_data with user claims and token sets,
@@ -3733,6 +3749,9 @@ class ServerClient(Generic[TStoreOptions]):
                 body["scope"] = scope
             if audience:
                 body["audience"] = audience
+            codes = {key: code for key, code in (verification or {}).items() if code is not None}
+            if codes:
+                body["verification"] = codes
 
             async with self._get_http_client() as client:
                 headers = {}
@@ -3756,6 +3775,13 @@ class ServerClient(Generic[TStoreOptions]):
                         dpop_key, "POST", token_endpoint, nonce=nonce
                     )
                     response = await client.post(token_endpoint, json=body, headers=headers)
+
+                if response.status_code == 429:
+                    # The token endpoint limiters answer with error "access_denied".
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOO_MANY_REQUESTS,
+                        "Too many passkey token requests",
+                    )
 
                 if response.status_code != 200:
                     try:
@@ -3781,6 +3807,8 @@ class ServerClient(Generic[TStoreOptions]):
                     raise PasskeyError(
                         error_code,
                         error_data.get("error_description", "Passkey token exchange failed"),
+                        auth_session=error_data.get("auth_session"),
+                        verification_required=error_data.get("verification_required"),
                     )
 
                 try:

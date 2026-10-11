@@ -242,7 +242,7 @@ For more details and examples, see [examples/RetrievingData.md](examples/Retriev
 
 ### 7. Passkey Authentication
 
-Sign users up or in with [WebAuthn](https://www.w3.org/TR/webauthn-2/) passkeys (Touch ID, Face ID, Windows Hello, or a security key) instead of a password, via [Auth0 passkeys](https://auth0.com/docs/authenticate/database-connections/passkeys). The ceremony is two steps — request a challenge, sign it in the browser, then complete sign-in — and establishes a server-side session like every other login path. For the signup and login flows, organizations, step-up MFA, and error handling, see [examples/Passkeys.md](examples/Passkeys.md).
+Sign users up or in with [WebAuthn](https://www.w3.org/TR/webauthn-2/) passkeys (Touch ID, Face ID, Windows Hello, or a security key) instead of a password, via [Auth0 passkeys](https://auth0.com/docs/authenticate/database-connections/passkeys). The ceremony is two steps — request a challenge, sign it in the browser, then complete sign-in — and establishes a server-side session like every other login path. For the signup and login flows, organizations, step-up MFA, [verifying an email or phone at signup](examples/Passkeys.md#4-identifier-verification-optional), and error handling, see [examples/Passkeys.md](examples/Passkeys.md).
 
 ### 8. My Account API — Authentication Methods
 

@@ -411,11 +411,25 @@ class PasskeyError(Auth0Error):
     Error raised during passkey authentication operations.
     """
 
-    def __init__(self, code: str, message: str, cause=None):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        cause=None,
+        auth_session: Optional[str] = None,
+        verification_required: Optional[list[str]] = None,
+    ):
         super().__init__(message)
         self.code = code
         self.name = "PasskeyError"
         self.cause = cause
+        self.auth_session = auth_session
+        self.verification_required = verification_required
+
+    @property
+    def is_verification_retryable(self) -> bool:
+        """True when a code was wrong but the session is alive, so the caller can resubmit."""
+        return self.code == "invalid_grant" and bool(self.auth_session)
 
 
 class PasskeyErrorCode:
@@ -424,6 +438,7 @@ class PasskeyErrorCode:
     CHALLENGE_FAILED = "passkey_challenge_error"
     TOKEN_EXCHANGE_FAILED = "passkey_token_error"
     INVALID_RESPONSE = "invalid_response"
+    TOO_MANY_REQUESTS = "too_many_requests"
 
 
 # =============================================================================

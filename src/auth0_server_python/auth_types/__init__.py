@@ -21,6 +21,7 @@ EnrollmentType = Literal[
     "passkey", "email", "phone", "totp", "push-notification", "recovery-code", "password"
 ]
 PreferredAuthMethod = Literal["sms", "voice"]
+PasskeyDeliveryMethod = Literal["text", "voice"]
 
 # Deprecated public aliases resolved lazily (PEP 562) so access emits a warning
 # while imports keep working. Remove in a future release.
@@ -862,7 +863,7 @@ class _PasskeyChallengeResponseBase(BaseModel):
 
 
 class PasskeySignupChallengeResponse(_PasskeyChallengeResponseBase):
-    pass
+    verification_required: Optional[list[str]] = None
 
 
 class PasskeyLoginChallengeResponse(_PasskeyChallengeResponseBase):
