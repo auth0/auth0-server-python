@@ -251,7 +251,7 @@ result = await server_client.signin_with_passkey(
 )
 ```
 
-The keys of `verification` are `email` and `phone`, exactly as listed in `verification_required`. Do not use `phone_number` here, because Auth0 rejects a key it does not recognise with `invalid_request`. Leave `verification` out when `verification_required` is `None`.
+The keys of `verification` are `email` and `phone`, exactly as listed in `verification_required`. Any other key, such as `phone_number`, raises `InvalidArgumentError` before a request is sent, and a blank code is treated as not provided. Leave `verification` out when `verification_required` is `None`.
 
 When verification is required the session lasts 15 minutes, and the `timeout` inside `authn_params_public_key` is 15 minutes too. A prompt built from it will stay open that long.
 

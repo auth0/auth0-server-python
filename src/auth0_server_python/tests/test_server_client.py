@@ -9481,7 +9481,60 @@ async def test_signin_with_passkey_verification_none_values_dropped(mocker):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("verification", [None, {}, {"email": None}], ids=["none", "empty", "all_none"])
+@pytest.mark.parametrize(
+    "verification",
+    [{"phone_number": "123456"}, {"email": "123456", "otp": "654321"}, {"EMAIL": "123456"}],
+    ids=["phone_number", "extra_key", "wrong_case"],
+)
+async def test_signin_with_passkey_verification_unknown_key_raises_before_request(mocker, verification):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_abc123",
+            authn_response=_make_passkey_authn_response(),
+            verification=verification,
+        )
+
+    assert exc.value.argument == "verification"
+    assert "123456" not in str(exc.value)
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [123456, ["123456"], b"123456"], ids=["int", "list", "bytes"])
+async def test_signin_with_passkey_verification_non_string_code_raises_before_request(mocker, code):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_abc123",
+            authn_response=_make_passkey_authn_response(),
+            verification={"email": code},
+        )
+
+    assert exc.value.argument == "verification"
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_verification_blank_codes_dropped(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    await _signin_expecting_error(client, verification={"email": "123456", "phone": "   "})
+
+    assert mock_post.call_args.kwargs["json"]["verification"] == {"email": "123456"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "verification",
+    [None, {}, {"email": None}, {"email": ""}, {"email": " ", "phone": None}],
+    ids=["none", "empty", "all_none", "blank", "blank_and_none"],
+)
 async def test_signin_with_passkey_verification_omitted_when_nothing_to_send(mocker, verification):
     client = _make_passkey_signin_client(mocker)
     mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})

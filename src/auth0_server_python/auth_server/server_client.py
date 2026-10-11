@@ -142,6 +142,7 @@ class ServerClient(Generic[TStoreOptions]):
     GRANT_TYPE_PASSKEY = "urn:okta:params:oauth:grant-type:webauthn"
     PASSKEY_REGISTER_PATH = "/passkey/register"
     PASSKEY_CHALLENGE_PATH = "/passkey/challenge"
+    PASSKEY_VERIFICATION_IDENTIFIERS = ("email", "phone")
 
     # ============================================================================
     # INITIALIZATION
@@ -3696,6 +3697,7 @@ class ServerClient(Generic[TStoreOptions]):
                       (token_type: DPoP). Required when the tenant mandates DPoP binding.
             verification: Codes the user entered, keyed by the identifiers listed in
                           verification_required, such as {"email": "123456", "phone": "654321"}.
+                          Only "email" and "phone" are accepted, and blank codes are ignored.
 
         Returns:
             PasskeyLoginResult containing state_data with user claims and token sets,
@@ -3705,6 +3707,8 @@ class ServerClient(Generic[TStoreOptions]):
             MissingRequiredArgumentError: If auth_session or authn_response is missing.
             ConfigurationError: If dpop_key is combined with use_mtls. DPoP and mTLS
                 use incompatible token-binding mechanisms and cannot be used together.
+            InvalidArgumentError: If verification has a key other than "email" or "phone",
+                or a code that is not a string.
             PasskeyError: If token exchange or session creation fails.
             OrganizationTokenValidationError: If an organization was requested but the
                 token response included no ID token, or the ID token's org claim does
@@ -3721,6 +3725,18 @@ class ServerClient(Generic[TStoreOptions]):
                 "differently. DPoP would take precedence and the token would not be "
                 "certificate-bound."
             )
+        verification_codes: dict[str, str] = {}
+        for identifier, code in (verification or {}).items():
+            if identifier not in self.PASSKEY_VERIFICATION_IDENTIFIERS:
+                raise InvalidArgumentError(
+                    "verification", "verification keys must be 'email' or 'phone'"
+                )
+            if code is not None and not isinstance(code, str):
+                raise InvalidArgumentError(
+                    "verification", f"the '{identifier}' verification code must be a string"
+                )
+            if code and code.strip():
+                verification_codes[identifier] = code
 
         try:
             domain = await self._resolve_current_domain(store_options)
@@ -3749,9 +3765,8 @@ class ServerClient(Generic[TStoreOptions]):
                 body["scope"] = scope
             if audience:
                 body["audience"] = audience
-            codes = {key: code for key, code in (verification or {}).items() if code is not None}
-            if codes:
-                body["verification"] = codes
+            if verification_codes:
+                body["verification"] = verification_codes
 
             async with self._get_http_client() as client:
                 headers = {}
