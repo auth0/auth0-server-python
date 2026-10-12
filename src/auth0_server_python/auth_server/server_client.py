@@ -28,7 +28,7 @@ from auth0_server_python.auth_schemes.client_assertion import (
     validate_client_assertion_key,
 )
 from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token_endpoint
-from auth0_server_python.auth_server.anonymous_client import AnonymousClient
+from auth0_server_python.auth_server.anonymous import AnonymousClient
 from auth0_server_python.auth_server.mfa_client import DEFAULT_MFA_TOKEN_TTL, MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.passwordless_client import PasswordlessClient
@@ -289,6 +289,13 @@ class ServerClient(Generic[TStoreOptions]):
         self._clear_anonymous_session_on_login = clear_anonymous_session_on_login
         self._webfinger_cache: OrderedDict[str, dict] = OrderedDict()
 
+        if anonymous_store is not None and anonymous_store is state_store:
+            raise ConfigurationError(
+                "anonymous_store must be a distinct store instance from state_store. "
+                "Passing the same instance causes anonymous and authenticated session "
+                "data to share the same storage slot, leading to silent overwrites."
+            )
+
         # Initialize stores
         self._transaction_store = transaction_store
         self._state_store = state_store
@@ -341,13 +348,14 @@ class ServerClient(Generic[TStoreOptions]):
             domain=domain,
             client_id=self._client_id,
             client_secret=self._client_secret,
-            secret=self._secret,
             anonymous_store=self._anonymous_store,
             default_audience=self._default_authorization_params.get("audience"),
             default_scope=self._default_authorization_params.get("scope")
             if isinstance(self._default_authorization_params.get("scope"), str)
             else None,
             headers=self._telemetry_headers,
+            client_assertion_signing_key=self._client_assertion_signing_key,
+            client_assertion_signing_alg=self._client_assertion_signing_alg,
         )
         self._passwordless_client = PasswordlessClient(self)
 
@@ -855,12 +863,11 @@ class ServerClient(Generic[TStoreOptions]):
         # Pops close the session-fixation vector from constructor-seeded defaults.
         auth_params.pop("session_token", None)
         auth_params.pop("anon_transfer_token", None)
-        if not self._pushed_authorization_requests and not self._enterprise_connect:
-            anon_transfer_token = await self._anonymous_client.exchange_transfer_token_for_injection(
-                origin_domain, store_options
-            )
-            if anon_transfer_token:
-                auth_params["anon_transfer_token"] = anon_transfer_token
+        anon_transfer_token = await self._anonymous_client.exchange_transfer_token_for_injection(
+            origin_domain, store_options
+        )
+        if anon_transfer_token:
+            auth_params["anon_transfer_token"] = anon_transfer_token
 
         # Build the transaction data to store with domain
         transaction_data = TransactionData(
@@ -1265,6 +1272,7 @@ class ServerClient(Generic[TStoreOptions]):
         }
         if transaction_data.app_state:
             result["app_state"] = transaction_data.app_state
+        await self._clear_anonymous_session_after_login(store_options)
         return result
 
     async def _establish_session_from_mfa_verify_response(
@@ -1332,6 +1340,7 @@ class ServerClient(Generic[TStoreOptions]):
             id_token_claims=claims,
             store_options=store_options,
         )
+        await self._clear_anonymous_session_after_login(store_options)
 
     async def _clear_anonymous_session_after_login(
         self, store_options: Optional[dict[str, Any]] = None
@@ -1347,8 +1356,8 @@ class ServerClient(Generic[TStoreOptions]):
             return
         try:
             await self._anonymous_client.logout(store_options)
-        except Exception as e:
-            logger.debug("Anonymous session cleanup after login failed: %s", e)
+        except Exception:  # must not prevent login from completing  # noqa: S110
+            pass
 
     # ============================================================================
     # USER SESSION MANAGEMENT
@@ -1483,8 +1492,8 @@ class ServerClient(Generic[TStoreOptions]):
         if self._anonymous_store is not None:
             try:
                 await self._anonymous_client._end_session_if_active(store_options)
-            except Exception as e:
-                logger.debug("Anonymous session cleanup on logout failed: %s", e)
+            except Exception:  # must not prevent logout from completing  # noqa: S110
+                pass
 
         # Return logout URL for the current resolved domain
         logout_url = URL.create_logout_url(
@@ -1927,6 +1936,7 @@ class ServerClient(Generic[TStoreOptions]):
         state_data["domain"] = domain
 
         await self._state_store.set(self._state_identifier, state_data, store_options)
+        await self._clear_anonymous_session_after_login(store_options)
 
         result = {
             "authorization_details": token_endpoint_response.get("authorization_details")
@@ -3254,6 +3264,7 @@ class ServerClient(Generic[TStoreOptions]):
 
             # Store session
             await self._state_store.set(self._state_identifier, state_data, options=store_options)
+            await self._clear_anonymous_session_after_login(store_options)
 
             # Build result
             result = LoginWithCustomTokenExchangeResult(
@@ -3606,7 +3617,11 @@ class ServerClient(Generic[TStoreOptions]):
         then call signin_with_passkey() with the auth_session and credential result.
 
         Args:
-            username: Optional username hint for conditional UI.
+            username: Deprecated and ignored. Auth0 rejects ``username`` on the
+                passkey login challenge (the user is identified by the selected
+                credential, not by a supplied username), so it is never forwarded.
+                Retained for backward compatibility and will be removed in a future
+                major release. Passing it emits a DeprecationWarning.
             connection: Auth0 database connection name (realm).
             organization: Auth0 organization ID or name.
             store_options: Optional options for domain resolution.
@@ -3618,6 +3633,15 @@ class ServerClient(Generic[TStoreOptions]):
             PasskeyError: If the challenge request fails.
             EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        if username is not None:
+            warnings.warn(
+                "The 'username' argument to passkey_login_challenge is ignored: Auth0 "
+                "rejects 'username' on the passkey login challenge (the user is "
+                "identified by the selected credential). It is retained for backward "
+                "compatibility and will be removed in a future major release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         try:
             domain = await self._resolve_current_domain(store_options)
 
@@ -3625,8 +3649,6 @@ class ServerClient(Generic[TStoreOptions]):
             body: dict[str, Any] = {"client_id": self._client_id}
             if self._client_secret:
                 body["client_secret"] = self._client_secret
-            if username:
-                body["username"] = username
             if connection:
                 body["realm"] = connection
             if resolved_org:
@@ -3917,6 +3939,7 @@ class ServerClient(Generic[TStoreOptions]):
             )
 
             await self._state_store.set(self._state_identifier, state_data, options=store_options)
+            await self._clear_anonymous_session_after_login(store_options)
 
             return PasskeyLoginResult(state_data=state_data.model_dump())
 

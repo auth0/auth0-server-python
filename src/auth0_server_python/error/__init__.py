@@ -480,12 +480,17 @@ class AnonymousSessionTokenError(AnonymousSessionError):
         super().__init__(code, message, cause)
 
 
-class _AnonymousSessionExpired(Auth0Error):
-    """Internal-only signal that the stored session token is expired or invalid."""
+class _AnonymousSessionExpired(AnonymousSessionError):
+    """Internal-only signal that the stored session token is expired or structurally invalid."""
 
-    def __init__(self, message: str = "The anonymous session token is expired or invalid."):
-        super().__init__(message)
+    def __init__(
+        self,
+        message: str = "The anonymous session token is expired or invalid.",
+        code: str = "session_expired",
+    ):
+        super().__init__(code, message)
         self.name = "_AnonymousSessionExpired"
+
 
 # =============================================================================
 # Enterprise Connect Error Classes

@@ -256,6 +256,12 @@ class AuthorizationParameters(BaseModel):
     scope: Optional[str] = None
     audience: Optional[str] = None
     redirect_uri: Optional[str] = None
+    # Auth0 Experiment Center (A/B testing) override params, applied to this request only.
+    # Pass any of them to hint a specific experiment, variation, or segment instead of the
+    # automatic assignment. These are optional override hints, not a strict contract.
+    experiment_id: Optional[str] = None
+    variation_id: Optional[str] = None
+    segment_id: Optional[str] = None
 
     class Config:
         extra = "allow"  # Allow additional OAuth parameters
@@ -908,11 +914,11 @@ class AnonymousSession(BaseModel):
     """Public result of create_session() and the renewal ladder."""
 
     access_token: str
-    session_token: str
     expires_at: int
     session_expires_at: Optional[int] = None
     metadata: Optional[dict[str, Any]] = None
     sub: Optional[str] = None
+    scope: Optional[str] = None
 
 
 class AnonymousSessionData(BaseModel):
@@ -931,8 +937,9 @@ class AnonymousTokenResponse(BaseModel):
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
-    session_expires_in: int
+    session_expires_in: Optional[int] = None
     session_token: Optional[str] = None
+    scope: Optional[str] = None
 
 
 class AnonymousCreateTokenResponse(AnonymousTokenResponse):
@@ -959,6 +966,7 @@ class AnonymousTokenSetEntry(BaseModel):
     expires_at: int
     audience: Optional[str] = None
     scope: Optional[str] = None
+    granted_scope: Optional[str] = None
 
 
 class AnonymousSessionContext(BaseModel):
