@@ -234,7 +234,7 @@ When a connection requires users to verify their email or phone number at signup
 
 ### Requirements
 
-Enable identifier verification for email, phone, or both on your database connection. Passkeys must be enabled on that connection, and a custom domain must be configured.
+Enable identifier verification for email, phone, or both on your database connection.
 
 ### The flow
 
@@ -262,7 +262,9 @@ result = await server_client.signin_with_passkey(
 
 The keys of `verification` must be `email` or `phone`, as listed in `verification_required`. Any other key raises `InvalidArgumentError`, and blank codes are ignored. Omit `verification` when `verification_required` is `None`.
 
-When verification is required, the session and the `timeout` in `authn_params_public_key` last 15 minutes.
+### Resending codes
+
+If the user does not receive a code, call `passkey_signup_challenge` again before the passkey is created. Each call sends new codes for every identifier and returns a new `auth_session` and new `authn_params_public_key`, so use the values from the latest response. The previous session stays valid until it expires.
 
 ### Handling a wrong code
 
@@ -293,6 +295,8 @@ for attempt in range(MAX_ATTEMPTS):
 
 Retry with the `auth_session` from the error and the same `authn_response`. Cap the number of attempts, because Auth0 also limits them.
 
+Send one `signin_with_passkey` request at a time per `auth_session`. Parallel requests can use up the allowed attempts, or reach Auth0 after the session has already been used.
+
 `is_verification_retryable` is `False` in these cases.
 
 - Too many wrong codes, an expired code, or an expired session. Start again from the signup challenge.
@@ -301,6 +305,11 @@ Retry with the `auth_session` from the error and the same `authn_response`. Cap 
 - Any other failure is raised with the code Auth0 returned.
 
 If the connection drops after Auth0 accepts the final code, the session has ended because each code works once. Start again from the signup challenge.
+
+### Operational notes
+
+- Rate-limit the route that calls `passkey_signup_challenge`. Each call sends codes, so add limits per IP address and per email address or phone number.
+- Do not log the verification codes.
 
 > [!IMPORTANT]
 > If your tenant requires DPoP, pass `dpop_key` to `signin_with_passkey` as described in section 3.
@@ -355,4 +364,4 @@ except Auth0Error as e:
 `PasskeyError` also exposes `auth_session`, `verification_required` and `is_verification_retryable` for [identifier verification](#4-identifier-verification-optional). Rate limiting on a challenge or the token exchange raises code `too_many_requests`. The per-IP limit on the challenge endpoints applies to public clients only. Treat `auth_session` on the error like any other session credential and keep it out of logs.
 
 > [!NOTE]
-> `auth_session` is a short-lived (typically about a minute, or 15 min when `verification_required` is set) credential. Never log or persist it. If the ceremony takes too long, re-request the challenge.
+> `auth_session` is a short-lived (typically about a minute, or 15 min when `verification_required` is set, matching the `timeout` in `authn_params_public_key`) credential. Never log or persist it. If the ceremony takes too long, re-request the challenge.
