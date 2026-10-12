@@ -47,6 +47,7 @@ from auth0_server_python.auth_types import (
     MfaRequirements,
     MfaVerifyResponse,
     PasskeyAuthResponse,
+    PasskeyDeliveryMethod,
     PasskeyLoginChallengeResponse,
     PasskeyLoginResult,
     PasskeySignupChallengeResponse,
@@ -141,6 +142,7 @@ class ServerClient(Generic[TStoreOptions]):
     GRANT_TYPE_PASSKEY = "urn:okta:params:oauth:grant-type:webauthn"
     PASSKEY_REGISTER_PATH = "/passkey/register"
     PASSKEY_CHALLENGE_PATH = "/passkey/challenge"
+    PASSKEY_VERIFICATION_IDENTIFIERS = ("email", "phone")
 
     # ============================================================================
     # INITIALIZATION
@@ -3518,6 +3520,7 @@ class ServerClient(Generic[TStoreOptions]):
         organization: Optional[str] = None,
         user_metadata: Optional[dict[str, Any]] = None,
         store_options: Optional[dict[str, Any]] = None,
+        delivery_method: Optional[PasskeyDeliveryMethod] = None,
     ) -> PasskeySignupChallengeResponse:
         """
         Step 1 of 2: Initiate a passkey signup challenge (POST /passkey/register).
@@ -3533,12 +3536,14 @@ class ServerClient(Generic[TStoreOptions]):
             user_metadata: Optional custom metadata added at the root of the request body,
                            not nested inside user_profile (per Auth0 API spec).
             store_options: Optional options for domain resolution.
+            delivery_method: Optional channel for the phone verification code, "text" or "voice".
 
         Returns:
-            PasskeySignupChallengeResponse with auth_session and authn_params_public_key.
+            PasskeySignupChallengeResponse with auth_session, authn_params_public_key and,
+            when the connection requires verification, verification_required.
 
         Raises:
-            PasskeyError: If the challenge request fails.
+            PasskeyError: If the challenge request fails or the request is rate limited.
             EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         try:
@@ -3556,10 +3561,19 @@ class ServerClient(Generic[TStoreOptions]):
                 body["realm"] = connection
             if resolved_org:
                 body["organization"] = resolved_org
+            if delivery_method:
+                body["delivery_method"] = delivery_method
 
             async with self._get_http_client() as client:
                 url = f"https://{domain}{self.PASSKEY_REGISTER_PATH}"
                 response = await client.post(url, json=body)
+
+                if response.status_code == 429:
+                    # The limiter can answer with a plain-text body, so check before parsing.
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOO_MANY_REQUESTS,
+                        "Too many passkey signup requests",
+                    )
 
                 if response.status_code != 200:
                     try:
@@ -3616,7 +3630,7 @@ class ServerClient(Generic[TStoreOptions]):
             PasskeyLoginChallengeResponse with auth_session and authn_params_public_key.
 
         Raises:
-            PasskeyError: If the challenge request fails.
+            PasskeyError: If the challenge request fails or the request is rate limited.
             EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         if username is not None:
@@ -3643,6 +3657,12 @@ class ServerClient(Generic[TStoreOptions]):
             async with self._get_http_client() as client:
                 url = f"https://{domain}{self.PASSKEY_CHALLENGE_PATH}"
                 response = await client.post(url, json=body)
+
+                if response.status_code == 429:
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOO_MANY_REQUESTS,
+                        "Too many passkey login requests",
+                    )
 
                 if response.status_code != 200:
                     try:
@@ -3682,6 +3702,7 @@ class ServerClient(Generic[TStoreOptions]):
         scope: Optional[str] = None,
         audience: Optional[str] = None,
         dpop_key: Optional["jwk.JWK"] = None,
+        verification: Optional[dict[str, str]] = None,
     ) -> PasskeyLoginResult:
         """
         Completes passkey authentication by exchanging the WebAuthn assertion
@@ -3702,6 +3723,7 @@ class ServerClient(Generic[TStoreOptions]):
             dpop_key: Optional EC P-256 JWK for DPoP-bound token exchange. When provided,
                       attaches a DPoP proof header so Auth0 issues a DPoP-bound token
                       (token_type: DPoP). Required when the tenant mandates DPoP binding.
+            verification: Optional signup codes keyed by "email" or "phone", not used for login.
 
         Returns:
             PasskeyLoginResult containing state_data with user claims and token sets,
@@ -3711,7 +3733,13 @@ class ServerClient(Generic[TStoreOptions]):
             MissingRequiredArgumentError: If auth_session or authn_response is missing.
             ConfigurationError: If dpop_key is combined with use_mtls. DPoP and mTLS
                 use incompatible token-binding mechanisms and cannot be used together.
-            PasskeyError: If token exchange or session creation fails.
+            InvalidArgumentError: If verification has a key other than "email" or "phone",
+                or a code that is not a string.
+            PasskeyError: If token exchange or session creation fails, or the request is
+                rate limited.
+            MfaRequiredError: If the tenant requires step-up MFA after the passkey sign-in.
+            ApiError: If the ID token fails signature, audience, expiry or JWKS validation.
+            IssuerValidationError: If the ID token issuer does not match the tenant.
             OrganizationTokenValidationError: If an organization was requested but the
                 token response included no ID token, or the ID token's org claim does
                 not match.
@@ -3727,6 +3755,18 @@ class ServerClient(Generic[TStoreOptions]):
                 "differently. DPoP would take precedence and the token would not be "
                 "certificate-bound."
             )
+        verification_codes: dict[str, str] = {}
+        for identifier, code in (verification or {}).items():
+            if identifier not in self.PASSKEY_VERIFICATION_IDENTIFIERS:
+                raise InvalidArgumentError(
+                    "verification", "verification keys must be 'email' or 'phone'"
+                )
+            if code is not None and not isinstance(code, str):
+                raise InvalidArgumentError(
+                    "verification", f"the '{identifier}' verification code must be a string"
+                )
+            if code and code.strip():
+                verification_codes[identifier] = code
 
         try:
             domain = await self._resolve_current_domain(store_options)
@@ -3755,6 +3795,8 @@ class ServerClient(Generic[TStoreOptions]):
                 body["scope"] = scope
             if audience:
                 body["audience"] = audience
+            if verification_codes:
+                body["verification"] = verification_codes
 
             async with self._get_http_client() as client:
                 headers = {}
@@ -3778,6 +3820,12 @@ class ServerClient(Generic[TStoreOptions]):
                         dpop_key, "POST", token_endpoint, nonce=nonce
                     )
                     response = await client.post(token_endpoint, json=body, headers=headers)
+
+                if response.status_code == 429:
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOO_MANY_REQUESTS,
+                        "Too many passkey token requests",
+                    )
 
                 if response.status_code != 200:
                     try:
@@ -3803,6 +3851,8 @@ class ServerClient(Generic[TStoreOptions]):
                     raise PasskeyError(
                         error_code,
                         error_data.get("error_description", "Passkey token exchange failed"),
+                        auth_session=error_data.get("auth_session"),
+                        verification_required=error_data.get("verification_required"),
                     )
 
                 try:
