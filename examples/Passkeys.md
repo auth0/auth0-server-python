@@ -357,4 +357,4 @@ except Auth0Error as e:
 `PasskeyError` also exposes `auth_session`, `verification_required` and `is_verification_retryable` for [identifier verification](#4-identifier-verification-optional). Rate limiting on the signup challenge or the token exchange raises code `too_many_requests`. The per-IP limit on the signup challenge applies to public clients only. Treat `auth_session` on the error like any other session credential and keep it out of logs.
 
 > [!NOTE]
-> `auth_session` is a short-lived (typically ~5 min, or 15 min when `verification_required` is set) credential. Never log or persist it. If the ceremony takes too long, re-request the challenge.
+> `auth_session` is a short-lived (typically about a minute, or 15 min when `verification_required` is set) credential. Never log or persist it. If the ceremony takes too long, re-request the challenge.

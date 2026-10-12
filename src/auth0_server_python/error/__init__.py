@@ -436,7 +436,7 @@ class PasskeyError(Auth0Error):
     @property
     def is_verification_retryable(self) -> bool:
         """True when a code was wrong but the session is alive, so the caller can resubmit."""
-        return self.code == "invalid_grant" and bool(self.auth_session)
+        return self.code == PasskeyErrorCode.INVALID_GRANT and bool(self.auth_session)
 
 
 class PasskeyErrorCode:
@@ -446,6 +446,7 @@ class PasskeyErrorCode:
     TOKEN_EXCHANGE_FAILED = "passkey_token_error"
     INVALID_RESPONSE = "invalid_response"
     TOO_MANY_REQUESTS = "too_many_requests"
+    INVALID_GRANT = "invalid_grant"
 
 
 # =============================================================================

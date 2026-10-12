@@ -9472,6 +9472,16 @@ async def test_passkey_signup_challenge_delivery_method_forwarded(mocker, delive
 
 
 @pytest.mark.asyncio
+async def test_passkey_signup_challenge_delivery_method_omitted_when_not_set(mocker):
+    client = _make_passkey_client()
+    mock_post = _mock_passkey_post(mocker, 200, _PASSKEY_SIGNUP_CHALLENGE_RESPONSE)
+
+    await client.passkey_signup_challenge()
+
+    assert "delivery_method" not in mock_post.call_args.kwargs["json"]
+
+
+@pytest.mark.asyncio
 async def test_passkey_signup_challenge_unsupported_delivery_method_surfaces_server_error(mocker):
     client = _make_passkey_client()
     _mock_passkey_post(mocker, 400, {

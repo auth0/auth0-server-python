@@ -3816,7 +3816,6 @@ class ServerClient(Generic[TStoreOptions]):
                     response = await client.post(token_endpoint, json=body, headers=headers)
 
                 if response.status_code == 429:
-                    # The token endpoint limiters answer with error "access_denied".
                     raise PasskeyError(
                         PasskeyErrorCode.TOO_MANY_REQUESTS,
                         "Too many passkey token requests",
