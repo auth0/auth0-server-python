@@ -3525,7 +3525,7 @@ class ServerClient(Generic[TStoreOptions]):
             user_metadata: Optional custom metadata added at the root of the request body,
                            not nested inside user_profile (per Auth0 API spec).
             store_options: Optional options for domain resolution.
-            delivery_method: How a phone verification code is sent, "text" or "voice".
+            delivery_method: Optional channel for the phone verification code, "text" or "voice".
 
         Returns:
             PasskeySignupChallengeResponse with auth_session, authn_params_public_key and,
@@ -3695,9 +3695,7 @@ class ServerClient(Generic[TStoreOptions]):
             dpop_key: Optional EC P-256 JWK for DPoP-bound token exchange. When provided,
                       attaches a DPoP proof header so Auth0 issues a DPoP-bound token
                       (token_type: DPoP). Required when the tenant mandates DPoP binding.
-            verification: Codes the user entered, keyed by the identifiers listed in
-                          verification_required, such as {"email": "123456", "phone": "654321"}.
-                          Only "email" and "phone" are accepted, and blank codes are ignored.
+            verification: Optional signup codes keyed by "email" or "phone", not used for login.
 
         Returns:
             PasskeyLoginResult containing state_data with user claims and token sets,
