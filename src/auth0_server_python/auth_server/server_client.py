@@ -3630,7 +3630,7 @@ class ServerClient(Generic[TStoreOptions]):
             PasskeyLoginChallengeResponse with auth_session and authn_params_public_key.
 
         Raises:
-            PasskeyError: If the challenge request fails.
+            PasskeyError: If the challenge request fails or the request is rate limited.
             EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
         if username is not None:
@@ -3657,6 +3657,12 @@ class ServerClient(Generic[TStoreOptions]):
             async with self._get_http_client() as client:
                 url = f"https://{domain}{self.PASSKEY_CHALLENGE_PATH}"
                 response = await client.post(url, json=body)
+
+                if response.status_code == 429:
+                    raise PasskeyError(
+                        PasskeyErrorCode.TOO_MANY_REQUESTS,
+                        "Too many passkey login requests",
+                    )
 
                 if response.status_code != 200:
                     try:

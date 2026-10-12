@@ -9519,6 +9519,28 @@ async def test_passkey_signup_challenge_rate_limited_json_raises_too_many_reques
 
 
 @pytest.mark.asyncio
+async def test_passkey_login_challenge_rate_limited_plain_text_raises_too_many_requests(mocker):
+    client = _make_passkey_client()
+    _mock_passkey_post(mocker, 429)
+
+    with pytest.raises(PasskeyError) as exc:
+        await client.passkey_login_challenge()
+
+    assert exc.value.code == PasskeyErrorCode.TOO_MANY_REQUESTS
+
+
+@pytest.mark.asyncio
+async def test_passkey_login_challenge_rate_limited_json_raises_too_many_requests(mocker):
+    client = _make_passkey_client()
+    _mock_passkey_post(mocker, 429, {"error": "access_denied", "error_description": "slow down"})
+
+    with pytest.raises(PasskeyError) as exc:
+        await client.passkey_login_challenge()
+
+    assert exc.value.code == PasskeyErrorCode.TOO_MANY_REQUESTS
+
+
+@pytest.mark.asyncio
 async def test_signin_with_passkey_rate_limited_json_raises_too_many_requests(mocker):
     client = _make_passkey_signin_client(mocker)
     _mock_passkey_post(mocker, 429, {
