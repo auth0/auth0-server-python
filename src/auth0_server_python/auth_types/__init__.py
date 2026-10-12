@@ -729,11 +729,15 @@ class PasskeyLoginResult(BaseModel):
 
 
 class PasskeyRpInfo(BaseModel):
+    """Relying party identity for a WebAuthn ceremony."""
+
     id: str
     name: str
 
 
 class PasskeyUserInfo(BaseModel):
+    """User identity for a WebAuthn registration."""
+
     model_config = ConfigDict(populate_by_name=True)
     id: str
     name: str
@@ -741,17 +745,23 @@ class PasskeyUserInfo(BaseModel):
 
 
 class PasskeyPubKeyCredParam(BaseModel):
+    """Public key type and algorithm the relying party accepts."""
+
     type: str
     alg: int
 
 
 class PasskeyAuthenticatorSelection(BaseModel):
+    """Authenticator requirements for a WebAuthn registration."""
+
     model_config = ConfigDict(populate_by_name=True)
     resident_key: Optional[str] = Field(None, alias="residentKey")
     user_verification: Optional[str] = Field(None, alias="userVerification")
 
 
 class PasskeyPublicKeyOptions(BaseModel):
+    """WebAuthn public key options to pass to the browser credentials API."""
+
     model_config = ConfigDict(populate_by_name=True, extra="allow")
     challenge: str
     rp: Optional[PasskeyRpInfo] = None
@@ -784,6 +794,8 @@ class EnrollmentChallengeResponse(BaseModel):
 
 
 class PasskeyAuthResponse(BaseModel):
+    """WebAuthn credential returned by the browser, passed to signin_with_passkey."""
+
     model_config = ConfigDict(populate_by_name=True)
     id: str
     raw_id: str = Field(alias="rawId")
@@ -846,6 +858,8 @@ class GetFactorsResponse(BaseModel):
 
 
 class PasskeyUserProfile(BaseModel):
+    """User profile attributes sent with a passkey signup challenge."""
+
     model_config = ConfigDict(extra="allow")
     email: Optional[str] = None
     name: Optional[str] = None
@@ -863,14 +877,18 @@ class _PasskeyChallengeResponseBase(BaseModel):
 
 
 class PasskeySignupChallengeResponse(_PasskeyChallengeResponseBase):
+    """Signup challenge, with verification_required set when the user must enter codes first."""
+
     verification_required: Optional[list[str]] = None
 
 
 class PasskeyLoginChallengeResponse(_PasskeyChallengeResponseBase):
-    pass
+    """Login challenge with the auth_session and WebAuthn options for the browser."""
 
 
 class PasskeyTokenResponse(BaseModel):
+    """Token endpoint response for the passkey grant."""
+
     model_config = ConfigDict(extra="allow")
     access_token: str
     token_type: str = "Bearer"

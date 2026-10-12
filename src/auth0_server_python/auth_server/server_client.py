@@ -3709,7 +3709,11 @@ class ServerClient(Generic[TStoreOptions]):
                 use incompatible token-binding mechanisms and cannot be used together.
             InvalidArgumentError: If verification has a key other than "email" or "phone",
                 or a code that is not a string.
-            PasskeyError: If token exchange or session creation fails.
+            PasskeyError: If token exchange or session creation fails, or the request is
+                rate limited.
+            MfaRequiredError: If the tenant requires step-up MFA after the passkey sign-in.
+            ApiError: If the ID token fails signature, audience, expiry or JWKS validation.
+            IssuerValidationError: If the ID token issuer does not match the tenant.
             OrganizationTokenValidationError: If an organization was requested but the
                 token response included no ID token, or the ID token's org claim does
                 not match.

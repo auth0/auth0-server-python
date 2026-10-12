@@ -409,6 +409,13 @@ class PasswordlessErrorCode:
 class PasskeyError(Auth0Error):
     """
     Error raised during passkey authentication operations.
+
+    Args:
+        code: Error code, see PasskeyErrorCode.
+        message: Human-readable description.
+        cause: Underlying exception, if any.
+        auth_session: Session to resubmit against, set when Auth0 keeps it alive after a wrong code.
+        verification_required: Identifiers whose codes are still unverified.
     """
 
     def __init__(
