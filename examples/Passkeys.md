@@ -83,6 +83,7 @@ challenge = await server_client.passkey_signup_challenge(
 #   challenge.auth_session              -> opaque session credential (Tier 1, do not log)
 #   challenge.authn_params_public_key   -> pass to navigator.credentials.create()
 #   challenge.verification_required     -> codes to collect first, when set (see section 4)
+# auth_session does not appear in print(challenge). To inspect it while debugging, read challenge.auth_session.
 ```
 
 > [!TIP]

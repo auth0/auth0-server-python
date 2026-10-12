@@ -9471,6 +9471,23 @@ async def test_passkey_signup_challenge_delivery_method_forwarded(mocker, delive
     assert mock_post.call_args.kwargs["json"]["delivery_method"] == delivery_method
 
 
+@pytest.mark.parametrize(
+    "model, payload",
+    [
+        (PasskeySignupChallengeResponse, _PASSKEY_SIGNUP_CHALLENGE_RESPONSE),
+        (PasskeyLoginChallengeResponse, _PASSKEY_LOGIN_CHALLENGE_RESPONSE),
+    ],
+    ids=["signup", "login"],
+)
+def test_passkey_challenge_response_hides_auth_session_from_repr_and_str(model, payload):
+    challenge = model.model_validate(payload)
+
+    assert payload["auth_session"] not in repr(challenge)
+    assert payload["auth_session"] not in str(challenge)
+    assert challenge.auth_session == payload["auth_session"]
+    assert challenge.model_dump()["auth_session"] == payload["auth_session"]
+
+
 @pytest.mark.asyncio
 async def test_passkey_signup_challenge_delivery_method_omitted_when_not_set(mocker):
     client = _make_passkey_client()

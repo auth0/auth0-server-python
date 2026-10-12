@@ -878,18 +878,18 @@ class PasskeyUserProfile(BaseModel):
 
 
 class _PasskeyChallengeResponseBase(BaseModel):
-    auth_session: str
+    auth_session: str = Field(repr=False)
     authn_params_public_key: PasskeyPublicKeyOptions
 
 
 class PasskeySignupChallengeResponse(_PasskeyChallengeResponseBase):
-    """Signup challenge, with verification_required set when the user must enter codes first."""
+    """Signup challenge, with verification_required set when the user must enter codes first. auth_session is hidden from repr and str."""
 
     verification_required: Optional[list[str]] = None
 
 
 class PasskeyLoginChallengeResponse(_PasskeyChallengeResponseBase):
-    """Login challenge with the auth_session and WebAuthn options for the browser."""
+    """Login challenge with the auth_session and WebAuthn options for the browser. auth_session is hidden from repr and str."""
 
 
 class PasskeyTokenResponse(BaseModel):
