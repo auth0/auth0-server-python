@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from jwcrypto import jwk
 
 from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
-from auth0_server_python.auth_server.anonymous_client import ANON_IDENTIFIER, AnonymousClient
+from auth0_server_python.auth_server.anonymous import ANON_IDENTIFIER, AnonymousClient
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
 from auth0_server_python.auth_server.server_client import (
@@ -55,7 +55,6 @@ from auth0_server_python.auth_types import (
     TransactionData,
     UserClaims,
 )
-from auth0_server_python.encryption.encrypt import encrypt
 from auth0_server_python.error import (
     AccessTokenError,
     AccessTokenErrorCode,
@@ -181,6 +180,165 @@ async def test_start_interactive_login_builds_auth_url(mocker):
     assert url == "https://auth0.local/authorize?client_id=<client_id>&redirect_uri=/test_redirect_uri"
     mock_transaction_store.set.assert_awaited()
     mock_oauth.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_forwards_experiment_center_params(mocker):
+    """Experiment Center override params passed per call reach the /authorize request."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    mock_oauth = mocker.patch.object(
+        client._oauth,
+        "create_authorization_url",
+        return_value=("https://auth0.local/authorize", "some_state"),
+    )
+
+    await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+                "segment_id": "seg_789",
+            }
+        )
+    )
+
+    # EC params are not in INTERNAL_AUTHORIZE_PARAMS, so they flow through to /authorize.
+    forwarded = mock_oauth.call_args.kwargs
+    assert forwarded["experiment_id"] == "exp_123"
+    assert forwarded["variation_id"] == "var_456"
+    assert forwarded["segment_id"] == "seg_789"
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_omits_unset_experiment_center_params(mocker):
+    """An Experiment Center param that is not passed never reaches the /authorize request."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    mock_oauth = mocker.patch.object(
+        client._oauth,
+        "create_authorization_url",
+        return_value=("https://auth0.local/authorize", "some_state"),
+    )
+
+    await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+            }
+        )
+    )
+
+    # segment_id was not passed, so it must not be forwarded to /authorize.
+    forwarded = mock_oauth.call_args.kwargs
+    assert forwarded["experiment_id"] == "exp_123"
+    assert forwarded["variation_id"] == "var_456"
+    assert "segment_id" not in forwarded
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_forwards_experiment_center_params_via_par(mocker):
+    """On the PAR branch, Experiment Center override params are posted in the PAR request body."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="my_client",
+        client_secret="my_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        pushed_authorization_requests=True,
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={
+            "issuer": "https://auth0.local/",
+            "authorization_endpoint": "https://auth0.local/authorize",
+            "pushed_authorization_request_endpoint": "https://auth0.local/oauth/par",
+        },
+    )
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    par_response = AsyncMock()
+    par_response.status_code = 201
+    par_response.json = MagicMock(return_value={"request_uri": "urn:req:abc", "expires_in": 60})
+    mock_post.return_value = par_response
+
+    await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+                "segment_id": "seg_789",
+            }
+        )
+    )
+
+    # EC params are not in INTERNAL_AUTHORIZE_PARAMS, so they flow through to the PAR body.
+    posted = mock_post.call_args[1]["data"]
+    assert posted["experiment_id"] == "exp_123"
+    assert posted["variation_id"] == "var_456"
+    assert posted["segment_id"] == "seg_789"
+
+
+@pytest.mark.asyncio
+async def test_start_interactive_login_experiment_center_params_appear_in_url(mocker):
+    """The EC override params show up in the query string of the built authorization URL."""
+    client = ServerClient(
+        domain="auth0.local",
+        client_id="<client_id>",
+        client_secret="<client_secret>",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="some-secret",
+        authorization_params={"redirect_uri": "/test_redirect_uri"},
+    )
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"authorization_endpoint": "https://auth0.local/authorize"},
+    )
+    # No builder mock here, so authlib builds the real URL and we can check the query string.
+
+    url = await client.start_interactive_login(
+        StartInteractiveLoginOptions(
+            authorization_params={
+                "experiment_id": "exp_123",
+                "variation_id": "var_456",
+                "segment_id": "seg_789",
+            }
+        )
+    )
+
+    query = parse_qs(urlparse(url).query)
+    assert query["experiment_id"] == ["exp_123"]
+    assert query["variation_id"] == ["var_456"]
+    assert query["segment_id"] == ["seg_789"]
 
 
 @pytest.mark.asyncio
@@ -7825,7 +7983,10 @@ async def test_passkey_login_challenge_minimal_body(mocker):
 
 
 @pytest.mark.asyncio
-async def test_passkey_login_challenge_with_username(mocker):
+async def test_passkey_login_challenge_ignores_username(mocker):
+    """username is deprecated and never forwarded: Auth0 rejects it on the login
+    challenge (passkey login is discoverable/usernameless). Passing it emits a
+    DeprecationWarning and leaves the request body unchanged."""
     client = ServerClient(
         domain="auth0.local",
         client_id="test_client_id",
@@ -7840,11 +8001,12 @@ async def test_passkey_login_challenge_with_username(mocker):
     mock_response.json = MagicMock(return_value=_PASSKEY_LOGIN_CHALLENGE_RESPONSE)
     mock_post.return_value = mock_response
 
-    await client.passkey_login_challenge(username="jane@example.com")
+    with pytest.warns(DeprecationWarning):
+        await client.passkey_login_challenge(username="jane@example.com")
 
     args, kwargs = mock_post.call_args
     body = kwargs["json"]
-    assert body["username"] == "jane@example.com"
+    assert "username" not in body
 
 
 @pytest.mark.asyncio
@@ -10290,7 +10452,7 @@ async def test_complete_interactive_login_milliseconds_ceiling_fails_open(mocker
 # =============================================================================
 
 
-def _make_anon_context(secret, **overrides):
+def _make_anon_context(**overrides):
     ts_keys = {"access_token", "expires_at", "audience", "scope"}
     ts_defaults = {
         "access_token": "anon_at1",
@@ -10307,7 +10469,7 @@ def _make_anon_context(secret, **overrides):
             ctx_defaults[k] = overrides.pop(k)
     token_set = AnonymousTokenSetEntry(**ts_defaults)
     context = AnonymousSessionContext(token_sets=[token_set], **ctx_defaults)
-    return encrypt(context.model_dump(), secret, "anon_session")
+    return context.model_dump()
 
 
 @pytest.mark.asyncio
@@ -10377,7 +10539,7 @@ async def test_start_interactive_login_injects_transfer_ticket_not_session_token
     """The /authorize URL carries the minted anon_transfer_token, never the raw session_token."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     client = ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
@@ -10415,7 +10577,7 @@ async def test_start_interactive_login_does_not_persist_transfer_token_in_transa
     """The short-lived ticket rides the URL only and is never written to the transaction record."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     mock_transaction_store = AsyncMock()
     client = ServerClient(
         domain="auth0.local",
@@ -10508,11 +10670,11 @@ async def test_start_interactive_login_malformed_anonymous_token_denies_link_all
 
 
 @pytest.mark.asyncio
-async def test_start_interactive_login_suppresses_injection_on_par_branch(mocker):
-    """PAR is not supported for anonymous sessions."""
+async def test_start_interactive_login_injects_transfer_token_on_par_branch(mocker):
+    """PAR includes anon_transfer_token in the PAR request body when a session is active."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     client = ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
@@ -10561,8 +10723,8 @@ async def test_start_interactive_login_suppresses_injection_on_par_branch(mocker
 
     mocker.patch("httpx.AsyncClient", _FakeHttpClient)
     await client.start_interactive_login()
-    exchange.assert_not_awaited()
-    assert "anon_transfer_token" not in captured
+    exchange.assert_awaited_once()
+    assert captured.get("anon_transfer_token") == "TICKET_ABC"
     assert "session_token" not in captured
 
 
@@ -10637,7 +10799,7 @@ async def test_start_interactive_login_per_call_fixation_also_blocked(mocker):
 async def test_start_interactive_login_does_not_clobber_organization_or_invitation(mocker):
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     client = ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
@@ -10674,11 +10836,11 @@ async def test_start_interactive_login_does_not_clobber_organization_or_invitati
 
 
 @pytest.mark.asyncio
-async def test_start_interactive_login_suppresses_injection_on_enterprise_connect(mocker):
-    """Enterprise Connect skips anonymous-session linking entirely, no exchange and no param."""
+async def test_start_interactive_login_injects_on_enterprise_connect(mocker):
+    """Enterprise Connect injects the transfer ticket the same as any other flow."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     client = ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
@@ -10708,8 +10870,8 @@ async def test_start_interactive_login_suppresses_injection_on_enterprise_connec
 
     mocker.patch.object(client._oauth, "create_authorization_url", side_effect=fake_create_url)
     await client.start_interactive_login()
-    exchange.assert_not_awaited()
-    assert "anon_transfer_token" not in captured
+    exchange.assert_awaited_once()
+    assert captured.get("anon_transfer_token") == "TICKET_ABC"
     assert "session_token" not in captured
 
 
@@ -10718,7 +10880,7 @@ async def test_start_interactive_login_fail_open_when_exchange_returns_none(mock
     """A failed/absent exchange yields no param and still returns the login URL."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     client = ServerClient(
         domain="auth0.local",
         client_id="<client_id>",
@@ -10785,7 +10947,7 @@ async def test_complete_interactive_login_does_not_clear_anonymous_session_when_
     """With clear_anonymous_session_on_login=False, the anonymous session is not touched on login."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     tx_store = AsyncMock()
     tx_store.get.return_value = TransactionData(code_verifier="cv1", domain="auth0.local")
     client = ServerClient(
@@ -10812,7 +10974,7 @@ async def test_complete_interactive_login_clears_anonymous_session_by_default(mo
     """By default (clear_anonymous_session_on_login=True), anonymous.logout() is called after the session is written."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     tx_store = AsyncMock()
     tx_store.get.return_value = TransactionData(code_verifier="cv1", domain="auth0.local")
     client = ServerClient(
@@ -10838,7 +11000,7 @@ async def test_complete_interactive_login_cleanup_failure_does_not_fail_login(mo
     """A failing anonymous.logout() is swallowed and must never fail an otherwise-successful login."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     tx_store = AsyncMock()
     tx_store.get.return_value = TransactionData(code_verifier="cv1", domain="auth0.local")
     client = ServerClient(
@@ -10893,7 +11055,7 @@ async def test_logout_ends_active_anonymous_session(mocker):
     """Authenticated logout clears the local anonymous session with no remote call."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     client = ServerClient(
         domain="auth0.local",
         client_id="cid",
@@ -11003,7 +11165,7 @@ async def test_anonymous_write_cannot_destroy_authenticated_session_on_shared_st
         anonymous_store=anon_store,
     )
     await client.anonymous._anonymous_store.set(
-        ANON_IDENTIFIER, {"context": _make_anon_context("a-test-secret-with-enough-length")}
+        ANON_IDENTIFIER, _make_anon_context()
     )
 
     assert shared_store.slot == ("_a0_session", {"user": {"sub": "real_user"}})
@@ -11031,12 +11193,27 @@ async def test_missing_anonymous_store_fails_closed_never_falls_back_to_state_st
     assert shared_store.slot == ("_a0_session", {"user": {"sub": "real_user"}})
 
 
+def test_anonymous_store_same_instance_as_state_store_raises_at_init():
+    """Passing the same store instance for both anonymous_store and state_store raises at construction."""
+    shared_store = OneSlotStore()
+    with pytest.raises(ConfigurationError, match="distinct store instance"):
+        ServerClient(
+            domain="auth0.local",
+            client_id="cid",
+            client_secret="csecret",
+            secret="a-test-secret-with-enough-length",
+            transaction_store=AsyncMock(),
+            state_store=shared_store,
+            anonymous_store=shared_store,
+        )
+
+
 @pytest.mark.asyncio
 async def test_get_session_and_get_user_unaffected_by_active_anonymous_session():
     """Anonymous state never touches _a0_session. get_session()/get_user() see no new keys."""
     secret = "a-test-secret-with-enough-length"
     anon_store = OneSlotStore()
-    anon_store.slot = (ANON_IDENTIFIER, {"context": _make_anon_context(secret)})
+    anon_store.slot = (ANON_IDENTIFIER, _make_anon_context())
     mock_state_store = AsyncMock()
     mock_state_store.get = AsyncMock(return_value=None)
     client = ServerClient(

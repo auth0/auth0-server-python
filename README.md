@@ -160,6 +160,10 @@ async def callback(request: Request):
 
 The SDK supports [Auth0 Organizations](https://auth0.com/docs/organizations) with first-class `organization` and `invitation` parameters on `ServerClient` and `StartInteractiveLoginOptions`. Token claim validation is enforced automatically at callback. For dedicated-org and multi-org patterns, invitation flows, error handling, and reading org data from the session, see [examples/OrganizationLogin.md](examples/OrganizationLogin.md).
 
+#### Experiment Center Overrides
+
+[Auth0 Experiment Center](https://auth0.com/docs/customize/experiment-center/overview) runs A/B tests on your login flows and assigns each user to a variation automatically. To force a specific variation for a single login, pass `experiment_id`, `variation_id`, and optionally `segment_id` as authorization params on the `start_interactive_login()` call. Experiment Center is an Enterprise feature. For per-call usage and the segment-targeting variant, see [examples/InteractiveLogin.md](examples/InteractiveLogin.md#experiment-center-overrides).
+
 ### 4. Login with Custom Token Exchange
 
 If you're migrating from a legacy authentication system or integrating with a custom identity provider, you can exchange external tokens for Auth0 tokens using the OAuth 2.0 Token Exchange specification (RFC 8693):

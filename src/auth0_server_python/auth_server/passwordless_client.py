@@ -294,6 +294,7 @@ class PasswordlessClient:
             id_token_claims=id_token_claims,
             store_options=store_options,
         )
+        await client._clear_anonymous_session_after_login(store_options)
 
         return {"state_data": state_data.model_dump()}
 
