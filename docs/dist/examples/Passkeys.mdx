@@ -12,7 +12,7 @@ Passkeys require a [Custom Domain](https://auth0.com/docs/customize/custom-domai
 
 <Note>
 
-Managing a logged-in user's enrolled passkeys (enroll a new passkey, list, rename, delete) is a **separate** surface on the My Account API. See [examples/MyAccountAuthenticationMethods.md](https://github.com/auth0/auth0-server-python/blob/main/examples/MyAccountAuthenticationMethods.md).
+Managing a logged-in user's enrolled passkeys (enroll a new passkey, list, rename, delete) is a **separate** surface on the My Account API. See [examples/MyAccountAuthenticationMethods.md](/docs/sdk/python/server/examples/MyAccountAuthenticationMethods) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/MyAccountAuthenticationMethods.md)).
 
 </Note>
 
@@ -57,7 +57,7 @@ server_client = ServerClient(
 )
 ```
 
-For store implementations (cookie, Redis, database) and how to pass `store_options`, see [examples/ConfigureStore.md](https://github.com/auth0/auth0-server-python/blob/main/examples/ConfigureStore.md).
+For store implementations (cookie, Redis, database) and how to pass `store_options`, see [examples/ConfigureStore.md](/docs/sdk/python/server/examples/ConfigureStore) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/ConfigureStore.md)).
 
 The **Passkey** grant (`urn:okta:params:oauth:grant-type:webauthn`) must be enabled for your application under **Applications → Your App → Grant Types**.
 
@@ -188,7 +188,7 @@ When `dpop_key` is supplied, the SDK attaches a token-endpoint proof so Auth0 is
 
 <Tip>
 
-Reuse the **same** `dpop_key` for any subsequent My Account API calls made with the resulting token — the token is bound to that one key. See [MyAccountAuthenticationMethods.md → DPoP](https://github.com/auth0/auth0-server-python/blob/main/examples/MyAccountAuthenticationMethods.md#dpop).
+Reuse the **same** `dpop_key` for any subsequent My Account API calls made with the resulting token — the token is bound to that one key. See [MyAccountAuthenticationMethods.md → DPoP](/docs/sdk/python/server/examples/MyAccountAuthenticationMethods#dpop) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/MyAccountAuthenticationMethods.md#dpop)).
 
 </Tip>
 

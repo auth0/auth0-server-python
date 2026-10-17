@@ -4,19 +4,19 @@ title: "Step-Up Authentication (MFA)"
 
 Step-up authentication asks an already-logged-in user to re-authenticate with a stronger factor before a sensitive action (transferring funds, changing security settings, deleting data). The user keeps their session. You just require higher assurance for the one action.
 
-With `auth0-server-python` you request step-up through the ordinary redirect flow - the same `start_interactive_login()` / `complete_interactive_login()` pair from [InteractiveLogin.md](https://github.com/auth0/auth0-server-python/blob/main/examples/InteractiveLogin.md) - by adding an `acr_values` authorization parameter. Auth0's Universal Login handles the MFA challenge. When the user returns, you confirm it by reading the `acr` / `amr` claims from the session.
+With `auth0-server-python` you request step-up through the ordinary redirect flow - the same `start_interactive_login()` / `complete_interactive_login()` pair from [InteractiveLogin.md](/docs/sdk/python/server/examples/InteractiveLogin) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/InteractiveLogin.md)) - by adding an `acr_values` authorization parameter. Auth0's Universal Login handles the MFA challenge. When the user returns, you confirm it by reading the `acr` / `amr` claims from the session.
 
 For the concepts, tenant requirements, and available `acr_values` policies, see the [Auth0 step-up authentication for web apps docs](https://auth0.com/docs/secure/multi-factor-authentication/step-up-authentication/configure-step-up-authentication-for-web-apps).
 
 <Note>
 
-This is the right approach for apps using the **hosted login (Universal Login) redirect flow**. If your app drives an **embedded** MFA challenge itself (no redirect), use the MFA API via `client.mfa` instead - see [MFA.md](https://github.com/auth0/auth0-server-python/blob/main/examples/MFA.md).
+This is the right approach for apps using the **hosted login (Universal Login) redirect flow**. If your app drives an **embedded** MFA challenge itself (no redirect), use the MFA API via `client.mfa` instead - see [MFA.md](/docs/sdk/python/server/examples/MFA) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/MFA.md)).
 
 </Note>
 
 ## Requesting Step-Up
 
-Pass `acr_values` inside `authorization_params` when starting the login. Add `max_age: 0` to force a fresh authentication instead of silently reusing the current session, and use `app_state` to remember where to resume. This assumes a configured `server_client` (see the constructor in [InteractiveLogin.md](https://github.com/auth0/auth0-server-python/blob/main/examples/InteractiveLogin.md), or the full example below):
+Pass `acr_values` inside `authorization_params` when starting the login. Add `max_age: 0` to force a fresh authentication instead of silently reusing the current session, and use `app_state` to remember where to resume. This assumes a configured `server_client` (see the constructor in [InteractiveLogin.md](/docs/sdk/python/server/examples/InteractiveLogin) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/InteractiveLogin.md)), or the full example below):
 
 ```python
 from auth0_server_python.auth_types import StartInteractiveLoginOptions
@@ -121,7 +121,7 @@ async def handle_callback(callback_url, request, response):
     return (result.get("app_state") or {}).get("returnTo", "/")
 ```
 
-`ServerClient` creates no default stores. Provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](https://github.com/auth0/auth0-server-python/blob/main/examples/ConfigureStore.md).
+`ServerClient` creates no default stores. Provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](/docs/sdk/python/server/examples/ConfigureStore) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/ConfigureStore.md)).
 
 <Note>
 

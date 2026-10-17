@@ -9,7 +9,7 @@ title: "Organization Login"
 - **Dedicated-org** - set `organization` on `ServerClient` once; every login is scoped to that org.
 - **Multi-org** - pass `organization` per login call; one client serves many tenants.
 
-Both patterns go through the same `start_interactive_login()` / `complete_interactive_login()` pair from [InteractiveLogin.md](https://github.com/auth0/auth0-server-python/blob/main/examples/InteractiveLogin.md). The SDK validates the `org_id` or `org_name` claim in the returned token automatically at callback.
+Both patterns go through the same `start_interactive_login()` / `complete_interactive_login()` pair from [InteractiveLogin.md](/docs/sdk/python/server/examples/InteractiveLogin) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/InteractiveLogin.md)). The SDK validates the `org_id` or `org_name` claim in the returned token automatically at callback.
 
 For tenant-level setup (enabling Organizations, configuring connections, and setting display name) see [Auth0 Organizations docs](https://auth0.com/docs/organizations).
 
@@ -36,7 +36,7 @@ authorization_url = await auth0.start_interactive_login(
 )
 ```
 
-`ServerClient` creates no default stores. Provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](https://github.com/auth0/auth0-server-python/blob/main/examples/ConfigureStore.md).
+`ServerClient` creates no default stores. Provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](/docs/sdk/python/server/examples/ConfigureStore) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/ConfigureStore.md)).
 
 `organization` accepts either an org ID (with the `org_` prefix) or a human-readable org name. The SDK validates the corresponding `org_id` or `org_name` claim in the returned ID token.
 

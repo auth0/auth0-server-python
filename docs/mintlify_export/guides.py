@@ -39,14 +39,18 @@ def _convert_alerts(lines):
     return out
 
 
-def _link_to_github(lines, source_dir, blob_url):
+def _rewrite_links(lines, source_dir, blob_url, guide_urls):
     def repl(match):
         href = match.group(1)
         if re.match(r"([a-z][a-z0-9+.-]*:|#|/)", href, re.IGNORECASE):
             return match.group(0)
         path, sep, anchor = href.partition("#")
         target = posixpath.normpath(posixpath.join(source_dir, path))
-        return f"]({blob_url}/{target}{sep}{anchor})"
+        github = f"{blob_url}/{target}{sep}{anchor}"
+        site = guide_urls.get(target)
+        if site:
+            return f"]({site}{sep}{anchor}) ([GitHub]({github}))"
+        return f"]({github})"
 
     out, in_fence = [], False
     for line in lines:
@@ -58,11 +62,12 @@ def _link_to_github(lines, source_dir, blob_url):
     return out
 
 
-def markdown_to_mdx(md, title, source_dir, blob_url):
+def markdown_to_mdx(md, title, source_dir, blob_url, guide_urls):
     """Return an MDX page for ``md``.
 
     ``source_dir`` is the Markdown file's directory relative to the repo root.
-    Relative links are rewritten to ``blob_url``.
+    A relative link to another guide points at the guide's page, followed by a
+    GitHub link. Any other relative link points at ``blob_url``.
     """
     # The logo block uses <picture>/<source>, which MDX cannot parse.
     md = re.sub(
@@ -75,17 +80,20 @@ def markdown_to_mdx(md, title, source_dir, blob_url):
         title = title or lines[first][2:].strip()
         del lines[first]
 
-    lines = _link_to_github(_convert_alerts(lines), source_dir, blob_url)
+    lines = _rewrite_links(_convert_alerts(lines), source_dir, blob_url, guide_urls)
     safe_title = title.replace('"', '\\"')
     return f'---\ntitle: "{safe_title}"\n---\n\n' + "\n".join(lines).strip() + "\n"
 
 
-def write_pages(out, root, pages, blob_url):
+def write_pages(out, root, pages, blob_url, site_dir):
     """Write one MDX page per entry of ``pages`` under ``out``.
 
     ``pages`` maps an output page path to ``(markdown path relative to root,
-    fixed title or "")``.
+    fixed title or "")``. ``site_dir`` is the page path prefix in the docs site.
     """
+    guide_urls = {
+        source: f"/{site_dir}/{page_path}" for page_path, (source, _) in pages.items()
+    }
     for page_path, (source, title) in pages.items():
         with open(os.path.join(root, source)) as f:
             md = f.read()
@@ -95,4 +103,8 @@ def write_pages(out, root, pages, blob_url):
         mdx_path = os.path.join(out, page_path + ".mdx")
         os.makedirs(os.path.dirname(mdx_path), exist_ok=True)
         with open(mdx_path, "w") as f:
-            f.write(markdown_to_mdx(md, title, posixpath.dirname(source), blob_url))
+            f.write(
+                markdown_to_mdx(
+                    md, title, posixpath.dirname(source), blob_url, guide_urls
+                )
+            )

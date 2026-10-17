@@ -78,9 +78,10 @@ mintlify_site_dir = SITE_DIR
 mintlify_github_blob_url = "https://github.com/auth0/auth0-server-python/blob/main"
 mintlify_guides_root = os.path.abspath("..")
 
-mintlify_title_overrides = {
-    "reference/auth_server/anonymous/client/index": "Anonymous Client",
-}
+# Optional. Reference pages (and their package group) to list first.
+mintlify_reference_first = [
+    "reference/auth_server/server_client/index",
+]
 
 mintlify_remove_pages = []
 
@@ -114,63 +115,16 @@ EXAMPLE_PAGES = sorted(
 
 # Output page -> (Markdown source relative to the repo root, fixed title or "").
 mintlify_guides = {
-    "overview": ("README.md", "auth0-server-python"),
+    "overview": ("README.md", "Overview"),
     "CONTRIBUTING": ("CONTRIBUTING.md", ""),
     **{f"examples/{name}": (f"examples/{name}.md", "") for name in EXAMPLE_PAGES},
 }
 
 # -- Navigation ---------------------------------------------------------
 
-API_REFERENCE_GROUPS = [
-    {
-        "group": "Auth Server",
-        "pages": [
-            f"{SITE_DIR}/reference/auth_server/server_client/index",
-            f"{SITE_DIR}/reference/auth_server/anonymous/client/index",
-            f"{SITE_DIR}/reference/auth_server/mfa_client/index",
-            f"{SITE_DIR}/reference/auth_server/my_account_client/index",
-            f"{SITE_DIR}/reference/auth_server/passwordless_client/index",
-        ],
-    },
-    {
-        "group": "Auth Schemes",
-        "pages": [
-            f"{SITE_DIR}/reference/auth_schemes/bearer_auth/index",
-            f"{SITE_DIR}/reference/auth_schemes/dpop_auth/index",
-            f"{SITE_DIR}/reference/auth_schemes/client_assertion/index",
-        ],
-    },
-    {
-        "group": "Types",
-        "pages": [f"{SITE_DIR}/reference/auth_types/index"],
-    },
-    {
-        "group": "Store",
-        "pages": [
-            f"{SITE_DIR}/reference/store/abstractdatastore/index",
-            f"{SITE_DIR}/reference/store/statestore/index",
-            f"{SITE_DIR}/reference/store/transactionstore/index",
-        ],
-    },
-    {
-        "group": "Encryption",
-        "pages": [f"{SITE_DIR}/reference/encryption/encrypt/index"],
-    },
-    {
-        "group": "Errors",
-        "pages": [f"{SITE_DIR}/reference/error/index"],
-    },
-    {
-        "group": "Utilities",
-        "pages": [
-            f"{SITE_DIR}/reference/utils/helpers/index",
-            f"{SITE_DIR}/reference/telemetry/index",
-        ],
-    },
-]
-
 # Guides starts folded and API Reference starts open. Nested groups are
-# what the docs site renders as foldable.
+# what the docs site renders as foldable. "{reference}" is replaced by the
+# API reference groups, which are built from the generated pages.
 mintlify_navigation = [
     {
         "group": "auth0-server-python",
@@ -184,7 +138,7 @@ mintlify_navigation = [
             {
                 "group": "API Reference",
                 "expanded": True,
-                "pages": [{**group, "expanded": True} for group in API_REFERENCE_GROUPS],
+                "pages": ["{reference}"],
             },
             f"{SITE_DIR}/CONTRIBUTING",
         ],

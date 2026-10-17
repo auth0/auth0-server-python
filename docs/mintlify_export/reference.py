@@ -4,6 +4,12 @@ import json
 import os
 import posixpath
 import re
+from collections import Counter
+
+from .navigation import page_parts
+
+MODULE_ICON = "file-code"
+CLASS_ICON = "cube"
 
 
 def _load(path):
@@ -21,16 +27,6 @@ def _page_files(out):
         for name in files:
             if name.endswith(".fjson"):
                 yield os.path.join(root, name)
-
-
-def apply_title_overrides(out, overrides):
-    for page_path, title in overrides.items():
-        fpath = os.path.join(out, page_path + ".fjson")
-        if not os.path.exists(fpath):
-            continue
-        data = _load(fpath)
-        data["title"] = title
-        _dump(fpath, data)
 
 
 def remove_pages(out, pages):
@@ -119,24 +115,50 @@ def split_pages(out, splits):
         os.remove(source_fpath)
 
 
-def _html_to_mdx(title, html):
+def _html_to_mdx(frontmatter, html):
     html = re.sub(r'<a class="headerlink"[^>]*>.*?</a>', "", html)
     # Drop the first <h1>, the docs site renders the title itself.
     html = re.sub(r"<h1[^>]*>.*?</h1>", "", html, count=1, flags=re.DOTALL)
-    safe_title = title.replace('"', '\\"')
+    header = "".join(
+        f'{key}: "{value.replace(chr(34), chr(92) + chr(34))}"\n'
+        for key, value in frontmatter.items()
+    )
     return (
-        f'---\ntitle: "{safe_title}"\n---\n\n'
+        f"---\n{header}---\n\n"
         f"export const rawHtml = {json.dumps(html.strip())};\n\n"
         "<div dangerouslySetInnerHTML={{__html: rawHtml}} />\n"
     )
 
 
-def write_mdx(out):
-    """Write an MDX page beside each reference page, then remove the JSON."""
-    for fpath in list(_page_files(out)):
+def _frontmatter(page, data, class_pages, package_sizes):
+    if page in class_pages:
+        name = data.get("title", "")
+        return {"title": name, "sidebarTitle": name, "icon": CLASS_ICON}
+    parts = page_parts(page)
+    module = ".".join(parts)
+    # Inside a group the package prefix is redundant, a lone page keeps the full path.
+    label = ".".join(parts[1:]) if package_sizes[parts[0]] > 1 else module
+    return {"title": module, "sidebarTitle": label or module, "icon": MODULE_ICON}
+
+
+def write_mdx(out, class_pages):
+    """Write an MDX page beside each reference page, then remove the JSON.
+
+    Module pages are titled by module path with a module icon. ``class_pages``
+    are page paths that hold a single class, titled by class with a class icon.
+    Returns the written page paths, without extension.
+    """
+    entries = []
+    for fpath in _page_files(out):
         data = _load(fpath)
-        if not data.get("body"):
-            continue
+        if data.get("body"):
+            page = os.path.relpath(fpath, out)[: -len(".fjson")].replace(os.sep, "/")
+            entries.append((fpath, page, data))
+
+    package_sizes = Counter(page_parts(page)[0] for _, page, _ in entries)
+    for fpath, page, data in entries:
+        frontmatter = _frontmatter(page, data, class_pages, package_sizes)
         with open(fpath[: -len(".fjson")] + ".mdx", "w") as f:
-            f.write(_html_to_mdx(data.get("title", ""), data["body"]))
+            f.write(_html_to_mdx(frontmatter, data["body"]))
         os.remove(fpath)
+    return sorted(page for _, page, _ in entries)

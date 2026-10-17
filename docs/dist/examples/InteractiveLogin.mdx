@@ -4,7 +4,7 @@ title: "Interactive Login"
 
 Interactive login in `auth0‑server‑python` is a two‑step process. First, you start the login flow by obtaining an authorization URL; then, after the user authenticates at Auth0 and is redirected back, you complete the login flow to exchange the authorization code for tokens.
 
-This guide covers how to customize the authorization parameters, pass custom app state, enable **Pushed Authorization Requests (PAR)** and **Rich Authorization Requests (RAR)**, supply store options, and log in to an organization. For organization-specific flows, see [OrganizationLogin.md](https://github.com/auth0/auth0-server-python/blob/main/examples/OrganizationLogin.md).
+This guide covers how to customize the authorization parameters, pass custom app state, enable **Pushed Authorization Requests (PAR)** and **Rich Authorization Requests (RAR)**, supply store options, and log in to an organization. For organization-specific flows, see [OrganizationLogin.md](/docs/sdk/python/server/examples/OrganizationLogin) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/OrganizationLogin.md)).
 
 ## 1. Starting Interactive Login
 
@@ -26,7 +26,7 @@ server_client = ServerClient(
 )
 ```
 
-`ServerClient` creates no default stores. Provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](https://github.com/auth0/auth0-server-python/blob/main/examples/ConfigureStore.md).
+`ServerClient` creates no default stores. Provide a `state_store` and a `transaction_store`. See [ConfigureStore.md](/docs/sdk/python/server/examples/ConfigureStore) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/ConfigureStore.md)).
 
 Now call `start_interactive_login()` to obtain the authorization URL and redirect the user:
 ```python
@@ -197,4 +197,4 @@ The `callback_url` must include the necessary parameters (`state` and `code`) th
 
 ## 8. Organizations
 
-For dedicated-org and multi-org login patterns, accepting invitations, handling organization errors, and reading org data from the session, see [OrganizationLogin.md](https://github.com/auth0/auth0-server-python/blob/main/examples/OrganizationLogin.md).
+For dedicated-org and multi-org login patterns, accepting invitations, handling organization errors, and reading org data from the session, see [OrganizationLogin.md](/docs/sdk/python/server/examples/OrganizationLogin) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/OrganizationLogin.md)).

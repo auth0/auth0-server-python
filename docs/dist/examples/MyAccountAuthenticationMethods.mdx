@@ -6,13 +6,13 @@ The [My Account API](https://auth0.com/docs/manage-users/my-account-api) lets a 
 
 <Note>
 
-This is a different My Account resource from [Connected Accounts](https://github.com/auth0/auth0-server-python/blob/main/examples/ConnectedAccounts.md) (Token Vault). Connected-accounts management is exposed as convenience methods on `ServerClient`; **authentication-method management is on `MyAccountClient` directly**, because each call takes a user access token you obtain yourself. The two share the same My Account setup (activation, MRRT, scopes, `MyAccountApiError`) — see [ConnectedAccounts.md → Pre-requisites](https://github.com/auth0/auth0-server-python/blob/main/examples/ConnectedAccounts.md#pre-requisites) for that common setup.
+This is a different My Account resource from [Connected Accounts](/docs/sdk/python/server/examples/ConnectedAccounts) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/ConnectedAccounts.md)) (Token Vault). Connected-accounts management is exposed as convenience methods on `ServerClient`; **authentication-method management is on `MyAccountClient` directly**, because each call takes a user access token you obtain yourself. The two share the same My Account setup (activation, MRRT, scopes, `MyAccountApiError`) — see [ConnectedAccounts.md → Pre-requisites](/docs/sdk/python/server/examples/ConnectedAccounts#pre-requisites) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/ConnectedAccounts.md#pre-requisites)) for that common setup.
 
 </Note>
 
 <Note>
 
-To **sign in** with a passkey (rather than manage one), see [examples/Passkeys.md](https://github.com/auth0/auth0-server-python/blob/main/examples/Passkeys.md). To **bind these calls to a held key**, pass an optional `dpop_key` — see [DPoP](#dpop) below.
+To **sign in** with a passkey (rather than manage one), see [examples/Passkeys.md](/docs/sdk/python/server/examples/Passkeys) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/Passkeys.md)). To **bind these calls to a held key**, pass an optional `dpop_key` — see [DPoP](#dpop) below.
 
 </Note>
 
@@ -47,7 +47,7 @@ See [Auth0 Docs → Scope](https://auth0.com/docs/manage-users/my-account-api#sc
 
 <Tip>
 
-As with Connected Accounts, set the default `scope` for the My Account audience when constructing `ServerClient` to avoid a fresh token request per scope. See [ConnectedAccounts.md → A note about scopes](https://github.com/auth0/auth0-server-python/blob/main/examples/ConnectedAccounts.md#a-note-about-scopes).
+As with Connected Accounts, set the default `scope` for the My Account audience when constructing `ServerClient` to avoid a fresh token request per scope. See [ConnectedAccounts.md → A note about scopes](/docs/sdk/python/server/examples/ConnectedAccounts#a-note-about-scopes) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/ConnectedAccounts.md#a-note-about-scopes)).
 
 </Tip>
 

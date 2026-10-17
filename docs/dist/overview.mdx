@@ -1,5 +1,5 @@
 ---
-title: "auth0-server-python"
+title: "Overview"
 ---
 
 The Auth0 Server Python SDK is a library for implementing user authentication in Python applications.
@@ -115,7 +115,7 @@ auth0 = ServerClient(
 
 `use_mtls=True` requires an Enterprise tenant with the Highly Regulated Identity add-on, a `self_managed_certs` custom domain, and mTLS endpoint aliases enabled. It cannot be combined with `client_secret`, `client_assertion_signing_key`, or a per-call `dpop_key`. Each raises `ConfigurationError`. See the [Auth0 mTLS configuration docs](https://auth0.com/docs/get-started/applications/configure-mtls) for tenant-side setup steps.
 
-See [examples/MutualTLS.md](https://github.com/auth0/auth0-server-python/blob/main/examples/MutualTLS.md) for the full setup guide, certificate generation, and token sender-constraining details.
+See [examples/MutualTLS.md](/docs/sdk/python/server/examples/MutualTLS) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/MutualTLS.md)) for the full setup guide, certificate generation, and token sender-constraining details.
 
 ### 3. Add login to your Application (interactive)
 
@@ -171,11 +171,11 @@ async def callback(request: Request):
 
 #### Organizations
 
-The SDK supports [Auth0 Organizations](https://auth0.com/docs/organizations) with first-class `organization` and `invitation` parameters on `ServerClient` and `StartInteractiveLoginOptions`. Token claim validation is enforced automatically at callback. For dedicated-org and multi-org patterns, invitation flows, error handling, and reading org data from the session, see [examples/OrganizationLogin.md](https://github.com/auth0/auth0-server-python/blob/main/examples/OrganizationLogin.md).
+The SDK supports [Auth0 Organizations](https://auth0.com/docs/organizations) with first-class `organization` and `invitation` parameters on `ServerClient` and `StartInteractiveLoginOptions`. Token claim validation is enforced automatically at callback. For dedicated-org and multi-org patterns, invitation flows, error handling, and reading org data from the session, see [examples/OrganizationLogin.md](/docs/sdk/python/server/examples/OrganizationLogin) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/OrganizationLogin.md)).
 
 #### Experiment Center Overrides
 
-[Auth0 Experiment Center](https://auth0.com/docs/customize/experiment-center/overview) runs A/B tests on your login flows and assigns each user to a variation automatically. To force a specific variation for a single login, pass `experiment_id`, `variation_id`, and optionally `segment_id` as authorization params on the `start_interactive_login()` call. Experiment Center is an Enterprise feature. For per-call usage and the segment-targeting variant, see [examples/InteractiveLogin.md](https://github.com/auth0/auth0-server-python/blob/main/examples/InteractiveLogin.md#experiment-center-overrides).
+[Auth0 Experiment Center](https://auth0.com/docs/customize/experiment-center/overview) runs A/B tests on your login flows and assigns each user to a variation automatically. To force a specific variation for a single login, pass `experiment_id`, `variation_id`, and optionally `segment_id` as authorization params on the `start_interactive_login()` call. Experiment Center is an Enterprise feature. For per-call usage and the segment-targeting variant, see [examples/InteractiveLogin.md](/docs/sdk/python/server/examples/InteractiveLogin#experiment-center-overrides) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/InteractiveLogin.md#experiment-center-overrides)).
 
 ### 4. Login with Custom Token Exchange
 
@@ -218,10 +218,10 @@ print(response.access_token)
 
 Building on token exchange, the SDK also supports:
 
-- **[Delegation and Impersonation](https://github.com/auth0/auth0-server-python/blob/main/examples/CustomTokenExchange.md#3-actor-tokens-delegation)** - exchange with an `actor_token` so the issued tokens record who is acting on whose behalf (the `act` claim).
-- **[Impersonation via Session Transfer (STT)](https://github.com/auth0/auth0-server-python/blob/main/examples/CustomTokenExchange.md#8-impersonation-via-session-transfer-stt)** - mint a Session Transfer Token to log an agent into a target app as a customer, via `request_session_transfer_token()` and `build_session_transfer_redirect()`.
+- **[Delegation and Impersonation](/docs/sdk/python/server/examples/CustomTokenExchange#3-actor-tokens-delegation) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/CustomTokenExchange.md#3-actor-tokens-delegation))** - exchange with an `actor_token` so the issued tokens record who is acting on whose behalf (the `act` claim).
+- **[Impersonation via Session Transfer (STT)](/docs/sdk/python/server/examples/CustomTokenExchange#8-impersonation-via-session-transfer-stt) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/CustomTokenExchange.md#8-impersonation-via-session-transfer-stt))** - mint a Session Transfer Token to log an agent into a target app as a customer, via `request_session_transfer_token()` and `build_session_transfer_redirect()`.
 
-For more details and examples, see [examples/CustomTokenExchange.md](https://github.com/auth0/auth0-server-python/blob/main/examples/CustomTokenExchange.md).
+For more details and examples, see [examples/CustomTokenExchange.md](/docs/sdk/python/server/examples/CustomTokenExchange) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/CustomTokenExchange.md)).
 
 ### 5. Multiple Custom Domains (MCD)
 
@@ -249,37 +249,37 @@ auth0 = ServerClient(
 
 The SDK handles per-domain OIDC discovery, JWKS fetching, issuer validation, and session isolation automatically. Static string domains continue to work unchanged.
 
-For more details and examples, see [examples/MultipleCustomDomains.md](https://github.com/auth0/auth0-server-python/blob/main/examples/MultipleCustomDomains.md).
+For more details and examples, see [examples/MultipleCustomDomains.md](/docs/sdk/python/server/examples/MultipleCustomDomains) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/MultipleCustomDomains.md)).
 
 ### 6. Session Expiry from the Upstream IdP
 
 For enterprise connections, the upstream identity provider can cap how long a user's session lives. When the connection is configured to honor it, Auth0 includes a `session_expiry` claim in the ID token, and the SDK enforces this ceiling on every session read. Once it is reached, `get_user()` and `get_session()` return `None`, and `get_access_token()` raises an `AccessTokenError` with code `session_expired`. If the asserted ceiling is already in the past at login, `complete_interactive_login()` raises a `SessionExpiredError` instead of persisting an already-expired session.
 
-For more details and examples, see [examples/RetrievingData.md](https://github.com/auth0/auth0-server-python/blob/main/examples/RetrievingData.md#session-expiry-from-the-upstream-idp).
+For more details and examples, see [examples/RetrievingData.md](/docs/sdk/python/server/examples/RetrievingData#session-expiry-from-the-upstream-idp) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/RetrievingData.md#session-expiry-from-the-upstream-idp)).
 
 ### 7. Passkey Authentication
 
-Sign users up or in with [WebAuthn](https://www.w3.org/TR/webauthn-2/) passkeys (Touch ID, Face ID, Windows Hello, or a security key) instead of a password, via [Auth0 passkeys](https://auth0.com/docs/authenticate/database-connections/passkeys). The ceremony is two steps — request a challenge, sign it in the browser, then complete sign-in — and establishes a server-side session like every other login path. For the signup and login flows, organizations, step-up MFA, and error handling, see [examples/Passkeys.md](https://github.com/auth0/auth0-server-python/blob/main/examples/Passkeys.md).
+Sign users up or in with [WebAuthn](https://www.w3.org/TR/webauthn-2/) passkeys (Touch ID, Face ID, Windows Hello, or a security key) instead of a password, via [Auth0 passkeys](https://auth0.com/docs/authenticate/database-connections/passkeys). The ceremony is two steps — request a challenge, sign it in the browser, then complete sign-in — and establishes a server-side session like every other login path. For the signup and login flows, organizations, step-up MFA, and error handling, see [examples/Passkeys.md](/docs/sdk/python/server/examples/Passkeys) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/Passkeys.md)).
 
 ### 8. My Account API — Authentication Methods
 
-Let a logged-in user manage their own enrolled authentication methods — enroll a new passkey (or other factor), list, rename, and delete — via the [My Account API](https://auth0.com/docs/manage-users/my-account-api). For obtaining a scoped token, the enroll/verify ceremony, listing, updating, deleting, and error handling, see [examples/MyAccountAuthenticationMethods.md](https://github.com/auth0/auth0-server-python/blob/main/examples/MyAccountAuthenticationMethods.md).
+Let a logged-in user manage their own enrolled authentication methods — enroll a new passkey (or other factor), list, rename, and delete — via the [My Account API](https://auth0.com/docs/manage-users/my-account-api). For obtaining a scoped token, the enroll/verify ceremony, listing, updating, deleting, and error handling, see [examples/MyAccountAuthenticationMethods.md](/docs/sdk/python/server/examples/MyAccountAuthenticationMethods) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/MyAccountAuthenticationMethods.md)).
 
 ### 9. DPoP — Sender-Constrained Tokens (Passkeys & MyAccount)
 
-Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. DPoP is supported for Passkey sign-in (`signin_with_passkey`) and the authentication-methods/factors methods on `MyAccountClient`. For key generation and usage, see [examples/Passkeys.md](https://github.com/auth0/auth0-server-python/blob/main/examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional) and [examples/MyAccountAuthenticationMethods.md](https://github.com/auth0/auth0-server-python/blob/main/examples/MyAccountAuthenticationMethods.md#dpop).
+Bind tokens to a key your server holds ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449)) so a stolen token alone cannot be replayed. DPoP is supported for Passkey sign-in (`signin_with_passkey`) and the authentication-methods/factors methods on `MyAccountClient`. For key generation and usage, see [examples/Passkeys.md](/docs/sdk/python/server/examples/Passkeys#3-dpop-bound-passkey-tokens-optional) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/Passkeys.md#3-dpop-bound-passkey-tokens-optional)) and [examples/MyAccountAuthenticationMethods.md](/docs/sdk/python/server/examples/MyAccountAuthenticationMethods#dpop) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/MyAccountAuthenticationMethods.md#dpop)).
 
 ### 10. Passwordless Authentication
 
-Sign users in with a one-time code sent by email or SMS, or with a magic link sent by email, via [Auth0 embedded passwordless login](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints). OTP verification and the magic-link callback each establish a server-side session like every other login path. For prerequisites, both flows, custom scopes/audiences, step-up MFA, and error handling, see [examples/Passwordless.md](https://github.com/auth0/auth0-server-python/blob/main/examples/Passwordless.md).
+Sign users in with a one-time code sent by email or SMS, or with a magic link sent by email, via [Auth0 embedded passwordless login](https://auth0.com/docs/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints). OTP verification and the magic-link callback each establish a server-side session like every other login path. For prerequisites, both flows, custom scopes/audiences, step-up MFA, and error handling, see [examples/Passwordless.md](/docs/sdk/python/server/examples/Passwordless) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/Passwordless.md)).
 
 ### 11. Anonymous Sessions
 
-Give a visitor an Auth0 `anon@<uuid>` identity before they log in, so cart/preference metadata attached pre-login is available to Post-Login Actions once they do. Requires a separate `anonymous_store` instance, never the same instance as `state_store`, and a tenant-level paid add-on flag. For setup, the token renewal ladder, login injection, and the store-isolation requirement, see [examples/AnonymousSessions.md](https://github.com/auth0/auth0-server-python/blob/main/examples/AnonymousSessions.md).
+Give a visitor an Auth0 `anon@<uuid>` identity before they log in, so cart/preference metadata attached pre-login is available to Post-Login Actions once they do. Requires a separate `anonymous_store` instance, never the same instance as `state_store`, and a tenant-level paid add-on flag. For setup, the token renewal ladder, login injection, and the store-isolation requirement, see [examples/AnonymousSessions.md](/docs/sdk/python/server/examples/AnonymousSessions) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/AnonymousSessions.md)).
 
 ### 12. Enterprise Connect (Embedded Login)
 
-Sign users in through their company's identity provider while **your application owns the session**. Opt in with `enterprise_connect=True`; Auth0 acts as a pure SSO relay and issues no refresh token. `start_enterprise_login()` discovers whether an email domain is managed and returns an authorization URL or `None`, and `complete_interactive_login()` returns the verified claims and access token for your app to build its own session from. Early Access. For discovery, the callback contract, multi-tenant `org_id` checks, and federated logout, see [examples/EnterpriseConnect.md](https://github.com/auth0/auth0-server-python/blob/main/examples/EnterpriseConnect.md).
+Sign users in through their company's identity provider while **your application owns the session**. Opt in with `enterprise_connect=True`; Auth0 acts as a pure SSO relay and issues no refresh token. `start_enterprise_login()` discovers whether an email domain is managed and returns an authorization URL or `None`, and `complete_interactive_login()` returns the verified claims and access token for your app to build its own session from. Early Access. For discovery, the callback contract, multi-tenant `org_id` checks, and federated logout, see [examples/EnterpriseConnect.md](/docs/sdk/python/server/examples/EnterpriseConnect) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/examples/EnterpriseConnect.md)).
 
 ## Feedback
 
@@ -289,7 +289,7 @@ We appreciate feedback and contribution to this repo! Before you get started, pl
 
 - [Auth0's general contribution guidelines](https://github.com/auth0/open-source-template/blob/master/GENERAL-CONTRIBUTING.md)
 - [Auth0's code of conduct guidelines](https://github.com/auth0/open-source-template/blob/master/CODE-OF-CONDUCT.md)
-- [This repo's contribution guide](https://github.com/auth0/auth0-server-python/blob/main/CONTRIBUTING.md)
+- [This repo's contribution guide](/docs/sdk/python/server/CONTRIBUTING) ([GitHub](https://github.com/auth0/auth0-server-python/blob/main/CONTRIBUTING.md))
 
 ### Raise an issue
 
