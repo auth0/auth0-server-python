@@ -136,7 +136,7 @@ def map_anonymous_error(
     description = error_data.get("error_description") or f"Anonymous {operation} failed"
 
     if code in ("session_expired", "invalid_session_token"):
-        return _AnonymousSessionExpired(description)
+        return _AnonymousSessionExpired(description, code=code)
 
     if operation == "create":
         return AnonymousSessionCreateError(description, code=code or "anonymous_create_error", cause=error_data)
