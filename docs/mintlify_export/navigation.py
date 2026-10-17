@@ -1,7 +1,8 @@
 """Build the API reference part of the navigation from the generated pages."""
 
+from .style import GROUP_ICON
+
 PLACEHOLDER = "{reference}"
-GROUP_ICON = "folder"
 
 
 def page_parts(page):
@@ -10,37 +11,40 @@ def page_parts(page):
     return parts[:-1] if parts and parts[-1] == "index" else parts
 
 
-def reference_tree(site_dir, pages, first):
-    """Group reference pages by top-level package.
+def _items(site_dir, children):
+    groups, leaves = [], []
+    for name in sorted(children):
+        entry = children[name]
+        if not entry["children"]:
+            leaves.append(f"{site_dir}/{entry['page']}")
+            continue
+        group = {
+            "group": name,
+            "icon": GROUP_ICON,
+            "expanded": True,
+            "pages": _items(site_dir, entry["children"]),
+        }
+        if entry["page"]:
+            group["root"] = f"{site_dir}/{entry['page']}"
+        groups.append(group)
+    return groups + leaves
 
-    A package with several pages becomes a group, a package with one page is
-    listed directly after the groups. Each part sorts by name, except that pages
-    listed in ``first`` come first, in that order.
+
+def reference_tree(site_dir, pages):
+    """Mirror the package hierarchy of the reference pages.
+
+    A package or subpackage with pages below it becomes a group named after it,
+    and a module becomes a page. Groups sort before pages, each by name, as in
+    a file browser.
     """
-    rank = {page: i for i, page in enumerate(first)}
-
-    def order(page):
-        return rank.get(page, len(rank))
-
-    packages = {}
+    root = {}
     for page in pages:
-        packages.setdefault(page_parts(page)[0], []).append(page)
-
-    items = []
-    for package, members in packages.items():
-        members.sort(key=lambda page: (order(page), page))
-        urls = [f"{site_dir}/{page}" for page in members]
-        if len(urls) == 1:
-            node = urls[0]
-        else:
-            node = {
-                "group": package.replace("_", " ").title(),
-                "icon": GROUP_ICON,
-                "expanded": True,
-                "pages": urls,
-            }
-        items.append((isinstance(node, str), order(members[0]), package, node))
-    return [item[-1] for item in sorted(items, key=lambda item: item[:3])]
+        children = root
+        for name in page_parts(page)[:-1]:
+            children = children.setdefault(name, {"page": None, "children": {}})["children"]
+        leaf = children.setdefault(page_parts(page)[-1], {"page": None, "children": {}})
+        leaf["page"] = page
+    return _items(site_dir, root)
 
 
 def fill(nodes, items):

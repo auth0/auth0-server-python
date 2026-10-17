@@ -32,19 +32,7 @@
           "expanded": true,
           "pages": [
             {
-              "group": "Auth Server",
-              "icon": "folder",
-              "expanded": true,
-              "pages": [
-                "docs/sdk/python/server/reference/auth_server/server_client/index",
-                "docs/sdk/python/server/reference/auth_server/anonymous/client/index",
-                "docs/sdk/python/server/reference/auth_server/mfa_client/index",
-                "docs/sdk/python/server/reference/auth_server/my_account_client/index",
-                "docs/sdk/python/server/reference/auth_server/passwordless_client/index"
-              ]
-            },
-            {
-              "group": "Auth Schemes",
+              "group": "auth_schemes",
               "icon": "folder",
               "expanded": true,
               "pages": [
@@ -54,20 +42,60 @@
               ]
             },
             {
-              "group": "Store",
+              "group": "auth_server",
               "icon": "folder",
               "expanded": true,
               "pages": [
-                "docs/sdk/python/server/reference/store/abstractdatastore/index",
-                "docs/sdk/python/server/reference/store/statestore/index",
-                "docs/sdk/python/server/reference/store/transactionstore/index"
+                {
+                  "group": "anonymous",
+                  "icon": "folder",
+                  "expanded": true,
+                  "pages": [
+                    "docs/sdk/python/server/reference/auth_server/anonymous/client/index"
+                  ]
+                },
+                "docs/sdk/python/server/reference/auth_server/mfa_client/index",
+                "docs/sdk/python/server/reference/auth_server/my_account_client/index",
+                "docs/sdk/python/server/reference/auth_server/passwordless_client/index",
+                "docs/sdk/python/server/reference/auth_server/server_client/index"
+              ]
+            },
+            {
+              "group": "encryption",
+              "icon": "folder",
+              "expanded": true,
+              "pages": [
+                "docs/sdk/python/server/reference/encryption/encrypt/index"
+              ]
+            },
+            {
+              "group": "store",
+              "icon": "folder",
+              "expanded": true,
+              "pages": [
+                {
+                  "group": "abstract",
+                  "icon": "folder",
+                  "expanded": true,
+                  "pages": [
+                    "docs/sdk/python/server/reference/store/abstract/abstractdatastore/index",
+                    "docs/sdk/python/server/reference/store/abstract/statestore/index",
+                    "docs/sdk/python/server/reference/store/abstract/transactionstore/index"
+                  ]
+                }
+              ]
+            },
+            {
+              "group": "utils",
+              "icon": "folder",
+              "expanded": true,
+              "pages": [
+                "docs/sdk/python/server/reference/utils/helpers/index"
               ]
             },
             "docs/sdk/python/server/reference/auth_types/index",
-            "docs/sdk/python/server/reference/encryption/encrypt/index",
             "docs/sdk/python/server/reference/error/index",
-            "docs/sdk/python/server/reference/telemetry/index",
-            "docs/sdk/python/server/reference/utils/helpers/index"
+            "docs/sdk/python/server/reference/telemetry/index"
           ]
         },
         "docs/sdk/python/server/CONTRIBUTING"

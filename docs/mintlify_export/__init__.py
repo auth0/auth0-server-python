@@ -35,10 +35,10 @@ def _on_build_finished(app, exception):
         for classes in cfg.mintlify_class_splits.values()
         for cls in classes
     }
-    pages = reference.write_mdx(out, class_pages)
-    tree = navigation.reference_tree(
-        cfg.mintlify_site_dir, pages, cfg.mintlify_reference_first
+    pages = reference.write_mdx(
+        out, class_pages, cfg.mintlify_site_dir, cfg.mintlify_import_root
     )
+    tree = navigation.reference_tree(cfg.mintlify_site_dir, pages)
 
     nav_path = os.path.join(out, "navigation.json")
     with open(nav_path, "w") as f:
@@ -48,6 +48,8 @@ def _on_build_finished(app, exception):
 
 
 def setup(app):
+    # Top-level import package, e.g. "my_sdk". Empty turns the import lines off.
+    app.add_config_value("mintlify_import_root", "", "")
     # Directory prefix of every page in the docs site, e.g. "docs/sdk/python/server".
     app.add_config_value("mintlify_site_dir", "", "")
     # Navigation tree written to navigation.json. The string "{reference}" is replaced by
@@ -59,8 +61,6 @@ def setup(app):
     app.add_config_value("mintlify_guides_root", "", "")
     # Base URL that relative Markdown links are rewritten to.
     app.add_config_value("mintlify_github_blob_url", "", "")
-    # Optional. Reference page paths (no extension) to list first, in this order.
-    app.add_config_value("mintlify_reference_first", [], "")
     # Reference page paths (no extension) to drop.
     app.add_config_value("mintlify_remove_pages", [], "")
     # Module page path -> list of {class_id, title, output_path} per-class pages.

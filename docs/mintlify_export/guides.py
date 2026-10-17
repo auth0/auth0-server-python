@@ -4,6 +4,8 @@ import os
 import posixpath
 import re
 
+from .style import as_mdx_element, guide_css
+
 # GitHub alert type to callout component.
 ALERT_COMPONENTS = {
     "NOTE": "Note",
@@ -62,7 +64,7 @@ def _rewrite_links(lines, source_dir, blob_url, guide_urls):
     return out
 
 
-def markdown_to_mdx(md, title, source_dir, blob_url, guide_urls):
+def markdown_to_mdx(md, title, source_dir, blob_url, guide_urls, css):
     """Return an MDX page for ``md``.
 
     ``source_dir`` is the Markdown file's directory relative to the repo root.
@@ -82,7 +84,8 @@ def markdown_to_mdx(md, title, source_dir, blob_url, guide_urls):
 
     lines = _rewrite_links(_convert_alerts(lines), source_dir, blob_url, guide_urls)
     safe_title = title.replace('"', '\\"')
-    return f'---\ntitle: "{safe_title}"\n---\n\n' + "\n".join(lines).strip() + "\n"
+    body = "\n".join(lines).strip()
+    return f'---\ntitle: "{safe_title}"\n---\n\n{as_mdx_element(css)}\n\n{body}\n'
 
 
 def write_pages(out, root, pages, blob_url, site_dir):
@@ -94,6 +97,7 @@ def write_pages(out, root, pages, blob_url, site_dir):
     guide_urls = {
         source: f"/{site_dir}/{page_path}" for page_path, (source, _) in pages.items()
     }
+    css = guide_css(site_dir)
     for page_path, (source, title) in pages.items():
         with open(os.path.join(root, source)) as f:
             md = f.read()
@@ -105,6 +109,6 @@ def write_pages(out, root, pages, blob_url, site_dir):
         with open(mdx_path, "w") as f:
             f.write(
                 markdown_to_mdx(
-                    md, title, posixpath.dirname(source), blob_url, guide_urls
+                    md, title, posixpath.dirname(source), blob_url, guide_urls, css
                 )
             )

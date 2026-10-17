@@ -4,12 +4,9 @@ import json
 import os
 import posixpath
 import re
-from collections import Counter
 
 from .navigation import page_parts
-
-MODULE_ICON = "file-code"
-CLASS_ICON = "cube"
+from .style import CLASS_ICON, MODULE_ICON, as_html_tag, reference_css
 
 
 def _load(path):
@@ -115,7 +112,7 @@ def split_pages(out, splits):
         os.remove(source_fpath)
 
 
-def _html_to_mdx(frontmatter, html):
+def _html_to_mdx(frontmatter, html, css):
     html = re.sub(r'<a class="headerlink"[^>]*>.*?</a>', "", html)
     # Drop the first <h1>, the docs site renders the title itself.
     html = re.sub(r"<h1[^>]*>.*?</h1>", "", html, count=1, flags=re.DOTALL)
@@ -125,40 +122,61 @@ def _html_to_mdx(frontmatter, html):
     )
     return (
         f"---\n{header}---\n\n"
-        f"export const rawHtml = {json.dumps(html.strip())};\n\n"
+        f"export const rawHtml = {json.dumps(as_html_tag(css) + html.strip())};\n\n"
         "<div dangerouslySetInnerHTML={{__html: rawHtml}} />\n"
     )
 
 
-def _frontmatter(page, data, class_pages, package_sizes):
+_TOP_LEVEL_SIGNATURE = re.compile(
+    r'(<dl class="py (?:class|function|exception)">\s*'
+    r'<dt class="sig sig-object py" id="([^"]+)">)'
+)
+
+
+def _add_import_lines(html, module, root):
+    """Put ``from <root>.<module> import <Name>`` at the top of each top-level signature."""
+
+    def repl(match):
+        parent, _, name = match.group(2).rpartition(".")
+        if parent != module:
+            return match.group(0)
+        line = (
+            '<span class="sig-import"><span class="kw">from</span> '
+            f'<span class="mod">{root}.{module}</span> '
+            f'<span class="kw">import</span> <span class="nm">{name}</span></span>'
+        )
+        return match.group(1) + line
+
+    return _TOP_LEVEL_SIGNATURE.sub(repl, html)
+
+
+def _frontmatter(page, data, class_pages):
     if page in class_pages:
         name = data.get("title", "")
         return {"title": name, "sidebarTitle": name, "icon": CLASS_ICON}
     parts = page_parts(page)
-    module = ".".join(parts)
-    # Inside a group the package prefix is redundant, a lone page keeps the full path.
-    label = ".".join(parts[1:]) if package_sizes[parts[0]] > 1 else module
-    return {"title": module, "sidebarTitle": label or module, "icon": MODULE_ICON}
+    return {"title": ".".join(parts), "sidebarTitle": parts[-1], "icon": MODULE_ICON}
 
 
-def write_mdx(out, class_pages):
+def write_mdx(out, class_pages, site_dir, import_root):
     """Write an MDX page beside each reference page, then remove the JSON.
 
     Module pages are titled by module path with a module icon. ``class_pages``
     are page paths that hold a single class, titled by class with a class icon.
     Returns the written page paths, without extension.
     """
-    entries = []
-    for fpath in _page_files(out):
+    css = reference_css(site_dir)
+    pages = []
+    for fpath in list(_page_files(out)):
         data = _load(fpath)
-        if data.get("body"):
-            page = os.path.relpath(fpath, out)[: -len(".fjson")].replace(os.sep, "/")
-            entries.append((fpath, page, data))
-
-    package_sizes = Counter(page_parts(page)[0] for _, page, _ in entries)
-    for fpath, page, data in entries:
-        frontmatter = _frontmatter(page, data, class_pages, package_sizes)
+        if not data.get("body"):
+            continue
+        page = os.path.relpath(fpath, out)[: -len(".fjson")].replace(os.sep, "/")
+        parts = page_parts(page)
+        module = ".".join(parts[:-1] if page in class_pages else parts)
+        body = _add_import_lines(data["body"], module, import_root) if import_root else data["body"]
         with open(fpath[: -len(".fjson")] + ".mdx", "w") as f:
-            f.write(_html_to_mdx(frontmatter, data["body"]))
+            f.write(_html_to_mdx(_frontmatter(page, data, class_pages), body, css))
         os.remove(fpath)
-    return sorted(page for _, page, _ in entries)
+        pages.append(page)
+    return sorted(pages)

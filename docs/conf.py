@@ -75,13 +75,9 @@ exclude_patterns = [
 SITE_DIR = "docs/sdk/python/server"
 
 mintlify_site_dir = SITE_DIR
+mintlify_import_root = "auth0_server_python"
 mintlify_github_blob_url = "https://github.com/auth0/auth0-server-python/blob/main"
 mintlify_guides_root = os.path.abspath("..")
-
-# Optional. Reference pages (and their package group) to list first.
-mintlify_reference_first = [
-    "reference/auth_server/server_client/index",
-]
 
 mintlify_remove_pages = []
 
@@ -92,17 +88,17 @@ mintlify_class_splits = {
         {
             "class_id": "store.abstract.AbstractDataStore",
             "title": "AbstractDataStore",
-            "output_path": "reference/store/abstractdatastore/index",
+            "output_path": "reference/store/abstract/abstractdatastore/index",
         },
         {
             "class_id": "store.abstract.StateStore",
             "title": "StateStore",
-            "output_path": "reference/store/statestore/index",
+            "output_path": "reference/store/abstract/statestore/index",
         },
         {
             "class_id": "store.abstract.TransactionStore",
             "title": "TransactionStore",
-            "output_path": "reference/store/transactionstore/index",
+            "output_path": "reference/store/abstract/transactionstore/index",
         },
     ],
 }

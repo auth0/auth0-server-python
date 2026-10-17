@@ -2,6 +2,8 @@
 title: "Anonymous Sessions"
 ---
 
+<div dangerouslySetInnerHTML={{__html: "<style>\n:root{--sig-keyword:#7e22ce;--sig-name:#1d4ed8;--sig-type:#0f766e;--sig-default:#b45309;--sig-muted:#64748b}\n.dark{--sig-keyword:#c084fc;--sig-name:#60a5fa;--sig-type:#5eead4;--sig-default:#fbbf24;--sig-muted:#94a3b8}\nli:has(a[href^=\"/docs/sdk/python/server/\"])>button svg[style*=\"/folder.svg\"]{background-color:var(--sig-default)}\na[href^=\"/docs/sdk/python/server/\"] svg[style*=\"/file-code.svg\"]{background-color:var(--sig-name)}\na[href^=\"/docs/sdk/python/server/\"] svg[style*=\"/cube.svg\"]{background-color:var(--sig-keyword)}\n</style>\n"}} />
+
 Anonymous Sessions give a visitor an Auth0 identity **before they log in**. Each visitor gets a persistent `anon@<uuid>` subject plus an access token, with up to 1 KB of key/value metadata attached at creation. At login, the SDK carries the session to Auth0 as a short-lived transfer ticket so Post-Login / Pre-User-Registration Actions can read the anonymous data via `event.anonymous_session`. Nothing migrates onto the real user profile automatically. The Action author decides what to persist.
 
 ## Table of Contents
