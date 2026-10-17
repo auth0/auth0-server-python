@@ -28,16 +28,8 @@ def _on_build_finished(app, exception):
         cfg.mintlify_site_dir,
     )
     reference.remove_pages(out, cfg.mintlify_remove_pages)
-    reference.absolutize_links(out, cfg.mintlify_site_dir, cfg.mintlify_class_splits)
-    reference.split_pages(out, cfg.mintlify_class_splits)
-    class_pages = {
-        cls["output_path"]
-        for classes in cfg.mintlify_class_splits.values()
-        for cls in classes
-    }
-    pages = reference.write_mdx(
-        out, class_pages, cfg.mintlify_site_dir, cfg.mintlify_import_root
-    )
+    reference.absolutize_links(out, cfg.mintlify_site_dir)
+    pages = reference.write_mdx(out, cfg.mintlify_site_dir)
     tree = navigation.reference_tree(cfg.mintlify_site_dir, pages)
 
     nav_path = os.path.join(out, "navigation.json")
@@ -48,8 +40,6 @@ def _on_build_finished(app, exception):
 
 
 def setup(app):
-    # Top-level import package, e.g. "my_sdk". Empty turns the import lines off.
-    app.add_config_value("mintlify_import_root", "", "")
     # Directory prefix of every page in the docs site, e.g. "docs/sdk/python/server".
     app.add_config_value("mintlify_site_dir", "", "")
     # Navigation tree written to navigation.json. The string "{reference}" is replaced by
@@ -63,7 +53,5 @@ def setup(app):
     app.add_config_value("mintlify_github_blob_url", "", "")
     # Reference page paths (no extension) to drop.
     app.add_config_value("mintlify_remove_pages", [], "")
-    # Module page path -> list of {class_id, title, output_path} per-class pages.
-    app.add_config_value("mintlify_class_splits", {}, "")
     app.connect("build-finished", _on_build_finished)
     return {"parallel_read_safe": True, "parallel_write_safe": True}

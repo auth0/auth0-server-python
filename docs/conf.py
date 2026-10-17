@@ -1,3 +1,4 @@
+import ast
 import os
 import sys
 
@@ -16,6 +17,7 @@ release = "1.0.0b18"
 extensions = [
     "autoapi.extension",
     "sphinx.ext.napoleon",
+    "sphinx.ext.linkcode",
     "mintlify_export",
 ]
 
@@ -30,18 +32,71 @@ autoapi_options = [
     "members",
     "undoc-members",
     "show-inheritance",
-    "show-module-summary",
 ]
 autoapi_member_order = "groupwise"
 autoapi_keep_files = True
 autoapi_template_dir = "_templates/autoapi"
 autoapi_python_class_content = "class"
 
+# Top-level import package, shown in each module's import block.
+IMPORT_ROOT = "auth0_server_python"
+
+
+def autoapi_prepare_jinja_env(jinja_env):
+    jinja_env.globals["import_root"] = IMPORT_ROOT
+
+
 
 def autoapi_skip_member(app, what, name, obj, skip, options):
     if what == "class" and name.endswith(".Config"):
         return True
     return skip
+
+
+# -- Signatures ---------------------------------------------------------
+
+# Show `Name(...)` not `module.Name(...)`. The import block gives the full path.
+add_module_names = False
+
+# -- Source links -------------------------------------------------------
+
+REPO_ROOT = os.path.abspath("..")
+GITHUB_BLOB_URL = "https://github.com/auth0/auth0-server-python/blob/main"
+
+
+def _definition_line(path, fullname):
+    """Line where ``fullname`` (``Class.method``) is defined as a class or function, or None."""
+    with open(path) as f:
+        nodes = ast.parse(f.read()).body
+    node = None
+    for name in fullname.split("."):
+        node = next(
+            (
+                n
+                for n in nodes
+                if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                and n.name == name
+            ),
+            None,
+        )
+        if node is None:
+            return None
+        nodes = node.body
+    return node.lineno if node else None
+
+
+def linkcode_resolve(domain, info):
+    if domain != "py" or not info.get("module"):
+        return None
+    base = os.path.join(REPO_ROOT, "src", IMPORT_ROOT, *info["module"].split("."))
+    path = base + ".py" if os.path.isfile(base + ".py") else os.path.join(base, "__init__.py")
+    if not os.path.isfile(path):
+        return None
+    # Attributes and fields have no definition of their own, so they get no link.
+    line = _definition_line(path, info.get("fullname", ""))
+    if line is None:
+        return None
+    return f"{GITHUB_BLOB_URL}/{os.path.relpath(path, REPO_ROOT)}#L{line}"
 
 
 # -- Napoleon (docstring style) -----------------------------------------
@@ -75,33 +130,10 @@ exclude_patterns = [
 SITE_DIR = "docs/sdk/python/server"
 
 mintlify_site_dir = SITE_DIR
-mintlify_import_root = "auth0_server_python"
-mintlify_github_blob_url = "https://github.com/auth0/auth0-server-python/blob/main"
-mintlify_guides_root = os.path.abspath("..")
+mintlify_github_blob_url = GITHUB_BLOB_URL
+mintlify_guides_root = REPO_ROOT
 
 mintlify_remove_pages = []
-
-# Split a single autoapi module page into per-class pages.
-# Keys are source page paths (no extension); values are lists of class descriptors.
-mintlify_class_splits = {
-    "reference/store/abstract/index": [
-        {
-            "class_id": "store.abstract.AbstractDataStore",
-            "title": "AbstractDataStore",
-            "output_path": "reference/store/abstract/abstractdatastore/index",
-        },
-        {
-            "class_id": "store.abstract.StateStore",
-            "title": "StateStore",
-            "output_path": "reference/store/abstract/statestore/index",
-        },
-        {
-            "class_id": "store.abstract.TransactionStore",
-            "title": "TransactionStore",
-            "output_path": "reference/store/abstract/transactionstore/index",
-        },
-    ],
-}
 
 # -- Guides (README, CONTRIBUTING, examples/*.md) -----------------------
 

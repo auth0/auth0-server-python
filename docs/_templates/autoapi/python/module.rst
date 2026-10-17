@@ -132,6 +132,23 @@ Functions
             {% endif %}
             {% set this_page_children = visible_children|rejectattr("type", "in", own_page_types)|list %}
             {% if this_page_children %}
+               {% set importable = this_page_children|selectattr("type", "in", ["class", "exception", "function"])|map(attribute="short_name")|list %}
+               {% if importable %}
+.. rubric:: Import
+
+.. code-block:: python
+
+                  {% if importable|length == 1 %}
+   from {{ import_root }}.{{ obj.name }} import {{ importable[0] }}
+                  {% else %}
+   from {{ import_root }}.{{ obj.name }} import (
+                     {% for name in importable %}
+       {{ name }},
+                     {% endfor %}
+   )
+                  {% endif %}
+
+               {% endif %}
 {{ obj.type|title }} Contents
 {{ "-" * obj.type|length }}---------
 

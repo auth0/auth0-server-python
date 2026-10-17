@@ -14,10 +14,9 @@ folder can be copied to another repo unchanged.
    is followed by a GitHub link. Any other relative link points at `mintlify_github_blob_url`.
 2. Removes unwanted reference pages.
 3. Rewrites reference cross-links to absolute page URLs under `mintlify_site_dir`.
-4. Splits configured module pages into per-class pages.
-5. Writes each reference page as MDX and removes its `.fjson`. Module pages are titled by
-   module path with a module icon, and single-class pages by class name with a class icon.
-6. Writes `navigation.json` from `mintlify_navigation`, filling the `{reference}` placeholder
+4. Writes each reference page as MDX and removes its `.fjson`. Pages are titled by
+   module path, with a module icon. Code blocks get a copy button.
+5. Writes `navigation.json` from `mintlify_navigation`, filling the `{reference}` placeholder
    with a tree that mirrors the package hierarchy: a package or subpackage becomes a group
    named after it, a module becomes a page. Groups sort before pages, each by name.
 
@@ -26,21 +25,17 @@ folder can be copied to another repo unchanged.
 Nothing to edit. New modules, packages and classes are picked up from the
 generated pages, and new guides from the Markdown files in the guides folder.
 Titles, sidebar labels, icons, colors and navigation groups are all derived.
-The only per-module setting is `mintlify_class_splits`, used when a module page
-should be split into one page per class.
 
 ## Config values
 
 | Name | Meaning |
 |---|---|
 | `mintlify_site_dir` | Page path prefix in the docs site |
-| `mintlify_import_root` | Top-level import package. Each class, function and exception gets a `from <root>.<module> import <Name>` line. Empty turns it off |
 | `mintlify_navigation` | Navigation tree written to `navigation.json`, with a `{reference}` placeholder |
 | `mintlify_guides` | Output page to `(markdown path, fixed title or "")` |
 | `mintlify_guides_root` | Absolute folder the guide paths are relative to |
 | `mintlify_github_blob_url` | Base URL for relative Markdown links |
 | `mintlify_remove_pages` | Reference page paths to drop |
-| `mintlify_class_splits` | Module page to per-class page descriptors |
 
 ## Moving it out of this repo
 

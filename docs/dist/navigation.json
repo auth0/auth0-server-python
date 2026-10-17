@@ -73,16 +73,7 @@
               "icon": "folder",
               "expanded": true,
               "pages": [
-                {
-                  "group": "abstract",
-                  "icon": "folder",
-                  "expanded": true,
-                  "pages": [
-                    "docs/sdk/python/server/reference/store/abstract/abstractdatastore/index",
-                    "docs/sdk/python/server/reference/store/abstract/statestore/index",
-                    "docs/sdk/python/server/reference/store/abstract/transactionstore/index"
-                  ]
-                }
+                "docs/sdk/python/server/reference/store/abstract/index"
               ]
             },
             {
