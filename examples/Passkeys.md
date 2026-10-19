@@ -234,12 +234,15 @@ When a connection requires users to verify their email or phone number at signup
 
 ### Requirements
 
-Enable identifier verification for email, phone, or both on your database connection.
+Enable identifier verification for email, phone, or both on your database connection. For email, choose the One-Time Password (OTP) method, because this flow passes codes and does not support verification links.
+
+- Configure an email provider for email codes and a phone provider for phone codes. Without one the code is never sent, so the user can't finish signing up.
+- Upgrade your app to an SDK version whose `signin_with_passkey` accepts `verification` before you turn verification on. Older versions can't send the codes, so every signup on the connection fails.
 
 ### The flow
 
 1. Request the challenge. If `verification_required` is set, collect a code for each identifier it lists.
-2. Collect the codes before creating the credential, so a failed verification does not leave a saved passkey for an unfinished signup.
+2. Collect the codes before creating the credential. This order is a UX requirement, and the SDK can't enforce it. Your front end must not call `navigator.credentials.create()` until every required code is collected. Auth0 checks the codes only in `signin_with_passkey`, after the credential exists, so a wrong code still leaves a passkey on the device with no account behind it. The retry reuses that credential.
 3. Create the credential in the browser, then call `signin_with_passkey` with the codes in `verification`.
 
 ```python
@@ -262,38 +265,40 @@ result = await server_client.signin_with_passkey(
 
 The keys of `verification` must be `email` or `phone`, as listed in `verification_required`. Any other key raises `InvalidArgumentError`, and blank codes are ignored. Omit `verification` when `verification_required` is `None`.
 
+`delivery_method` applies only to the phone code. If only email needs a code, the value has no effect.
+
 ### Resending codes
 
 If the user does not receive a code, call `passkey_signup_challenge` again before the passkey is created. Each call sends new codes for every identifier and returns a new `auth_session` and new `authn_params_public_key`, so use the values from the latest response. The previous session stays valid until it expires.
 
 ### Handling a wrong code
 
-After a wrong code the session stays valid. `signin_with_passkey` raises a `PasskeyError` with `is_verification_retryable` set to `True`, and its `verification_required` lists the identifiers still unverified. Resubmit codes for those identifiers only.
+After a wrong code the session stays valid. `signin_with_passkey` raises a `PasskeyError` with `is_verification_retryable` set to `True`, and its `verification_required` lists the identifiers still unverified.
+
+Each attempt is one HTTP request. On a wrong code, the handler returns `verification_required` and the `auth_session` from the error. The browser asks for those codes only and posts again with the same credential. Cap the attempts in your app, because Auth0 also limits them.
 
 ```python
+from fastapi.responses import JSONResponse
+
 from auth0_server_python.error import PasskeyError
 
-MAX_ATTEMPTS = 3
-auth_session = challenge.auth_session
-codes = {"email": email_code, "phone": phone_code}
-
-for attempt in range(MAX_ATTEMPTS):
+async def passkey_signin(request, response, body):
     try:
-        result = await server_client.signin_with_passkey(
-            auth_session=auth_session,
-            authn_response=authn_response,
-            verification=codes,
+        return await server_client.signin_with_passkey(
+            auth_session=body["auth_session"],
+            authn_response=body["authn_response"],
+            verification=body.get("verification"),
             store_options={"request": request, "response": response},
         )
-        break
     except PasskeyError as e:
-        if not e.is_verification_retryable or attempt == MAX_ATTEMPTS - 1:
+        if not e.is_verification_retryable:
             raise
-        auth_session = e.auth_session
-        codes = ask_user_for_codes(e.verification_required)
+        # Send the unverified identifiers back so the page asks only for those codes.
+        return JSONResponse(
+            {"verification_required": e.verification_required, "auth_session": e.auth_session},
+            status_code=400,
+        )
 ```
-
-Retry with the `auth_session` from the error and the same `authn_response`. Cap the number of attempts, because Auth0 also limits them.
 
 Send one `signin_with_passkey` request at a time per `auth_session`. Parallel requests can use up the allowed attempts, or reach Auth0 after the session has already been used.
 
@@ -302,13 +307,15 @@ Send one `signin_with_passkey` request at a time per `auth_session`. Parallel re
 - Too many wrong codes, an expired code, or an expired session. Start again from the signup challenge.
 - A missing code raises `invalid_request` and the session stays valid. Resubmit with the same `auth_session` and every required code.
 - A server error (`server_error`) may or may not have ended the session. Retry with the same `auth_session`, `authn_response` and codes. If the call fails with `invalid_grant` and no `auth_session`, start again from the signup challenge.
+- A rate limit (`too_many_requests`). Do not retry right away. Ask the user to try again later.
 - Any other failure is raised with the code Auth0 returned.
 
-If the connection drops after Auth0 accepts the final code, the session has ended because each code works once. Start again from the signup challenge.
+If the connection drops after Auth0 accepts the final code, or a Post Login Action denies the login, the account may or may not exist. Show a generic message that offers sign in, without confirming whether the account exists. Route a repeat signup with the same email to sign in. Signup returns `invalid_request` when the account already exists, so branch on that error code to choose the path.
 
 ### Operational notes
 
 - Rate-limit the route that calls `passkey_signup_challenge`. Each call sends codes, so add limits per IP address and per email address or phone number.
+- Pass `client_ip` to `passkey_signup_challenge`, `passkey_login_challenge` and `signin_with_passkey` to forward the end user's IP address as the `auth0-forwarded-for` header. Without it Auth0 sees your server's address. Auth0 uses the header when the **Trust Token Endpoint IP Header** setting is enabled for the application, and, while identifier verification is enabled for your tenant, it rejects a value that is not a valid IP address. Forward only a trusted, normalized IP from your edge or proxy layer.
 - Do not log the verification codes.
 
 > [!IMPORTANT]
