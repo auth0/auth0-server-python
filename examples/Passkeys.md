@@ -242,7 +242,7 @@ Enable identifier verification for email, phone, or both on your database connec
 ### The flow
 
 1. Request the challenge. If `verification_required` is set, collect a code for each identifier it lists.
-2. Collect the codes before creating the credential. This order is a UX requirement, and the SDK can't enforce it. Your front end must not call `navigator.credentials.create()` until every required code is collected. Auth0 checks the codes only in `signin_with_passkey`, after the credential exists, so a wrong code still leaves a passkey on the device with no account behind it. The retry reuses that credential.
+2. Collect the codes before creating the credential, so a user who never receives a code doesn't end up with a passkey for an account that was never created. This order is a UX requirement, and the SDK can't enforce it. Your front end must not call `navigator.credentials.create()` until every required code is collected. Auth0 checks the codes only in `signin_with_passkey`, after the credential exists, so a wrong code still leaves a passkey on the device with no account behind it. The retry reuses that credential.
 3. Create the credential in the browser, then call `signin_with_passkey` with the codes in `verification`.
 
 ```python
