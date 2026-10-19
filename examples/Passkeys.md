@@ -307,7 +307,7 @@ Send one `signin_with_passkey` request at a time per `auth_session`. Parallel re
 - Too many wrong codes, an expired code, or an expired session. Start again from the signup challenge.
 - A missing code raises `invalid_request` and the session stays valid. Resubmit with the same `auth_session` and every required code.
 - A server error (`server_error`) may or may not have ended the session. Retry with the same `auth_session`, `authn_response` and codes. If the call fails with `invalid_grant` and no `auth_session`, start again from the signup challenge.
-- A rate limit (`too_many_requests`). Do not retry right away. Ask the user to try again later.
+- A rate limit (`too_many_requests`). Do not retry right away. When `retry_after` is set, wait that many seconds. Otherwise ask the user to try again later.
 - Any other failure is raised with the code Auth0 returned.
 
 If the connection drops after Auth0 accepts the final code, or a Post Login Action denies the login, the account may or may not exist. Show a generic message that offers sign in, without confirming whether the account exists. Route a repeat signup with the same email to sign in. Signup returns `invalid_request` when the account already exists, so branch on that error code to choose the path.
@@ -368,7 +368,7 @@ except Auth0Error as e:
 - `invalid_response` - Auth0 returned a response that could not be parsed
 - `too_many_requests` when a challenge or the token exchange is rate limited
 
-`PasskeyError` also exposes `auth_session`, `verification_required` and `is_verification_retryable` for [identifier verification](#4-identifier-verification-optional). Rate limiting on a challenge or the token exchange raises code `too_many_requests`. The per-IP limit on the challenge endpoints applies to public clients only. Treat `auth_session` on the error like any other session credential and keep it out of logs.
+`PasskeyError` also exposes `retry_after` (seconds, or `None` when Auth0 sends no `Retry-After` header), `auth_session`, `verification_required` and `is_verification_retryable` for [identifier verification](#4-identifier-verification-optional). Rate limiting on a challenge or the token exchange raises code `too_many_requests`. The per-IP limit on the challenge endpoints applies to public clients only. Treat `auth_session` on the error like any other session credential and keep it out of logs.
 
 > [!NOTE]
 > `auth_session` is a short-lived (typically about a minute, or 15 min when `verification_required` is set, matching the `timeout` in `authn_params_public_key`) credential. Never log or persist it. If the ceremony takes too long, re-request the challenge.
