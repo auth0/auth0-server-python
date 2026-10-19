@@ -31,7 +31,10 @@ from auth0_server_python.auth_schemes.dpop_auth import make_dpop_proof_for_token
 from auth0_server_python.auth_server.anonymous import AnonymousClient
 from auth0_server_python.auth_server.mfa_client import DEFAULT_MFA_TOKEN_TTL, MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
-from auth0_server_python.auth_server.passwordless_client import PasswordlessClient
+from auth0_server_python.auth_server.passwordless_client import (
+    FORWARDED_FOR_HEADER,
+    PasswordlessClient,
+)
 from auth0_server_python.auth_types import (
     CompleteConnectAccountRequest,
     CompleteConnectAccountResponse,
@@ -3521,6 +3524,7 @@ class ServerClient(Generic[TStoreOptions]):
         user_metadata: Optional[dict[str, Any]] = None,
         store_options: Optional[dict[str, Any]] = None,
         delivery_method: Optional[PasskeyDeliveryMethod] = None,
+        client_ip: Optional[str] = None,
     ) -> PasskeySignupChallengeResponse:
         """
         Step 1 of 2: Initiate a passkey signup challenge (POST /passkey/register).
@@ -3537,15 +3541,20 @@ class ServerClient(Generic[TStoreOptions]):
                            not nested inside user_profile (per Auth0 API spec).
             store_options: Optional options for domain resolution.
             delivery_method: Optional channel for the phone verification code, "text" or "voice".
+            client_ip: Optional end user IP address, sent as the auth0-forwarded-for header.
 
         Returns:
             PasskeySignupChallengeResponse with auth_session, authn_params_public_key and,
             when the connection requires verification, verification_required.
 
         Raises:
+            InvalidArgumentError: If delivery_method is set to a value other than "text" or "voice".
             PasskeyError: If the challenge request fails or the request is rate limited.
             EnterpriseConnectError: If the client is configured for Enterprise Connect.
         """
+        if delivery_method is not None and delivery_method not in ("text", "voice"):
+            raise InvalidArgumentError("delivery_method", "delivery_method must be 'text' or 'voice'")
+
         try:
             domain = await self._resolve_current_domain(store_options)
 
@@ -3566,14 +3575,11 @@ class ServerClient(Generic[TStoreOptions]):
 
             async with self._get_http_client() as client:
                 url = f"https://{domain}{self.PASSKEY_REGISTER_PATH}"
-                response = await client.post(url, json=body)
+                headers = {FORWARDED_FOR_HEADER: client_ip} if client_ip else {}
+                response = await client.post(url, json=body, headers=headers)
 
                 if response.status_code == 429:
-                    # The limiter can answer with a plain-text body, so check before parsing.
-                    raise PasskeyError(
-                        PasskeyErrorCode.TOO_MANY_REQUESTS,
-                        "Too many passkey signup requests",
-                    )
+                    raise self._passkey_rate_limit_error(response, "Too many passkey signup requests")
 
                 if response.status_code != 200:
                     try:
@@ -3609,6 +3615,7 @@ class ServerClient(Generic[TStoreOptions]):
         connection: Optional[str] = None,
         organization: Optional[str] = None,
         store_options: Optional[dict[str, Any]] = None,
+        client_ip: Optional[str] = None,
     ) -> PasskeyLoginChallengeResponse:
         """
         Step 1 of 2: Initiate a passkey login challenge (POST /passkey/challenge).
@@ -3625,6 +3632,7 @@ class ServerClient(Generic[TStoreOptions]):
             connection: Auth0 database connection name (realm).
             organization: Auth0 organization ID or name.
             store_options: Optional options for domain resolution.
+            client_ip: Optional end user IP address, sent as the auth0-forwarded-for header.
 
         Returns:
             PasskeyLoginChallengeResponse with auth_session and authn_params_public_key.
@@ -3656,13 +3664,11 @@ class ServerClient(Generic[TStoreOptions]):
 
             async with self._get_http_client() as client:
                 url = f"https://{domain}{self.PASSKEY_CHALLENGE_PATH}"
-                response = await client.post(url, json=body)
+                headers = {FORWARDED_FOR_HEADER: client_ip} if client_ip else {}
+                response = await client.post(url, json=body, headers=headers)
 
                 if response.status_code == 429:
-                    raise PasskeyError(
-                        PasskeyErrorCode.TOO_MANY_REQUESTS,
-                        "Too many passkey login requests",
-                    )
+                    raise self._passkey_rate_limit_error(response, "Too many passkey login requests")
 
                 if response.status_code != 200:
                     try:
@@ -3692,6 +3698,33 @@ class ServerClient(Generic[TStoreOptions]):
                 raise
             raise PasskeyError(PasskeyErrorCode.CHALLENGE_FAILED, "Passkey login challenge failed", e) from e
 
+    @staticmethod
+    def _passkey_rate_limit_error(response, default_message: str) -> PasskeyError:
+        # The limiter can answer with a plain-text body, so a parse failure keeps the default.
+        message = default_message
+        try:
+            description = response.json().get("error_description")
+            if isinstance(description, str) and description:
+                message = description
+        except (ValueError, AttributeError):
+            pass
+
+        retry_after = None
+        try:
+            retry_after = int(response.headers.get("Retry-After"))
+        except (TypeError, ValueError):
+            pass
+
+        return PasskeyError(PasskeyErrorCode.TOO_MANY_REQUESTS, message, retry_after=retry_after)
+
+    @staticmethod
+    def _is_dpop_nonce_challenge(response) -> bool:
+        try:
+            data = response.json()
+        except ValueError:
+            return False
+        return isinstance(data, dict) and data.get("error") == "use_dpop_nonce"
+
     async def signin_with_passkey(
         self,
         auth_session: str,
@@ -3702,7 +3735,8 @@ class ServerClient(Generic[TStoreOptions]):
         scope: Optional[str] = None,
         audience: Optional[str] = None,
         dpop_key: Optional["jwk.JWK"] = None,
-        verification: Optional[dict[str, str]] = None,
+        verification: Optional[dict[str, Optional[str]]] = None,
+        client_ip: Optional[str] = None,
     ) -> PasskeyLoginResult:
         """
         Completes passkey authentication by exchanging the WebAuthn assertion
@@ -3724,6 +3758,7 @@ class ServerClient(Generic[TStoreOptions]):
                       attaches a DPoP proof header so Auth0 issues a DPoP-bound token
                       (token_type: DPoP). Required when the tenant mandates DPoP binding.
             verification: Optional signup codes keyed by "email" or "phone", not used for login.
+            client_ip: Optional end user IP address, sent as the auth0-forwarded-for header.
 
         Returns:
             PasskeyLoginResult containing state_data with user claims and token sets,
@@ -3754,6 +3789,10 @@ class ServerClient(Generic[TStoreOptions]):
                 "dpop_key cannot be combined with use_mtls. DPoP and mTLS bind tokens "
                 "differently. DPoP would take precedence and the token would not be "
                 "certificate-bound."
+            )
+        if verification is not None and not isinstance(verification, dict):
+            raise InvalidArgumentError(
+                "verification", "verification must be a dict keyed by 'email' or 'phone'"
             )
         verification_codes: dict[str, str] = {}
         for identifier, code in (verification or {}).items():
@@ -3799,21 +3838,19 @@ class ServerClient(Generic[TStoreOptions]):
                 body["verification"] = verification_codes
 
             async with self._get_http_client() as client:
-                headers = {}
+                headers = {FORWARDED_FOR_HEADER: client_ip} if client_ip else {}
                 if dpop_key is not None:
                     headers["DPoP"] = make_dpop_proof_for_token_endpoint(
                         dpop_key, "POST", token_endpoint
                     )
                 response = await client.post(token_endpoint, json=body, headers=headers)
 
-                # RFC 9449 — the authorization server signals a required nonce
-                # with HTTP 400 + error="use_dpop_nonce" + DPoP-Nonce. Accept
-                # 401 as well so the retry holds against servers that mirror the
-                # resource-server status.
+                # RFC 9449 nonce challenge: HTTP 400 or 401 with error use_dpop_nonce and DPoP-Nonce.
                 if (
                     dpop_key is not None
                     and response.status_code in (400, 401)
                     and response.headers.get("DPoP-Nonce")
+                    and self._is_dpop_nonce_challenge(response)
                 ):
                     nonce = response.headers["DPoP-Nonce"]
                     headers["DPoP"] = make_dpop_proof_for_token_endpoint(
@@ -3822,10 +3859,7 @@ class ServerClient(Generic[TStoreOptions]):
                     response = await client.post(token_endpoint, json=body, headers=headers)
 
                 if response.status_code == 429:
-                    raise PasskeyError(
-                        PasskeyErrorCode.TOO_MANY_REQUESTS,
-                        "Too many passkey token requests",
-                    )
+                    raise self._passkey_rate_limit_error(response, "Too many passkey token requests")
 
                 if response.status_code != 200:
                     try:

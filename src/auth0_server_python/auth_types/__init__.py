@@ -878,6 +878,7 @@ class PasskeyUserProfile(BaseModel):
 
 
 class _PasskeyChallengeResponseBase(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
     auth_session: str = Field(repr=False)
     authn_params_public_key: PasskeyPublicKeyOptions
 
@@ -895,7 +896,7 @@ class PasskeyLoginChallengeResponse(_PasskeyChallengeResponseBase):
 class PasskeyTokenResponse(BaseModel):
     """Token endpoint response for the passkey grant."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
