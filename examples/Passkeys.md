@@ -284,7 +284,7 @@ from auth0_server_python.error import PasskeyError
 
 async def passkey_signin(request, response, body):
     try:
-        return await server_client.signin_with_passkey(
+        await server_client.signin_with_passkey(
             auth_session=body["auth_session"],
             authn_response=body["authn_response"],
             verification=body.get("verification"),
@@ -298,6 +298,8 @@ async def passkey_signin(request, response, body):
             {"verification_required": e.verification_required, "auth_session": e.auth_session},
             status_code=400,
         )
+    # The result holds the tokens, so keep it on the server.
+    return {"signed_in": True}
 ```
 
 Send one `signin_with_passkey` request at a time per `auth_session`. Parallel requests can use up the allowed attempts, or reach Auth0 after the session has already been used.
