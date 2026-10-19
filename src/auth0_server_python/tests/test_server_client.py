@@ -8549,6 +8549,28 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
 
 
 @pytest.mark.asyncio
+async def test_signin_with_passkey_rate_limited_after_dpop_nonce_retry(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    nonce_response = AsyncMock()
+    nonce_response.status_code = 400
+    nonce_response.headers = {"DPoP-Nonce": "server-nonce-abc"}
+    nonce_response.json = MagicMock(return_value={"error": "use_dpop_nonce"})
+    rate_limited = AsyncMock()
+    rate_limited.status_code = 429
+    rate_limited.headers = {"Retry-After": "30"}
+    rate_limited.json = MagicMock(return_value={"error": "access_denied", "error_description": "Too Many Requests"})
+    mock_post.side_effect = [nonce_response, rate_limited]
+
+    error = await _signin_expecting_error(client, dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"))
+
+    assert mock_post.await_count == 2
+    assert error.code == "access_denied"
+    assert error.status_code == 429
+    assert error.retry_after == 30
+
+
+@pytest.mark.asyncio
 async def test_signin_with_passkey_dpop_nonce_retry_on_401(mocker):
     """Token endpoint nonce retry must also hold when the server returns 401 + DPoP-Nonce."""
     client = ServerClient(
@@ -9664,78 +9686,6 @@ async def test_passkey_signup_challenge_unsupported_delivery_method_surfaces_ser
     assert "media is not supported" in exc.value.message
 
 
-@pytest.mark.asyncio
-async def test_passkey_signup_challenge_rate_limited_plain_text_raises_too_many_requests(mocker):
-    client = _make_passkey_client()
-    _mock_passkey_post(mocker, 429)
-
-    with pytest.raises(PasskeyError) as exc:
-        await client.passkey_signup_challenge()
-
-    assert exc.value.code == PasskeyErrorCode.TOO_MANY_REQUESTS
-
-
-@pytest.mark.asyncio
-async def test_passkey_signup_challenge_rate_limited_json_raises_too_many_requests(mocker):
-    client = _make_passkey_client()
-    _mock_passkey_post(
-        mocker, 429, {"error": "too_many_requests", "error_description": "Global rate limit exceeded"}
-    )
-
-    with pytest.raises(PasskeyError) as exc:
-        await client.passkey_signup_challenge()
-
-    assert exc.value.code == PasskeyErrorCode.TOO_MANY_REQUESTS
-
-
-@pytest.mark.asyncio
-async def test_passkey_login_challenge_rate_limited_plain_text_raises_too_many_requests(mocker):
-    client = _make_passkey_client()
-    _mock_passkey_post(mocker, 429)
-
-    with pytest.raises(PasskeyError) as exc:
-        await client.passkey_login_challenge()
-
-    assert exc.value.code == PasskeyErrorCode.TOO_MANY_REQUESTS
-
-
-@pytest.mark.asyncio
-async def test_passkey_login_challenge_rate_limited_json_raises_too_many_requests(mocker):
-    client = _make_passkey_client()
-    _mock_passkey_post(
-        mocker, 429, {"error": "too_many_requests", "error_description": "Global rate limit exceeded"}
-    )
-
-    with pytest.raises(PasskeyError) as exc:
-        await client.passkey_login_challenge()
-
-    assert exc.value.code == PasskeyErrorCode.TOO_MANY_REQUESTS
-
-
-@pytest.mark.asyncio
-async def test_signin_with_passkey_rate_limited_json_raises_too_many_requests(mocker):
-    client = _make_passkey_signin_client(mocker)
-    _mock_passkey_post(mocker, 429, {
-        "error": "access_denied",
-        "error_description": "Too Many Requests",
-    })
-
-    error = await _signin_expecting_error(client)
-
-    assert error.code == PasskeyErrorCode.TOO_MANY_REQUESTS
-    assert error.is_verification_retryable is False
-
-
-@pytest.mark.asyncio
-async def test_signin_with_passkey_rate_limited_plain_text_raises_too_many_requests(mocker):
-    client = _make_passkey_signin_client(mocker)
-    _mock_passkey_post(mocker, 429)
-
-    error = await _signin_expecting_error(client)
-
-    assert error.code == PasskeyErrorCode.TOO_MANY_REQUESTS
-
-
 async def _call_passkey_method(mocker, method):
     if method == "signin_with_passkey":
         client = _make_passkey_signin_client(mocker)
@@ -9754,11 +9704,62 @@ _PASSKEY_429_METHODS = ["passkey_signup_challenge", "passkey_login_challenge", "
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "body", "code", "message"),
+    [
+        ("passkey_signup_challenge", None, PasskeyErrorCode.CHALLENGE_FAILED,
+         "Passkey signup challenge failed with status 429"),
+        ("passkey_signup_challenge", {"error": "too_many_requests", "error_description": "Global rate limit exceeded"},
+         "too_many_requests", "Global rate limit exceeded"),
+        ("passkey_login_challenge", None, PasskeyErrorCode.CHALLENGE_FAILED,
+         "Passkey login challenge failed with status 429"),
+        ("passkey_login_challenge", {"error": "too_many_requests", "error_description": "Global rate limit exceeded"},
+         "too_many_requests", "Global rate limit exceeded"),
+        ("signin_with_passkey", None, PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
+         "Passkey token exchange failed with status 429"),
+        ("signin_with_passkey", {"error": "access_denied", "error_description": "Too Many Requests"},
+         "access_denied", "Too Many Requests"),
+    ],
+    ids=["signup_plain_text", "signup_json", "login_plain_text", "login_json", "token_plain_text", "token_json"],
+)
+async def test_passkey_rate_limited_keeps_released_code_and_sets_status_code(mocker, method, body, code, message):
+    _, call = await _call_passkey_method(mocker, method)
+    _mock_passkey_post(mocker, 429, body)
+
+    error = await call()
+
+    assert error.code == code
+    assert error.message == message
+    assert error.status_code == 429
+    assert error.is_verification_retryable is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "code"),
+    [
+        ("passkey_signup_challenge", PasskeyErrorCode.CHALLENGE_FAILED),
+        ("passkey_login_challenge", PasskeyErrorCode.CHALLENGE_FAILED),
+        ("signin_with_passkey", PasskeyErrorCode.TOKEN_EXCHANGE_FAILED),
+    ],
+)
+async def test_passkey_non_dict_json_error_body_keeps_status_code(mocker, method, code):
+    _, call = await _call_passkey_method(mocker, method)
+    _mock_passkey_post(mocker, 429, ["not", "a", "dict"])
+
+    error = await call()
+
+    assert error.code == code
+    assert error.status_code == 429
+    assert error.cause is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("method", _PASSKEY_429_METHODS)
 @pytest.mark.parametrize(
     ("header", "expected"),
-    [("30", 30), (None, None), ("Wed, 21 Oct 2026 07:28:00 GMT", None), ("soon", None)],
-    ids=["seconds", "absent", "http_date", "garbage"],
+    [("30", 30), (None, None), ("Wed, 21 Oct 2026 07:28:00 GMT", None), ("soon", None), ("-5", None)],
+    ids=["seconds", "absent", "http_date", "garbage", "negative"],
 )
 async def test_passkey_rate_limited_exposes_retry_after(mocker, method, header, expected):
     _, call = await _call_passkey_method(mocker, method)
@@ -9768,33 +9769,29 @@ async def test_passkey_rate_limited_exposes_retry_after(mocker, method, header, 
 
     error = await call()
 
-    assert error.code == PasskeyErrorCode.TOO_MANY_REQUESTS
+    assert error.status_code == 429
     assert error.retry_after == expected
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", _PASSKEY_429_METHODS)
 @pytest.mark.parametrize(
-    ("body", "expected"),
+    ("method", "code"),
     [
-        ({"error": "too_many_requests", "error_description": "Global rate limit exceeded"}, "Global rate limit exceeded"),
-        ({"error": "too_many_requests"}, None),
-        ({"error_description": 429}, None),
-        (["not", "a", "dict"], None),
-        (None, None),
+        ("passkey_signup_challenge", PasskeyErrorCode.CHALLENGE_FAILED),
+        ("passkey_login_challenge", PasskeyErrorCode.CHALLENGE_FAILED),
+        ("signin_with_passkey", PasskeyErrorCode.TOKEN_EXCHANGE_FAILED),
     ],
-    ids=["json_description", "no_description", "non_string_description", "non_dict_json", "plain_text"],
 )
-async def test_passkey_rate_limited_message(mocker, method, body, expected):
+async def test_passkey_unavailable_exposes_status_code_and_retry_after(mocker, method, code):
     _, call = await _call_passkey_method(mocker, method)
-    _mock_passkey_post(mocker, 429, body)
+    mock_post = _mock_passkey_post(mocker, 503)
+    mock_post.return_value.headers = {"Retry-After": "120"}
 
     error = await call()
 
-    if expected is None:
-        assert error.message.startswith("Too many passkey")
-    else:
-        assert error.message == expected
+    assert error.code == code
+    assert error.status_code == 503
+    assert error.retry_after == 120
 
 
 @pytest.mark.asyncio
@@ -9811,6 +9808,7 @@ async def test_signin_with_passkey_wrong_code_error_is_verification_retryable(mo
 
     assert error.is_verification_retryable is True
     assert error.code == "invalid_grant"
+    assert error.status_code == 400
     assert error.auth_session == "session_abc123"
     assert error.verification_required == ["email"]
     assert "session_abc123" not in str(error)

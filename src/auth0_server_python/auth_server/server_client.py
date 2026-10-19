@@ -3578,20 +3578,21 @@ class ServerClient(Generic[TStoreOptions]):
                 headers = {FORWARDED_FOR_HEADER: client_ip} if client_ip else {}
                 response = await client.post(url, json=body, headers=headers)
 
-                if response.status_code == 429:
-                    raise self._passkey_rate_limit_error(response, "Too many passkey signup requests")
-
                 if response.status_code != 200:
                     try:
                         error_data = response.json()
                     except (json.JSONDecodeError, ValueError):
+                        error_data = None
+                    if not isinstance(error_data, dict):
                         raise PasskeyError(
                             PasskeyErrorCode.CHALLENGE_FAILED,
                             f"Passkey signup challenge failed with status {response.status_code}",
+                            **self._passkey_http_error_details(response),
                         )
                     raise PasskeyError(
                         error_data.get("error", PasskeyErrorCode.CHALLENGE_FAILED),
                         error_data.get("error_description", "Passkey signup challenge failed"),
+                        **self._passkey_http_error_details(response),
                     )
 
                 try:
@@ -3667,20 +3668,21 @@ class ServerClient(Generic[TStoreOptions]):
                 headers = {FORWARDED_FOR_HEADER: client_ip} if client_ip else {}
                 response = await client.post(url, json=body, headers=headers)
 
-                if response.status_code == 429:
-                    raise self._passkey_rate_limit_error(response, "Too many passkey login requests")
-
                 if response.status_code != 200:
                     try:
                         error_data = response.json()
                     except (json.JSONDecodeError, ValueError):
+                        error_data = None
+                    if not isinstance(error_data, dict):
                         raise PasskeyError(
                             PasskeyErrorCode.CHALLENGE_FAILED,
                             f"Passkey login challenge failed with status {response.status_code}",
+                            **self._passkey_http_error_details(response),
                         )
                     raise PasskeyError(
                         error_data.get("error", PasskeyErrorCode.CHALLENGE_FAILED),
                         error_data.get("error_description", "Passkey login challenge failed"),
+                        **self._passkey_http_error_details(response),
                     )
 
                 try:
@@ -3699,23 +3701,15 @@ class ServerClient(Generic[TStoreOptions]):
             raise PasskeyError(PasskeyErrorCode.CHALLENGE_FAILED, "Passkey login challenge failed", e) from e
 
     @staticmethod
-    def _passkey_rate_limit_error(response, default_message: str) -> PasskeyError:
-        # The limiter can answer with a plain-text body, so a parse failure keeps the default.
-        message = default_message
-        try:
-            description = response.json().get("error_description")
-            if isinstance(description, str) and description:
-                message = description
-        except (ValueError, AttributeError):
-            pass
-
+    def _passkey_http_error_details(response) -> dict:
         retry_after = None
         try:
             retry_after = int(response.headers.get("Retry-After"))
         except (TypeError, ValueError):
             pass
-
-        return PasskeyError(PasskeyErrorCode.TOO_MANY_REQUESTS, message, retry_after=retry_after)
+        if retry_after is not None and retry_after < 0:
+            retry_after = None
+        return {"status_code": response.status_code, "retry_after": retry_after}
 
     @staticmethod
     def _is_dpop_nonce_challenge(response) -> bool:
@@ -3858,16 +3852,16 @@ class ServerClient(Generic[TStoreOptions]):
                     )
                     response = await client.post(token_endpoint, json=body, headers=headers)
 
-                if response.status_code == 429:
-                    raise self._passkey_rate_limit_error(response, "Too many passkey token requests")
-
                 if response.status_code != 200:
                     try:
                         error_data = response.json()
                     except (json.JSONDecodeError, ValueError):
+                        error_data = None
+                    if not isinstance(error_data, dict):
                         raise PasskeyError(
                             PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
                             f"Passkey token exchange failed with status {response.status_code}",
+                            **self._passkey_http_error_details(response),
                         )
                     error_code = error_data.get("error", PasskeyErrorCode.TOKEN_EXCHANGE_FAILED)
                     if error_code == "mfa_required":
@@ -3887,6 +3881,7 @@ class ServerClient(Generic[TStoreOptions]):
                         error_data.get("error_description", "Passkey token exchange failed"),
                         auth_session=error_data.get("auth_session"),
                         verification_required=error_data.get("verification_required"),
+                        **self._passkey_http_error_details(response),
                     )
 
                 try:

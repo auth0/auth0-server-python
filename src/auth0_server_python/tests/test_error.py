@@ -85,5 +85,7 @@ def test_passkey_error_str_and_repr_do_not_contain_auth_session():
     assert "session_abc123" not in repr(err)
 
 
-def test_passkey_error_code_too_many_requests_value():
-    assert PasskeyErrorCode.TOO_MANY_REQUESTS == "too_many_requests"
+def test_passkey_error_http_details_default_to_none():
+    err = PasskeyError(PasskeyErrorCode.INVALID_RESPONSE, "failed")
+    assert err.status_code is None
+    assert err.retry_after is None

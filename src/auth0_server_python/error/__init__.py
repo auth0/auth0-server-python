@@ -416,7 +416,8 @@ class PasskeyError(Auth0Error):
         cause: Underlying exception, if any.
         auth_session: Session to resubmit against, set when Auth0 keeps it alive after a wrong code.
         verification_required: Identifiers whose codes are still unverified.
-        retry_after: Seconds from the Retry-After header on a 429, None when absent.
+        retry_after: Seconds from the Retry-After header, None when absent or not whole seconds.
+        status_code: HTTP status of an Auth0 error response, None otherwise.
     """
 
     def __init__(
@@ -427,6 +428,7 @@ class PasskeyError(Auth0Error):
         auth_session: Optional[str] = None,
         verification_required: Optional[list[str]] = None,
         retry_after: Optional[int] = None,
+        status_code: Optional[int] = None,
     ):
         super().__init__(message)
         self.code = code
@@ -435,6 +437,7 @@ class PasskeyError(Auth0Error):
         self.auth_session = auth_session
         self.verification_required = verification_required
         self.retry_after = retry_after  # seconds
+        self.status_code = status_code
 
     @property
     def is_verification_retryable(self) -> bool:
@@ -448,7 +451,6 @@ class PasskeyErrorCode:
     CHALLENGE_FAILED = "passkey_challenge_error"
     TOKEN_EXCHANGE_FAILED = "passkey_token_error"
     INVALID_RESPONSE = "invalid_response"
-    TOO_MANY_REQUESTS = "too_many_requests"
     INVALID_GRANT = "invalid_grant"
 
 
