@@ -312,7 +312,7 @@ Send one `signin_with_passkey` request at a time per `auth_session`. Parallel re
 - A rate limit (`status_code` is 429). Auth0 rejects the request before it uses the attempt, so wait and resend the same request with the same `auth_session`, `authn_response` and codes. When `retry_after` is set, wait that many seconds. Check `status_code`, not `code`, because the code depends on which limit was hit.
 - Any other failure is raised with the `error` code Auth0 returned, or `passkey_token_error` when the response has no JSON error body.
 
-If the connection drops after Auth0 accepts the final code, or a Post Login Action denies the login, the account may or may not exist. Show a generic message that offers sign in, without confirming whether the account exists. Route a repeat signup with the same email to sign in. Signup returns `invalid_request` when the account already exists, so branch on that error code to choose the path.
+If the connection drops after Auth0 accepts the final code, or a Post Login Action denies the login, the account may already exist, because Auth0 creates the user before Actions run. A new signup with the same email then fails with `invalid_request`. Show a generic message that offers sign in, without confirming whether the account exists. `invalid_request` also covers invalid input, so don't treat it alone as proof that the account exists.
 
 ### Operational notes
 
