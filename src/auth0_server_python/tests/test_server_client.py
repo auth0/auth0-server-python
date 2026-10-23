@@ -8548,6 +8548,245 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
     assert payload["nonce"] == "server-nonce-abc"
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": "use_dpop_nonce"},
+        {"error": "invalid_dpop_proof"},
+        {"error": "use_dpop_nonce", "error_description": "DPoP nonce is too old"},
+    ],
+)
+def test_is_dpop_nonce_challenge_true(body):
+    response = MagicMock()
+    response.json.return_value = body
+
+    assert ServerClient._is_dpop_nonce_challenge(response) is True
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": "invalid_grant"},
+        {"error": "access_denied"},
+        {"error": "USE_DPOP_NONCE"},
+        {"error": " invalid_dpop_proof"},
+        {"error": None},
+        {"error": ["use_dpop_nonce"]},
+        {"error": {"use_dpop_nonce": True}},
+        {"error_description": "use_dpop_nonce"},
+        {},
+        ["use_dpop_nonce"],
+        "use_dpop_nonce",
+        None,
+    ],
+)
+def test_is_dpop_nonce_challenge_false(body):
+    response = MagicMock()
+    response.json.return_value = body
+
+    assert ServerClient._is_dpop_nonce_challenge(response) is False
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [ValueError("not json"), json.JSONDecodeError("bad", "", 0), UnicodeDecodeError("utf-8", b"", 0, 1, "bad")],
+)
+def test_is_dpop_nonce_challenge_false_for_non_json_body(exc):
+    response = MagicMock()
+    response.json.side_effect = exc
+
+    assert ServerClient._is_dpop_nonce_challenge(response) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 401])
+@pytest.mark.parametrize("error", ["use_dpop_nonce", "invalid_dpop_proof"])
+async def test_signin_with_passkey_dpop_nonce_retried_once_with_fresh_proof(mocker, status_code, error):
+    """invalid_dpop_proof is what the server returns, with a nonce, for an expired proof."""
+    client = _make_passkey_signin_client(mocker)
+    _stub_passkey_token_verification(mocker, client)
+    calls = _record_passkey_posts(
+        mocker,
+        [
+            _passkey_response(status_code, {"error": error}, {"DPoP-Nonce": "server-nonce-abc"}),
+            _passkey_response(200, _PASSKEY_TOKEN_RESPONSE_DPOP),
+        ],
+    )
+
+    result = await client.signin_with_passkey(
+        auth_session="session_xyz",
+        authn_response=_make_passkey_authn_response(),
+        dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"),
+    )
+
+    assert result.state_data["token_sets"][0]["access_token"] == "at_passkey_dpop_123"
+    assert len(calls) == 2
+    first, second = (_dpop_proof_claims(call["headers"]["DPoP"]) for call in calls)
+    assert "nonce" not in first
+    assert second["nonce"] == "server-nonce-abc"
+    assert first["jti"] != second["jti"]
+    assert calls[0]["json"] == calls[1]["json"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "headers", "body", "with_dpop_key"),
+    [
+        (400, {}, {"error": "use_dpop_nonce"}, True),
+        (400, {}, {"error": "invalid_dpop_proof"}, True),
+        (400, {"DPoP-Nonce": ""}, {"error": "use_dpop_nonce"}, True),
+        (400, {"DPoP-Nonce": ""}, {"error": "invalid_dpop_proof"}, True),
+        (403, {"DPoP-Nonce": "n"}, {"error": "use_dpop_nonce"}, True),
+        (429, {"DPoP-Nonce": "n"}, {"error": "invalid_dpop_proof"}, True),
+        (500, {"DPoP-Nonce": "n"}, {"error": "invalid_dpop_proof"}, True),
+        (400, {"DPoP-Nonce": "n"}, {"error": "use_dpop_nonce"}, False),
+        (400, {"DPoP-Nonce": "n"}, {"error": "invalid_dpop_proof"}, False),
+        (400, {"DPoP-Nonce": "n"}, {"error": "invalid_grant"}, True),
+        (400, {"DPoP-Nonce": "n"}, {"error": "access_denied"}, True),
+    ],
+    ids=[
+        "nonce_error_without_header",
+        "invalid_proof_without_header",
+        "nonce_error_empty_header",
+        "invalid_proof_empty_header",
+        "nonce_error_403",
+        "invalid_proof_429",
+        "invalid_proof_500",
+        "nonce_error_without_dpop_key",
+        "invalid_proof_without_dpop_key",
+        "invalid_grant_with_header",
+        "access_denied_with_header",
+    ],
+)
+async def test_signin_with_passkey_dpop_nonce_not_retried(mocker, status_code, headers, body, with_dpop_key):
+    client = _make_passkey_signin_client(mocker)
+    calls = _record_passkey_posts(mocker, [_passkey_response(status_code, body, headers)])
+    dpop_key = jwk.JWK.generate(kty="EC", crv="P-256") if with_dpop_key else None
+
+    error = await _signin_expecting_error(client, dpop_key=dpop_key)
+
+    assert len(calls) == 1
+    assert error.status_code == status_code
+    assert error.code == body["error"]
+    if not with_dpop_key:
+        assert "DPoP" not in calls[0]["headers"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_code", ["use_dpop_nonce", "invalid_dpop_proof"])
+async def test_signin_with_passkey_dpop_nonce_retry_stops_after_one(mocker, error_code):
+    client = _make_passkey_signin_client(mocker)
+    calls = _record_passkey_posts(
+        mocker,
+        [
+            _passkey_response(400, {"error": error_code}, {"DPoP-Nonce": "nonce-1"}),
+            _passkey_response(400, {"error": error_code}, {"DPoP-Nonce": "nonce-2"}),
+        ],
+    )
+
+    error = await _signin_expecting_error(client, dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"))
+
+    assert len(calls) == 2
+    assert error.code == error_code
+    assert error.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_dpop_nonce_retry_then_wrong_code_is_verification_retryable(mocker):
+    client = _make_passkey_signin_client(mocker)
+    calls = _record_passkey_posts(
+        mocker,
+        [
+            _passkey_response(400, {"error": "invalid_dpop_proof"}, {"DPoP-Nonce": "server-nonce-abc"}),
+            _passkey_response(
+                400,
+                {"error": "invalid_grant", "error_description": "Wrong code", "auth_session": "session_abc123"},
+            ),
+        ],
+    )
+
+    error = await _signin_expecting_error(
+        client, dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"), verification={"email": "000000"}
+    )
+
+    assert len(calls) == 2
+    assert calls[1]["json"]["verification"] == {"email": "000000"}
+    assert error.code == "invalid_grant"
+    assert error.is_verification_retryable
+    assert error.auth_session == "session_abc123"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_code", ["use_dpop_nonce", "invalid_dpop_proof"])
+async def test_signin_with_passkey_dpop_nonce_retry_keeps_request_context(mocker, error_code):
+    client = _make_passkey_signin_client(mocker)
+    _stub_passkey_token_verification(mocker, client)
+    calls = _record_passkey_posts(
+        mocker,
+        [
+            _passkey_response(400, {"error": error_code}, {"DPoP-Nonce": "server-nonce-abc"}),
+            _passkey_response(200, _PASSKEY_TOKEN_RESPONSE_DPOP),
+        ],
+    )
+
+    await client.signin_with_passkey(
+        auth_session="session_xyz",
+        authn_response=_make_passkey_authn_response(),
+        dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"),
+        verification={"email": "123456"},
+        client_ip="203.0.113.7",
+    )
+
+    assert len(calls) == 2
+    for call in calls:
+        assert call["headers"]["auth0-forwarded-for"] == "203.0.113.7"
+        assert call["json"]["verification"] == {"email": "123456"}
+        assert call["json"]["auth_session"] == "session_xyz"
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_wrong_code_with_reissued_nonce_is_not_replayed(mocker):
+    """The server can attach a reissued DPoP-Nonce to any response, including a wrong-code
+    invalid_grant. Replaying that request would spend another verification attempt."""
+    client = _make_passkey_signin_client(mocker)
+    calls = _record_passkey_posts(
+        mocker,
+        [
+            _passkey_response(
+                400,
+                {"error": "invalid_grant", "error_description": "Wrong code", "auth_session": "session_abc123"},
+                {"DPoP-Nonce": "reissued"},
+            )
+        ],
+    )
+
+    error = await _signin_expecting_error(
+        client, dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"), verification={"email": "000000"}
+    )
+
+    assert len(calls) == 1
+    assert error.is_verification_retryable
+    assert error.auth_session == "session_abc123"
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_nonce_header_on_success_not_retried(mocker):
+    client = _make_passkey_signin_client(mocker)
+    _stub_passkey_token_verification(mocker, client)
+    calls = _record_passkey_posts(
+        mocker, [_passkey_response(200, _PASSKEY_TOKEN_RESPONSE_DPOP, {"DPoP-Nonce": "next-nonce"})]
+    )
+
+    result = await client.signin_with_passkey(
+        auth_session="session_xyz",
+        authn_response=_make_passkey_authn_response(),
+        dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"),
+    )
+
+    assert len(calls) == 1
+    assert result.state_data["token_sets"][0]["access_token"] == "at_passkey_dpop_123"
+
+
 @pytest.mark.asyncio
 async def test_signin_with_passkey_rate_limited_after_dpop_nonce_retry(mocker):
     client = _make_passkey_signin_client(mocker)
@@ -9497,6 +9736,42 @@ async def _signin_expecting_error(client, **kwargs):
             **kwargs,
         )
     return exc.value
+
+
+def _passkey_response(status_code, body, headers=None):
+    response = AsyncMock()
+    response.status_code = status_code
+    response.headers = headers or {}
+    response.json = MagicMock(return_value=body)
+    return response
+
+
+def _record_passkey_posts(mocker, responses):
+    """Patch the HTTP post and snapshot every call. The SDK reuses one headers dict across a
+    DPoP nonce retry, so inspecting call_args afterwards would show the retry's proof twice.
+    A call beyond the supplied responses raises IndexError, which fails the test."""
+    calls = []
+
+    async def _post(url, json=None, headers=None):
+        calls.append({"json": dict(json), "headers": dict(headers)})
+        return responses[len(calls) - 1]
+
+    mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=_post)
+    return calls
+
+
+def _stub_passkey_token_verification(mocker, client):
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(
+        client,
+        "_verify_and_decode_jwt",
+        return_value={"sub": "auth0|user123", "iss": "https://auth0.local/"},
+    )
+
+
+def _dpop_proof_claims(proof):
+    payload_b64 = proof.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * (-len(payload_b64) % 4)))
 
 
 @pytest.mark.asyncio
