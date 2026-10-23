@@ -21,7 +21,6 @@ from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
 from auth0_server_python.auth_server.anonymous import ANON_IDENTIFIER, AnonymousClient
 from auth0_server_python.auth_server.mfa_client import MfaClient
 from auth0_server_python.auth_server.my_account_client import MyAccountClient
-from auth0_server_python.auth_server.passwordless_client import FORWARDED_FOR_HEADER
 from auth0_server_python.auth_server.server_client import (
     _EC_ALLOWED_METHODS,
     INTERNAL_AUTHORIZE_PARAMS,
@@ -8668,34 +8667,64 @@ async def test_signin_with_passkey_dpop_nonce_not_retried(mocker, status_code, h
 
     assert len(calls) == 1
     assert error.status_code == status_code
+    assert error.code == body["error"]
+    if not with_dpop_key:
+        assert "DPoP" not in calls[0]["headers"]
 
 
 @pytest.mark.asyncio
-async def test_signin_with_passkey_dpop_nonce_retry_stops_after_one(mocker):
+@pytest.mark.parametrize("error_code", ["use_dpop_nonce", "invalid_dpop_proof"])
+async def test_signin_with_passkey_dpop_nonce_retry_stops_after_one(mocker, error_code):
     client = _make_passkey_signin_client(mocker)
     calls = _record_passkey_posts(
         mocker,
         [
-            _passkey_response(400, {"error": "invalid_dpop_proof"}, {"DPoP-Nonce": "nonce-1"}),
-            _passkey_response(400, {"error": "invalid_dpop_proof"}, {"DPoP-Nonce": "nonce-2"}),
+            _passkey_response(400, {"error": error_code}, {"DPoP-Nonce": "nonce-1"}),
+            _passkey_response(400, {"error": error_code}, {"DPoP-Nonce": "nonce-2"}),
         ],
     )
 
     error = await _signin_expecting_error(client, dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"))
 
     assert len(calls) == 2
-    assert error.code == "invalid_dpop_proof"
+    assert error.code == error_code
     assert error.status_code == 400
 
 
 @pytest.mark.asyncio
-async def test_signin_with_passkey_dpop_nonce_retry_keeps_request_context(mocker):
+async def test_signin_with_passkey_dpop_nonce_retry_then_wrong_code_is_verification_retryable(mocker):
+    client = _make_passkey_signin_client(mocker)
+    calls = _record_passkey_posts(
+        mocker,
+        [
+            _passkey_response(400, {"error": "invalid_dpop_proof"}, {"DPoP-Nonce": "server-nonce-abc"}),
+            _passkey_response(
+                400,
+                {"error": "invalid_grant", "error_description": "Wrong code", "auth_session": "session_abc123"},
+            ),
+        ],
+    )
+
+    error = await _signin_expecting_error(
+        client, dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"), verification={"email": "000000"}
+    )
+
+    assert len(calls) == 2
+    assert calls[1]["json"]["verification"] == {"email": "000000"}
+    assert error.code == "invalid_grant"
+    assert error.is_verification_retryable
+    assert error.auth_session == "session_abc123"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_code", ["use_dpop_nonce", "invalid_dpop_proof"])
+async def test_signin_with_passkey_dpop_nonce_retry_keeps_request_context(mocker, error_code):
     client = _make_passkey_signin_client(mocker)
     _stub_passkey_token_verification(mocker, client)
     calls = _record_passkey_posts(
         mocker,
         [
-            _passkey_response(400, {"error": "invalid_dpop_proof"}, {"DPoP-Nonce": "server-nonce-abc"}),
+            _passkey_response(400, {"error": error_code}, {"DPoP-Nonce": "server-nonce-abc"}),
             _passkey_response(200, _PASSKEY_TOKEN_RESPONSE_DPOP),
         ],
     )
@@ -8710,7 +8739,7 @@ async def test_signin_with_passkey_dpop_nonce_retry_keeps_request_context(mocker
 
     assert len(calls) == 2
     for call in calls:
-        assert call["headers"][FORWARDED_FOR_HEADER] == "203.0.113.7"
+        assert call["headers"]["auth0-forwarded-for"] == "203.0.113.7"
         assert call["json"]["verification"] == {"email": "123456"}
         assert call["json"]["auth_session"] == "session_xyz"
 
