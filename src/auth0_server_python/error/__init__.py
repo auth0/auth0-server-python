@@ -452,6 +452,7 @@ class PasskeyErrorCode:
     TOKEN_EXCHANGE_FAILED = "passkey_token_error"
     INVALID_RESPONSE = "invalid_response"
     INVALID_GRANT = "invalid_grant"
+    INVALID_REQUEST = "invalid_request"
 
 
 # =============================================================================

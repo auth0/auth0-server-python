@@ -9682,7 +9682,7 @@ async def test_passkey_signup_challenge_unsupported_delivery_method_surfaces_ser
     with pytest.raises(PasskeyError) as exc:
         await client.passkey_signup_challenge(delivery_method="voice")
 
-    assert exc.value.code == "invalid_request"
+    assert exc.value.code == PasskeyErrorCode.INVALID_REQUEST
     assert "media is not supported" in exc.value.message
 
 
@@ -9855,7 +9855,7 @@ async def test_signin_with_passkey_missing_code_is_invalid_request_and_not_retry
 
     error = await _signin_expecting_error(client)
 
-    assert error.code == "invalid_request"
+    assert error.code == PasskeyErrorCode.INVALID_REQUEST
     assert error.is_verification_retryable is False
     assert error.auth_session is None
 

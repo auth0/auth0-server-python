@@ -308,7 +308,7 @@ Send one `signin_with_passkey` request at a time per `auth_session`. Parallel re
 
 - Too many wrong codes, an expired code, or an expired session. Start again from the signup challenge.
 - A missing code raises `invalid_request` and the session stays valid. Resubmit with the same `auth_session` and every required code.
-- A server error (`server_error`) may or may not have ended the session. Retry with the same `auth_session`, `authn_response` and codes. If the call fails with `invalid_grant` and no `auth_session`, start again from the signup challenge.
+- A server error sets `status_code` to 500 or higher. `code` is the response body's `error`, or `passkey_token_error` when there is none.
 - A rate limit (`status_code` is 429). Auth0 rejects the request before it uses the attempt, so wait and resend the same request with the same `auth_session`, `authn_response` and codes. When `retry_after` is set, wait that many seconds. Check `status_code`, not `code`, because the code depends on which limit was hit.
 - Any other failure is raised with the `error` code Auth0 returned, or `passkey_token_error` when the response has no JSON error body.
 
@@ -371,6 +371,7 @@ except Auth0Error as e:
 - `passkey_token_error` - token exchange failed (also used for a rejected DPoP downgrade)
 - `invalid_response` - Auth0 returned a response that could not be parsed
 - `invalid_grant` - a verification code was wrong, or the session is no longer valid. `is_verification_retryable` tells the two apart.
+- `invalid_request` - Auth0 rejected the request as invalid, for example a missing verification code. On its own it does not mean the session can be resumed.
 
 `PasskeyError` also exposes `status_code` (the HTTP status when Auth0 returned an error response, otherwise `None`), `retry_after` (seconds from the `Retry-After` header, or `None` when the header is absent or not a whole number of seconds), `auth_session`, `verification_required` and `is_verification_retryable` for [identifier verification](#4-identifier-verification-optional). A rate-limited challenge or token exchange has `status_code` 429, and its `code` depends on which Auth0 limit was hit. The per-IP limit on the challenge endpoints applies to public clients only. Treat `auth_session` on the error like any other session credential and keep it out of logs.
 
