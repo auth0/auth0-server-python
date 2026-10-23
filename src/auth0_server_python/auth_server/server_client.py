@@ -3716,7 +3716,7 @@ class ServerClient(Generic[TStoreOptions]):
             data = response.json()
         except ValueError:
             return False
-        return isinstance(data, dict) and data.get("error") == "use_dpop_nonce"
+        return isinstance(data, dict) and data.get("error") in ("use_dpop_nonce", "invalid_dpop_proof")
 
     async def signin_with_passkey(
         self,
@@ -3838,7 +3838,8 @@ class ServerClient(Generic[TStoreOptions]):
                     )
                 response = await client.post(token_endpoint, json=body, headers=headers)
 
-                # RFC 9449 nonce challenge: HTTP 400 or 401 with error use_dpop_nonce and DPoP-Nonce.
+                # RFC 9449 nonce challenge: HTTP 400 or 401 with error use_dpop_nonce or
+                # invalid_dpop_proof (expired proof) and DPoP-Nonce.
                 if (
                     dpop_key is not None
                     and response.status_code in (400, 401)
