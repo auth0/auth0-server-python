@@ -265,7 +265,7 @@ result = await server_client.signin_with_passkey(
 
 `verification` must be a dict whose keys are `email` or `phone`, as listed in `verification_required`, and whose values are strings. Anything else raises `InvalidArgumentError` before any request is sent. Blank codes are ignored. Omit `verification` when `verification_required` is `None`.
 
-`delivery_method` applies only to the phone code. If only email needs a code, the value has no effect. Any value other than `"text"` or `"voice"` raises `InvalidArgumentError` before the request is sent.
+`delivery_method` applies only to the phone code. If only email needs a code, the value has no effect. Any value other than `"text"` or `"voice"` raises `InvalidArgumentError` before the request is sent. A valid value can still be refused. When a phone code is sent and the phone provider doesn't support the channel, Auth0 returns 400 `invalid_request` with "The requested media is not supported for this connection", raised as a `PasskeyError`.
 
 ### Resending codes
 
