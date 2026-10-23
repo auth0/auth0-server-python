@@ -3702,11 +3702,10 @@ class ServerClient(Generic[TStoreOptions]):
 
     @staticmethod
     def _passkey_http_error_details(response) -> dict:
-        retry_after = None
         try:
             retry_after = int(response.headers.get("Retry-After"))
         except (TypeError, ValueError):
-            pass
+            retry_after = None  # missing, an HTTP date, or not a number
         if retry_after is not None and retry_after < 0:
             retry_after = None
         return {"status_code": response.status_code, "retry_after": retry_after}
