@@ -15,6 +15,7 @@ from authlib.integrations.httpx_client import AsyncOAuth2Client
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from jwcrypto import jwk
+from pydantic import ValidationError
 
 from auth0_server_python.auth_schemes.dpop_auth import DPoPAuth
 from auth0_server_python.auth_server.anonymous import ANON_IDENTIFIER, AnonymousClient
@@ -47,6 +48,7 @@ from auth0_server_python.auth_types import (
     PasskeyLoginChallengeResponse,
     PasskeyLoginResult,
     PasskeySignupChallengeResponse,
+    PasskeyTokenResponse,
     PasskeyUserProfile,
     SessionTransferTokenResult,
     StartEnterpriseLoginOptions,
@@ -8460,6 +8462,41 @@ async def test_signin_with_passkey_dpop_attaches_proof_header(mocker):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response_body",
+    [
+        {"error": "invalid_grant", "error_description": "Wrong code", "auth_session": "session_abc123"},
+        None,
+    ],
+    ids=["invalid_grant_with_nonce", "non_json_body_with_nonce"],
+)
+async def test_signin_with_passkey_dpop_nonce_header_not_retried_without_use_dpop_nonce(
+    mocker, response_body
+):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    rejected = AsyncMock()
+    rejected.status_code = 400
+    rejected.headers = {"DPoP-Nonce": "server-nonce-other"}
+    if response_body is None:
+        rejected.json = MagicMock(side_effect=json.JSONDecodeError("bad", "", 0))
+    else:
+        rejected.json = MagicMock(return_value=response_body)
+    mock_post.side_effect = [rejected]
+
+    dpop_key = jwk.JWK.generate(kty="EC", crv="P-256")
+    with pytest.raises(PasskeyError):
+        await client.signin_with_passkey(
+            auth_session="session_abc123",
+            authn_response=_make_passkey_authn_response(),
+            dpop_key=dpop_key,
+            verification={"email": "000000"},
+        )
+
+    assert mock_post.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_signin_with_passkey_dpop_nonce_retry(mocker):
     client = ServerClient(
         domain="auth0.local",
@@ -8509,6 +8546,28 @@ async def test_signin_with_passkey_dpop_nonce_retry(mocker):
     padding = 4 - len(payload_b64) % 4
     payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
     assert payload["nonce"] == "server-nonce-abc"
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_rate_limited_after_dpop_nonce_retry(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    nonce_response = AsyncMock()
+    nonce_response.status_code = 400
+    nonce_response.headers = {"DPoP-Nonce": "server-nonce-abc"}
+    nonce_response.json = MagicMock(return_value={"error": "use_dpop_nonce"})
+    rate_limited = AsyncMock()
+    rate_limited.status_code = 429
+    rate_limited.headers = {"Retry-After": "30"}
+    rate_limited.json = MagicMock(return_value={"error": "access_denied", "error_description": "Too Many Requests"})
+    mock_post.side_effect = [nonce_response, rate_limited]
+
+    error = await _signin_expecting_error(client, dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"))
+
+    assert mock_post.await_count == 2
+    assert error.code == "access_denied"
+    assert error.status_code == 429
+    assert error.retry_after == 30
 
 
 @pytest.mark.asyncio
@@ -9390,6 +9449,631 @@ async def test_signin_with_passkey_rejects_dpop_under_mtls(mocker):
             authn_response=mocker.Mock(),
             dpop_key=object(),
         )
+
+
+# === Passkey identifier verification ===
+
+
+def _make_passkey_client():
+    return ServerClient(
+        domain="auth0.local",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        state_store=AsyncMock(),
+        transaction_store=AsyncMock(),
+        secret="test-secret-value",
+    )
+
+
+def _make_passkey_signin_client(mocker):
+    client = _make_passkey_client()
+    mocker.patch.object(
+        client,
+        "_get_oidc_metadata_cached",
+        return_value={"token_endpoint": "https://auth0.local/oauth/token", "issuer": "https://auth0.local/"},
+    )
+    return client
+
+
+def _mock_passkey_post(mocker, status_code, json_body=None):
+    """Patch the HTTP post. A json_body of None simulates a non-JSON response body."""
+    mock_post = mocker.patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    response = AsyncMock()
+    response.status_code = status_code
+    response.headers = {}
+    if json_body is None:
+        response.json = MagicMock(side_effect=json.JSONDecodeError("bad", "", 0))
+    else:
+        response.json = MagicMock(return_value=json_body)
+    mock_post.return_value = response
+    return mock_post
+
+
+async def _signin_expecting_error(client, **kwargs):
+    with pytest.raises(PasskeyError) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_abc123",
+            authn_response=_make_passkey_authn_response(),
+            **kwargs,
+        )
+    return exc.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [
+        ({}, None),
+        ({"verification_required": ["email"]}, ["email"]),
+        ({"verification_required": ["phone"]}, ["phone"]),
+        ({"verification_required": ["email", "phone"]}, ["email", "phone"]),
+    ],
+    ids=["absent", "email_only", "phone_only", "email_and_phone"],
+)
+async def test_passkey_signup_challenge_verification_required_states_parse(mocker, extra, expected):
+    client = _make_passkey_client()
+    _mock_passkey_post(mocker, 200, {**_PASSKEY_SIGNUP_CHALLENGE_RESPONSE, **extra})
+
+    result = await client.passkey_signup_challenge()
+
+    assert result.verification_required == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delivery_method", ["text", "voice"])
+async def test_passkey_signup_challenge_delivery_method_forwarded(mocker, delivery_method):
+    client = _make_passkey_client()
+    mock_post = _mock_passkey_post(mocker, 200, _PASSKEY_SIGNUP_CHALLENGE_RESPONSE)
+
+    await client.passkey_signup_challenge(delivery_method=delivery_method)
+
+    assert mock_post.call_args.kwargs["json"]["delivery_method"] == delivery_method
+
+
+@pytest.mark.parametrize(
+    "model, payload",
+    [
+        (PasskeySignupChallengeResponse, _PASSKEY_SIGNUP_CHALLENGE_RESPONSE),
+        (PasskeyLoginChallengeResponse, _PASSKEY_LOGIN_CHALLENGE_RESPONSE),
+    ],
+    ids=["signup", "login"],
+)
+def test_passkey_challenge_response_hides_auth_session_from_repr_and_str(model, payload):
+    challenge = model.model_validate(payload)
+
+    assert payload["auth_session"] not in repr(challenge)
+    assert payload["auth_session"] not in str(challenge)
+    assert challenge.auth_session == payload["auth_session"]
+    assert challenge.model_dump()["auth_session"] == payload["auth_session"]
+
+
+@pytest.mark.parametrize(
+    "model, payload, secret",
+    [
+        (PasskeySignupChallengeResponse, {"auth_session": "sess-secret-1"}, "sess-secret-1"),
+        (PasskeyLoginChallengeResponse, {"auth_session": "sess-secret-2"}, "sess-secret-2"),
+        (PasskeySignupChallengeResponse, "sess-secret-3", "sess-secret-3"),
+        (
+            PasskeyTokenResponse,
+            {"access_token": "at-secret", "refresh_token": "rt-secret"},
+            "rt-secret",
+        ),
+    ],
+    ids=["signup_missing_field", "login_missing_field", "signup_non_dict", "token_missing_field"],
+)
+def test_passkey_models_hide_input_from_validation_errors(model, payload, secret):
+    with pytest.raises(ValidationError) as exc:
+        model.model_validate(payload)
+
+    assert secret not in str(exc.value)
+    assert exc.value.error_count() >= 1
+
+
+@pytest.mark.asyncio
+async def test_passkey_signup_challenge_delivery_method_omitted_when_not_set(mocker):
+    client = _make_passkey_client()
+    mock_post = _mock_passkey_post(mocker, 200, _PASSKEY_SIGNUP_CHALLENGE_RESPONSE)
+
+    await client.passkey_signup_challenge()
+
+    assert "delivery_method" not in mock_post.call_args.kwargs["json"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delivery_method", ["sms", "", "Text", "VOICE"])
+async def test_passkey_signup_challenge_rejects_unsupported_delivery_method_before_request(
+    mocker, delivery_method
+):
+    client = _make_passkey_client()
+    mock_post = _mock_passkey_post(mocker, 200, _PASSKEY_SIGNUP_CHALLENGE_RESPONSE)
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.passkey_signup_challenge(delivery_method=delivery_method)
+
+    assert "delivery_method" in str(exc.value)
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method, payload",
+    [
+        ("passkey_signup_challenge", _PASSKEY_SIGNUP_CHALLENGE_RESPONSE),
+        ("passkey_login_challenge", _PASSKEY_LOGIN_CHALLENGE_RESPONSE),
+    ],
+    ids=["signup", "login"],
+)
+async def test_passkey_challenge_client_ip_sent_as_forwarded_for_header(mocker, method, payload):
+    client = _make_passkey_client()
+    mock_post = _mock_passkey_post(mocker, 200, payload)
+
+    await getattr(client, method)(client_ip="203.0.113.7")
+
+    assert mock_post.call_args.kwargs["headers"]["auth0-forwarded-for"] == "203.0.113.7"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method, payload",
+    [
+        ("passkey_signup_challenge", _PASSKEY_SIGNUP_CHALLENGE_RESPONSE),
+        ("passkey_login_challenge", _PASSKEY_LOGIN_CHALLENGE_RESPONSE),
+    ],
+    ids=["signup", "login"],
+)
+async def test_passkey_challenge_forwarded_for_header_omitted_without_client_ip(mocker, method, payload):
+    client = _make_passkey_client()
+    mock_post = _mock_passkey_post(mocker, 200, payload)
+
+    await getattr(client, method)()
+
+    assert "auth0-forwarded-for" not in mock_post.call_args.kwargs.get("headers", {})
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_client_ip_sent_as_forwarded_for_header(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    await _signin_expecting_error(client, client_ip="203.0.113.7")
+
+    assert mock_post.call_args.kwargs["headers"]["auth0-forwarded-for"] == "203.0.113.7"
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_forwarded_for_header_omitted_without_client_ip(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    await _signin_expecting_error(client)
+
+    assert "auth0-forwarded-for" not in mock_post.call_args.kwargs["headers"]
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_client_ip_and_dpop_key_send_both_headers(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
+    mock_post = _mock_passkey_post(mocker, 200, _PASSKEY_TOKEN_RESPONSE_DPOP)
+
+    await client.signin_with_passkey(
+        auth_session="session_abc123",
+        authn_response=_make_passkey_authn_response(),
+        dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"),
+        client_ip="203.0.113.7",
+    )
+
+    headers = mock_post.call_args.kwargs["headers"]
+    assert headers["auth0-forwarded-for"] == "203.0.113.7"
+    assert "DPoP" in headers
+
+
+@pytest.mark.asyncio
+async def test_passkey_signup_challenge_unsupported_delivery_method_surfaces_server_error(mocker):
+    client = _make_passkey_client()
+    _mock_passkey_post(mocker, 400, {
+        "error": "invalid_request",
+        "error_description": "The requested media is not supported for this connection",
+    })
+
+    with pytest.raises(PasskeyError) as exc:
+        await client.passkey_signup_challenge(delivery_method="voice")
+
+    assert exc.value.code == PasskeyErrorCode.INVALID_REQUEST
+    assert "media is not supported" in exc.value.message
+
+
+async def _call_passkey_method(mocker, method):
+    if method == "signin_with_passkey":
+        client = _make_passkey_signin_client(mocker)
+        return client, lambda: _signin_expecting_error(client)
+    client = _make_passkey_client()
+
+    async def call():
+        with pytest.raises(PasskeyError) as exc:
+            await getattr(client, method)()
+        return exc.value
+
+    return client, call
+
+
+_PASSKEY_429_METHODS = ["passkey_signup_challenge", "passkey_login_challenge", "signin_with_passkey"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "body", "code", "message"),
+    [
+        ("passkey_signup_challenge", None, PasskeyErrorCode.CHALLENGE_FAILED,
+         "Passkey signup challenge failed with status 429"),
+        ("passkey_signup_challenge", {"error": "too_many_requests", "error_description": "Global rate limit exceeded"},
+         "too_many_requests", "Global rate limit exceeded"),
+        ("passkey_login_challenge", None, PasskeyErrorCode.CHALLENGE_FAILED,
+         "Passkey login challenge failed with status 429"),
+        ("passkey_login_challenge", {"error": "too_many_requests", "error_description": "Global rate limit exceeded"},
+         "too_many_requests", "Global rate limit exceeded"),
+        ("signin_with_passkey", None, PasskeyErrorCode.TOKEN_EXCHANGE_FAILED,
+         "Passkey token exchange failed with status 429"),
+        ("signin_with_passkey", {"error": "access_denied", "error_description": "Too Many Requests"},
+         "access_denied", "Too Many Requests"),
+    ],
+    ids=["signup_plain_text", "signup_json", "login_plain_text", "login_json", "token_plain_text", "token_json"],
+)
+async def test_passkey_rate_limited_keeps_released_code_and_sets_status_code(mocker, method, body, code, message):
+    _, call = await _call_passkey_method(mocker, method)
+    _mock_passkey_post(mocker, 429, body)
+
+    error = await call()
+
+    assert error.code == code
+    assert error.message == message
+    assert error.status_code == 429
+    assert error.is_verification_retryable is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "code"),
+    [
+        ("passkey_signup_challenge", PasskeyErrorCode.CHALLENGE_FAILED),
+        ("passkey_login_challenge", PasskeyErrorCode.CHALLENGE_FAILED),
+        ("signin_with_passkey", PasskeyErrorCode.TOKEN_EXCHANGE_FAILED),
+    ],
+)
+async def test_passkey_non_dict_json_error_body_keeps_status_code(mocker, method, code):
+    _, call = await _call_passkey_method(mocker, method)
+    _mock_passkey_post(mocker, 429, ["not", "a", "dict"])
+
+    error = await call()
+
+    assert error.code == code
+    assert error.status_code == 429
+    assert error.cause is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", _PASSKEY_429_METHODS)
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [("30", 30), (None, None), ("Wed, 21 Oct 2026 07:28:00 GMT", None), ("soon", None), ("-5", None)],
+    ids=["seconds", "absent", "http_date", "garbage", "negative"],
+)
+async def test_passkey_rate_limited_exposes_retry_after(mocker, method, header, expected):
+    _, call = await _call_passkey_method(mocker, method)
+    mock_post = _mock_passkey_post(mocker, 429)
+    if header is not None:
+        mock_post.return_value.headers = {"Retry-After": header}
+
+    error = await call()
+
+    assert error.status_code == 429
+    assert error.retry_after == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "code"),
+    [
+        ("passkey_signup_challenge", PasskeyErrorCode.CHALLENGE_FAILED),
+        ("passkey_login_challenge", PasskeyErrorCode.CHALLENGE_FAILED),
+        ("signin_with_passkey", PasskeyErrorCode.TOKEN_EXCHANGE_FAILED),
+    ],
+)
+async def test_passkey_unavailable_exposes_status_code_and_retry_after(mocker, method, code):
+    _, call = await _call_passkey_method(mocker, method)
+    mock_post = _mock_passkey_post(mocker, 503)
+    mock_post.return_value.headers = {"Retry-After": "120"}
+
+    error = await call()
+
+    assert error.code == code
+    assert error.status_code == 503
+    assert error.retry_after == 120
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_wrong_code_error_is_verification_retryable(mocker):
+    client = _make_passkey_signin_client(mocker)
+    _mock_passkey_post(mocker, 400, {
+        "error": "invalid_grant",
+        "error_description": "Invalid or expired session",
+        "auth_session": "session_abc123",
+        "verification_required": ["email"],
+    })
+
+    error = await _signin_expecting_error(client, verification={"email": "000000"})
+
+    assert error.is_verification_retryable is True
+    assert error.code == "invalid_grant"
+    assert error.status_code == 400
+    assert error.auth_session == "session_abc123"
+    assert error.verification_required == ["email"]
+    assert "session_abc123" not in str(error)
+    assert "session_abc123" not in repr(error)
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_wrong_code_error_lists_every_remaining_identifier(mocker):
+    client = _make_passkey_signin_client(mocker)
+    _mock_passkey_post(mocker, 400, {
+        "error": "invalid_grant",
+        "error_description": "Invalid or expired session",
+        "auth_session": "session_abc123",
+        "verification_required": ["email", "phone"],
+    })
+
+    error = await _signin_expecting_error(client, verification={"email": "1", "phone": "2"})
+
+    assert error.verification_required == ["email", "phone"]
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_terminal_invalid_grant_is_not_retryable(mocker):
+    client = _make_passkey_signin_client(mocker)
+    _mock_passkey_post(mocker, 400, {
+        "error": "invalid_grant",
+        "error_description": "Invalid or expired session",
+    })
+
+    error = await _signin_expecting_error(client, verification={"email": "000000"})
+
+    assert error.is_verification_retryable is False
+    assert error.auth_session is None
+    assert error.verification_required is None
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_missing_code_is_invalid_request_and_not_retryable(mocker):
+    client = _make_passkey_signin_client(mocker)
+    _mock_passkey_post(mocker, 400, {
+        "error": "invalid_request",
+        "error_description": "Missing required parameter: verification.email",
+    })
+
+    error = await _signin_expecting_error(client)
+
+    assert error.code == PasskeyErrorCode.INVALID_REQUEST
+    assert error.is_verification_retryable is False
+    assert error.auth_session is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 403])
+async def test_signin_with_passkey_unknown_session_is_not_retryable(mocker, status_code):
+    client = _make_passkey_signin_client(mocker)
+    _mock_passkey_post(mocker, status_code, {
+        "error": "invalid_grant",
+        "error_description": "Invalid or expired session",
+    })
+
+    error = await _signin_expecting_error(client)
+
+    assert error.is_verification_retryable is False
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_server_error_is_not_verification_retryable(mocker):
+    client = _make_passkey_signin_client(mocker)
+    _mock_passkey_post(mocker, 500, {"error": "server_error", "error_description": "unavailable"})
+
+    error = await _signin_expecting_error(client, verification={"email": "000000"})
+
+    assert error.code == "server_error"
+    assert error.is_verification_retryable is False
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_verification_forwarded(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    await _signin_expecting_error(client, verification={"email": "123456", "phone": "654321"})
+
+    assert mock_post.call_args.kwargs["json"]["verification"] == {"email": "123456", "phone": "654321"}
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_verification_sent_as_json_object_on_the_wire(mocker):
+    client = _make_passkey_signin_client(mocker)
+    captured = {}
+
+    def handler(request):
+        captured["content_type"] = request.headers.get("content-type")
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(400, json={"error": "invalid_grant"})
+
+    mocker.patch.object(
+        client,
+        "_get_http_client",
+        side_effect=lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    await _signin_expecting_error(client, verification={"email": "123456", "phone": "654321"})
+
+    assert captured["content_type"] == "application/json"
+    assert captured["body"]["verification"] == {"email": "123456", "phone": "654321"}
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_verification_none_values_dropped(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    await _signin_expecting_error(client, verification={"email": "123456", "phone": None})
+
+    assert mock_post.call_args.kwargs["json"]["verification"] == {"email": "123456"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "verification",
+    ["123456", ["123456"], 123456],
+    ids=["str", "list", "int"],
+)
+async def test_signin_with_passkey_verification_non_dict_raises_before_request(mocker, verification):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_abc123",
+            authn_response=_make_passkey_authn_response(),
+            verification=verification,
+        )
+
+    assert exc.value.argument == "verification"
+    assert "123456" not in str(exc.value)
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "verification",
+    [{"phone_number": "123456"}, {"email": "123456", "otp": "654321"}, {"EMAIL": "123456"}],
+    ids=["phone_number", "extra_key", "wrong_case"],
+)
+async def test_signin_with_passkey_verification_unknown_key_raises_before_request(mocker, verification):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_abc123",
+            authn_response=_make_passkey_authn_response(),
+            verification=verification,
+        )
+
+    assert exc.value.argument == "verification"
+    assert "123456" not in str(exc.value)
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [123456, ["123456"], b"123456"], ids=["int", "list", "bytes"])
+async def test_signin_with_passkey_verification_non_string_code_raises_before_request(mocker, code):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    with pytest.raises(InvalidArgumentError) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_abc123",
+            authn_response=_make_passkey_authn_response(),
+            verification={"email": code},
+        )
+
+    assert exc.value.argument == "verification"
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_verification_blank_codes_dropped(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    await _signin_expecting_error(client, verification={"email": "123456", "phone": "   "})
+
+    assert mock_post.call_args.kwargs["json"]["verification"] == {"email": "123456"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "verification",
+    [None, {}, {"email": None}, {"email": ""}, {"email": " ", "phone": None}],
+    ids=["none", "empty", "all_none", "blank", "blank_and_none"],
+)
+async def test_signin_with_passkey_verification_omitted_when_nothing_to_send(mocker, verification):
+    client = _make_passkey_signin_client(mocker)
+    mock_post = _mock_passkey_post(mocker, 400, {"error": "invalid_grant"})
+
+    await _signin_expecting_error(client, verification=verification)
+
+    assert "verification" not in mock_post.call_args.kwargs["json"]
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_wrong_code_then_corrected_code_succeeds_on_same_session(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
+    mock_post = _mock_passkey_post(mocker, 400, {
+        "error": "invalid_grant",
+        "error_description": "Invalid or expired session",
+        "auth_session": "session_abc123",
+        "verification_required": ["email"],
+    })
+    success = AsyncMock()
+    success.status_code = 200
+    success.headers = {}
+    success.json = MagicMock(return_value=_PASSKEY_TOKEN_RESPONSE)
+    mock_post.side_effect = [mock_post.return_value, success]
+    authn_response = _make_passkey_authn_response()
+
+    with pytest.raises(PasskeyError) as exc:
+        await client.signin_with_passkey(
+            auth_session="session_abc123",
+            authn_response=authn_response,
+            verification={"email": "000000"},
+        )
+    assert exc.value.is_verification_retryable is True
+
+    result = await client.signin_with_passkey(
+        auth_session=exc.value.auth_session,
+        authn_response=authn_response,
+        verification={"email": "123456"},
+    )
+
+    assert isinstance(result, PasskeyLoginResult)
+    first_body, second_body = (call.kwargs["json"] for call in mock_post.call_args_list)
+    assert first_body["auth_session"] == second_body["auth_session"] == "session_abc123"
+    assert first_body["authn_response"] == second_body["authn_response"]
+    assert first_body["verification"] == {"email": "000000"}
+    assert second_body["verification"] == {"email": "123456"}
+
+
+@pytest.mark.asyncio
+async def test_signin_with_passkey_verification_with_dpop_key_sends_both(mocker):
+    client = _make_passkey_signin_client(mocker)
+    mocker.patch.object(client, "_get_jwks_cached", return_value={})
+    mocker.patch.object(client, "_verify_and_decode_jwt", return_value={
+        "sub": "auth0|user123", "iss": "https://auth0.local/"
+    })
+    mock_post = _mock_passkey_post(mocker, 200, _PASSKEY_TOKEN_RESPONSE_DPOP)
+
+    await client.signin_with_passkey(
+        auth_session="session_abc123",
+        authn_response=_make_passkey_authn_response(),
+        dpop_key=jwk.JWK.generate(kty="EC", crv="P-256"),
+        verification={"email": "123456"},
+    )
+
+    kwargs = mock_post.call_args.kwargs
+    assert kwargs["json"]["verification"] == {"email": "123456"}
+    assert "DPoP" in kwargs["headers"]
 
 
 # =============================================================================
