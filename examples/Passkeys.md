@@ -236,7 +236,7 @@ When a connection requires users to verify their email or phone number at signup
 
 Enable identifier verification for email, phone, or both on your database connection. For email, choose the One-Time Password (OTP) method, because this flow passes codes and does not support verification links.
 
-- Configure an email provider for email codes and a phone provider for phone codes. Without one the code is never sent, so the user can't finish signing up.
+- Configure an email provider for email codes and a phone provider for phone codes. Without one the code is never sent, so the user can't finish signing up. If Auth0 can't start verification, `passkey_signup_challenge` raises `PasskeyError` with `status_code` 500 and `code` `server_error`, and no session is created. Check the email or phone provider first.
 - Upgrade your app to an SDK version whose `signin_with_passkey` accepts `verification` before you turn verification on. Older versions can't send the codes, so every signup on the connection fails.
 
 ### The flow
