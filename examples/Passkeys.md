@@ -280,19 +280,25 @@ Each attempt is one HTTP request. On a wrong code, the handler returns `verifica
 ```python
 from fastapi.responses import JSONResponse
 
+from auth0_server_python.auth_types import PasskeyAuthResponse
 from auth0_server_python.error import PasskeyError
 
 async def passkey_signin(request, response, body):
+    # The browser posts JSON, so build the model first. This example assumes the page
+    # posts only id, rawId, type and response with clientDataJSON and attestationObject.
+    # A full credential.toJSON() also puts transports and publicKeyAlgorithm in response,
+    # which fail validation. Drop those keys from response before calling model_validate.
+    authn_response = PasskeyAuthResponse.model_validate(body["authn_response"])
     try:
         await server_client.signin_with_passkey(
             auth_session=body["auth_session"],
-            authn_response=body["authn_response"],
+            authn_response=authn_response,
             verification=body.get("verification"),
             store_options={"request": request, "response": response},
         )
     except PasskeyError as e:
         if not e.is_verification_retryable:
-            raise
+            raise  # other failures are listed below
         # Send the unverified identifiers back so the page asks only for those codes.
         return JSONResponse(
             {"verification_required": e.verification_required, "auth_session": e.auth_session},
