@@ -2,15 +2,17 @@ import ast
 import os
 import sys
 
+from sphinx.ext import intersphinx
+
 sys.path.insert(0, os.path.abspath("../src"))
-sys.path.insert(0, os.path.abspath("."))
 
 # -- Project info -------------------------------------------------------
 
 project = "auth0-server-python"
 author = "Auth0"
 copyright = "2024, Auth0"
-release = "1.0.0b18"
+with open(os.path.join(os.path.abspath(".."), ".version")) as _version_file:
+    release = _version_file.read().strip()
 
 # -- Extensions ---------------------------------------------------------
 
@@ -18,7 +20,7 @@ extensions = [
     "autoapi.extension",
     "sphinx.ext.napoleon",
     "sphinx.ext.linkcode",
-    "mintlify_export",
+    "sphinx.ext.intersphinx",
 ]
 
 # -- AutoAPI ------------------------------------------------------------
@@ -52,6 +54,12 @@ def autoapi_skip_member(app, what, name, obj, skip, options):
         return True
     return skip
 
+
+# -- Links to other projects ---------------------------------------------
+
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+}
 
 # -- Signatures ---------------------------------------------------------
 
@@ -110,69 +118,30 @@ napoleon_preprocess_types = True
 
 templates_path = ["_templates"]
 
-exclude_patterns = [
-    "_build",
-    "_templates",
-    "Thumbs.db",
-    ".DS_Store",
-    "reference/index.rst",
-    "reference/auth_schemes/index.rst",
-    "reference/auth_server/index.rst",
-    "reference/auth_server/anonymous/index.rst",
-    "reference/auth_server/anonymous/helpers/index.rst",
-    "reference/encryption/index.rst",
-    "reference/store/index.rst",
-    "reference/utils/index.rst",
-]
+exclude_patterns = ["_build", "_templates", "Thumbs.db", ".DS_Store"]
 
-# -- Docs site export (see mintlify_export/) ---------------------------
+def _resolve_root_prefixed(app, env, node, contnode):
+    """Resolve annotations that the default lookup misses.
 
-SITE_DIR = "docs/sdk/python/server"
-
-mintlify_site_dir = SITE_DIR
-mintlify_github_blob_url = GITHUB_BLOB_URL
-mintlify_guides_root = REPO_ROOT
-
-mintlify_remove_pages = []
-
-# -- Guides (README, CONTRIBUTING, examples/*.md) -----------------------
-
-EXAMPLE_PAGES = sorted(
-    f[:-3] for f in os.listdir(os.path.join(mintlify_guides_root, "examples")) if f.endswith(".md")
-)
-
-# Output page -> (Markdown source relative to the repo root, fixed title or "").
-mintlify_guides = {
-    "overview": ("README.md", "Overview"),
-    "CONTRIBUTING": ("CONTRIBUTING.md", ""),
-    **{f"examples/{name}": (f"examples/{name}.md", "") for name in EXAMPLE_PAGES},
-}
-
-# -- Navigation ---------------------------------------------------------
-
-# Guides starts folded and API Reference starts open. Nested groups are
-# what the docs site renders as foldable. "{reference}" is replaced by the
-# API reference groups, which are built from the generated pages.
-mintlify_navigation = [
-    {
-        "group": "auth0-server-python",
-        "pages": [
-            f"{SITE_DIR}/overview",
-            {
-                "group": "Guides",
-                "expanded": False,
-                "pages": [f"{SITE_DIR}/examples/{name}" for name in EXAMPLE_PAGES],
-            },
-            {
-                "group": "API Reference",
-                "expanded": True,
-                "pages": ["{reference}"],
-            },
-            f"{SITE_DIR}/CONTRIBUTING",
-        ],
-    },
-]
+    `auth0_server_python.x.Y` maps to AutoAPI's root-less `x.Y`, and a bare name such
+    as `Any` is looked up as `typing.Any`.
+    """
+    target = node.get("reftarget", "")
+    if node.get("refdomain") != "py":
+        return None
+    prefix = IMPORT_ROOT + "."
+    if target.startswith(prefix):
+        return env.get_domain("py").resolve_xref(
+            env, node.get("refdoc"), app.builder, node["reftype"], target[len(prefix) :], node, contnode
+        )
+    if "." not in target:
+        retargeted = node.copy()
+        retargeted["reftarget"] = "typing." + target
+        retargeted["reftype"] = "obj"
+        return intersphinx.missing_reference(app, env, retargeted, contnode)
+    return None
 
 
 def setup(app):
     app.connect("autoapi-skip-member", autoapi_skip_member)
+    app.connect("missing-reference", _resolve_root_prefixed)

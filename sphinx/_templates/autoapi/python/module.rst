@@ -1,8 +1,7 @@
 {% if obj.display %}
    {% if is_own_page %}
-{% set title = obj.short_name | replace('_', ' ') | title %}
-{{ title }}
-{{ "=" * (title | length) }}
+{{ obj.id }}
+{{ "=" * obj.id|length }}
 
 .. py:module:: {{ obj.name }}
 
