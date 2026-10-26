@@ -19,6 +19,11 @@ dist
 sphinx/_build
 sphinx/reference
 
+# Only the page JSON is committed. Everything else Sphinx writes there is not.
+sphinx/json/*
+!sphinx/json/reference
+!sphinx/json/index.fjson
+
 #testfile
 server.py
 setup.py
