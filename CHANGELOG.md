@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.0.0b20](https://github.com/auth0/auth0-server-python/tree/1.0.0b20) (2026-10-23)
+[Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b19...1.0.0b20)
+
+**Added**
+- feat: add identifier verification to native passkey signup. `passkey_signup_challenge` reports which identifiers need a code via `verification_required`, `signin_with_passkey` accepts the codes via `verification`, and `PasskeyError` now exposes `auth_session`, `verification_required`, `is_verification_retryable`, `status_code` and `retry_after` so callers can re-prompt for unverified identifiers or detect a rate limit. Also adds `delivery_method` and `client_ip` parameters [\#183](https://github.com/auth0/auth0-server-python/pull/183) ([rmad17](https://github.com/rmad17))
+
 ## [1.0.0b19](https://github.com/auth0/auth0-server-python/tree/1.0.0b19) (2026-10-08)
 [Full Changelog](https://github.com/auth0/auth0-server-python/compare/1.0.0b18...1.0.0b19)
 

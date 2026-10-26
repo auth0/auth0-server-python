@@ -409,13 +409,40 @@ class PasswordlessErrorCode:
 class PasskeyError(Auth0Error):
     """
     Error raised during passkey authentication operations.
+
+    Args:
+        code: Error code, see PasskeyErrorCode.
+        message: Human-readable description.
+        cause: Underlying exception, if any.
+        auth_session: Session to resubmit against, set when Auth0 keeps it alive after a wrong code.
+        verification_required: Identifiers whose codes are still unverified.
+        retry_after: Seconds from the Retry-After header, None when absent or not whole seconds.
+        status_code: HTTP status of an Auth0 error response, None otherwise.
     """
 
-    def __init__(self, code: str, message: str, cause=None):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        cause=None,
+        auth_session: Optional[str] = None,
+        verification_required: Optional[list[str]] = None,
+        retry_after: Optional[int] = None,
+        status_code: Optional[int] = None,
+    ):
         super().__init__(message)
         self.code = code
         self.name = "PasskeyError"
         self.cause = cause
+        self.auth_session = auth_session
+        self.verification_required = verification_required
+        self.retry_after = retry_after  # seconds
+        self.status_code = status_code
+
+    @property
+    def is_verification_retryable(self) -> bool:
+        """True when a code was wrong but the session is alive, so the caller can resubmit."""
+        return self.code == PasskeyErrorCode.INVALID_GRANT and bool(self.auth_session)
 
 
 class PasskeyErrorCode:
@@ -424,6 +451,8 @@ class PasskeyErrorCode:
     CHALLENGE_FAILED = "passkey_challenge_error"
     TOKEN_EXCHANGE_FAILED = "passkey_token_error"
     INVALID_RESPONSE = "invalid_response"
+    INVALID_GRANT = "invalid_grant"
+    INVALID_REQUEST = "invalid_request"
 
 
 # =============================================================================
