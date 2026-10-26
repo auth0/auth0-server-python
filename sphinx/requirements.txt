@@ -1,0 +1,2 @@
+sphinx>=7.4,<9
+sphinx-autoapi>=3.4,<4
