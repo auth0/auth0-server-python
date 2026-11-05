@@ -27,7 +27,7 @@ extensions = [
 
 autoapi_dirs = ["../src"]
 autoapi_type = "python"
-autoapi_root = "reference"
+autoapi_root = "."
 autoapi_ignore = ["**/tests/**", "**/test_*.py"]
 
 autoapi_options = [
@@ -37,6 +37,7 @@ autoapi_options = [
 ]
 autoapi_member_order = "groupwise"
 autoapi_keep_files = True
+autoapi_add_toctree_entry = False
 autoapi_template_dir = "_templates/autoapi"
 autoapi_python_class_content = "class"
 
@@ -118,7 +119,19 @@ napoleon_preprocess_types = True
 
 templates_path = ["_templates"]
 
-exclude_patterns = ["_build", "_templates", "Thumbs.db", ".DS_Store"]
+exclude_patterns = [
+    "_build",
+    "_templates",
+    "Thumbs.db",
+    ".DS_Store",
+    # Package pages only list their submodules.
+    "utils/index.rst",
+    "store/index.rst",
+    "encryption/index.rst",
+    "auth_server/index.rst",
+    "auth_server/anonymous/index.rst",
+    "auth_schemes/index.rst",
+]
 
 def _resolve_root_prefixed(app, env, node, contnode):
     """Resolve annotations that the default lookup misses.

@@ -6,3 +6,6 @@ for web applications.
 
 .. toctree::
    :hidden:
+   :glob:
+
+   **

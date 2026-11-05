@@ -17,12 +17,25 @@ env/
 #Build files
 dist
 sphinx/_build
-sphinx/reference
+
+# autoapi writes the module sources next to conf.py. Only these folders are tracked.
+sphinx/*/
+!sphinx/_templates/
+!sphinx/json/
 
 # Only the page JSON is committed. Everything else Sphinx writes there is not.
-sphinx/json/*
-!sphinx/json/reference
-!sphinx/json/index.fjson
+sphinx/json/.buildinfo
+sphinx/json/.doctrees
+sphinx/json/_sources
+sphinx/json/_static
+sphinx/json/environment.pickle
+sphinx/json/genindex.fjson
+sphinx/json/globalcontext.json
+sphinx/json/last_build
+sphinx/json/objects.inv
+sphinx/json/py-modindex.fjson
+sphinx/json/search.fjson
+sphinx/json/searchindex.json
 
 #testfile
 server.py
