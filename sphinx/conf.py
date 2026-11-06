@@ -38,16 +38,10 @@ autoapi_options = [
 autoapi_member_order = "groupwise"
 autoapi_keep_files = True
 autoapi_add_toctree_entry = False
-autoapi_template_dir = "_templates/autoapi"
 autoapi_python_class_content = "class"
 
-# Top-level import package, shown in each module's import block.
+# Top-level import package.
 IMPORT_ROOT = "auth0_server_python"
-
-
-def autoapi_prepare_jinja_env(jinja_env):
-    jinja_env.globals["import_root"] = IMPORT_ROOT
-
 
 
 def autoapi_skip_member(app, what, name, obj, skip, options):
@@ -64,7 +58,7 @@ intersphinx_mapping = {
 
 # -- Signatures ---------------------------------------------------------
 
-# Show `Name(...)` not `module.Name(...)`. The import block gives the full path.
+# Show `Name(...)` not `module.Name(...)`.
 add_module_names = False
 
 # -- Source links -------------------------------------------------------
@@ -117,11 +111,8 @@ napoleon_preprocess_types = True
 
 # -- General ------------------------------------------------------------
 
-templates_path = ["_templates"]
-
 exclude_patterns = [
     "_build",
-    "_templates",
     "Thumbs.db",
     ".DS_Store",
     # Package pages only list their submodules.
