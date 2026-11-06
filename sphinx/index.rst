@@ -1,8 +1,16 @@
 auth0-server-python
 ===================
 
-Auth0 server-side Python SDK: authentication flows, token management, and session handling
-for web applications.
+Install
+-------
+
+.. code-block:: shell
+
+   pip install auth0-server-python
+   # or, with Poetry
+   poetry add auth0-server-python
+
+* `Examples <https://github.com/auth0/auth0-server-python/blob/main/examples>`_
 
 .. toctree::
    :hidden:
